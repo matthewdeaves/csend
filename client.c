@@ -38,7 +38,7 @@ int main() {
     send(sock, message, strlen(message), 0);
     printf("Message sent to server\n");
     
-    // Receive response from server
+    // Receive response from server, this is a blocking call to read, better in a thread
     read(sock, buffer, BUFFER_SIZE);
     printf("Response from server: %s\n", buffer);
     

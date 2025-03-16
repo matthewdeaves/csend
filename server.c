@@ -20,7 +20,7 @@ int main() {
         exit(EXIT_FAILURE);
     }
     
-    // Set socket options
+    // Set socket options, trying to be as portable as posible
     #ifdef SO_REUSEPORT
         if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
             perror("setsockopt");
@@ -33,6 +33,7 @@ int main() {
         }
     #endif
     
+    // Configure server address. IPv4, accept connections on any interface on a port
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(PORT);
@@ -48,10 +49,11 @@ int main() {
         perror("listen");
         exit(EXIT_FAILURE);
     }
-    
+        
     printf("Server listening on port %d...\n", PORT);
     
-    // Accept a connection
+    // Accept a connection (this is a blocking call to accept(), program effectively halts 
+    // and I should use a thread for this in future)
     if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
         perror("accept");
         exit(EXIT_FAILURE);
