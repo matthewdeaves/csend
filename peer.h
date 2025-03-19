@@ -41,7 +41,7 @@ typedef struct {
 } peer_t;
 
 // Global state
-typedef struct {
+typedef struct app_state_t {
     volatile sig_atomic_t running;  // Flag indicating if the application is running; volatile ensures visibility across threads
                                     // and sig_atomic_t guarantees atomic access from signal handlers
     
@@ -87,7 +87,6 @@ int format_message(char *buffer, int buffer_size, const char *msg_type,
 void handle_signal(int sig);
 void log_message(const char *format, ...);
 int add_peer(app_state_t *state, const char *ip, const char *username);
-void print_peers(app_state_t *state);
 void set_socket_timeout(int socket, int seconds);
 int get_local_ip(char *buffer, size_t size);
 
