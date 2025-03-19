@@ -2,7 +2,69 @@ This repo is a record of my work to learn C programming with the aim of making a
 
 To start with I am focussing on the Ubuntu and macOS support as that will be the easiest to get back into C programming on with easy to find documentation. However, there is briliant work available to learn from by Joshua Stein such as [https://jcs.org/wikipedia](https://jcs.org/wikipedia) that are using MacTCP etc under System 6 and written in C with the Think C IDE.
 
-I'll be tagging various points of evolution of this code base with written examples on the code as I go.
+I'll be tagging various points of evolution of this code base with a write up of important learnings and aspects of the code as I go.
+
+---
+
+## [v0.0.3](https://github.com/matthewdeaves/csend/tree/v0.0.3)
+
+A rewrite to move to a single binary capable of sending and receiving messages with support for:
+* peer to peer discovery over UDP 
+* direct and broadcast messaging over TCP
+* messages encapsulated with a simple messaging protocol
+
+This is achieved by:
+
+* implementing a [discovery_thread]()
+* implementing a [listener_thread]()
+* implementing a [user_input_thread]()
+* starting each thread from the [main method]()
+* implementing a very simple structured [message protocol]()
+* each thead having access to a []`struct app_state_t`]() to store key information for the peer
+
+The code is well commented. Both programs output to the terminal.
+
+Compile with:
+
+```
+gcc -o p2p_chat peer.c network.c protocol.c -lpthread
+```
+
+Run with:
+
+```
+./p2p_chat
+```
+
+### Key Learnings
+
+#### Message Protocol
+
+It really is a very simple format which I think in future can be improved to use a more structured format with a struct and introduction of magic numbers at the start of the data and a checksum to help a peer verifiy a connection on a socket has the intended data and was sent by a valid peer. The message format is:
+
+```
+// Message format: TYPE|SENDER|CONTENT
+// Example: TEXT|username@192.168.1.5|Hello, world!
+
+```
+The parse_message() function attempts to parse incomming messages according to the above format, 
+
+#### Threads
+Each peer maintains an array of network peers within a struct called [app_state_t]() defined in peer.h. This list of peers needs to be modified in a threadsafe manner as a peer can be added to the list via the discovery and listener threads.
+
+To achieve this, app_state_t hold a variable of [pthread_mutex_t]() type called `peers_mutex`. This is a special type which allows the calling of functions to obtain and release a lock on that variable. For a thread to obtain the lock (which blocks execution/waits if it is not available)`pthread_mutex_lock()` is called. To release the lock `pthread_mutex_unlock()` is called. This means you have to remember to make a thread obtain the lock, do your thing and then release the lock when you are done. Both functions take an argument type `pthread_mutex_t`. For example:
+
+```
+pthread_mutex_lock(&state->peers_mutex);
+
+// code to do modify the list of peers
+
+pthread_mutex_unlock(&state->peers_mutex);
+```
+
+View the [code](https://github.com/matthewdeaves/csend/tree/v0.0.3)
+
+Get the [code](https://github.com/matthewdeaves/csend/releases/tag/v0.0.3)
 
 ---
 
