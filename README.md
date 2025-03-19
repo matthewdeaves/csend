@@ -6,6 +6,31 @@ I'll be tagging various points of evolution of this code base with a write up of
 
 ---
 
+## [v0.0.4](https://github.com/matthewdeaves/csend/tree/v0.0.4)
+
+A very simple refactor to:
+
+* move code related to the terminal user interface into separate files with functionally the same as [v0.0.3](https://github.com/matthewdeaves/csend/tree/v0.0.3) but with terminal UI code moved to [ui_terminal.h](https://github.com/matthewdeaves/csend/blob/390e72b0b2020471c7348b23957101f81da2588b/ui_terminal.h) and  [ui_terminal.c](https://github.com/matthewdeaves/csend/blob/390e72b0b2020471c7348b23957101f81da2588b/ui_terminal.c)
+* add a [Makefile](https://github.com/matthewdeaves/csend/blob/e52e6e47febbaba3fb970071b84d6c0a0341260a/Makefile)
+
+Compile with:
+
+```
+make
+```
+
+Run with:
+
+```
+./p2p_chat
+```
+
+View the [code](https://github.com/matthewdeaves/csend/tree/v0.0.4)
+
+Get the [code](https://github.com/matthewdeaves/csend/releases/tag/v0.0.4)
+
+---
+
 ## [v0.0.3](https://github.com/matthewdeaves/csend/tree/v0.0.3)
 
 A rewrite to move to a single binary capable of sending and receiving messages with support for:
