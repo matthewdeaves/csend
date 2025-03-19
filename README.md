@@ -15,13 +15,14 @@ A rewrite to move to a single binary capable of sending and receiving messages w
 
 This is achieved by:
 
-* implementing a [discovery_thread]()
-* implementing a [listener_thread]()
-* implementing a [user_input_thread]()
-* Moving code from previous versions into [network.c]() with explicit functions to initialise UDP/TCP sockets to [listen]() and [send]() messages
-* starting each thread from the [main method]()
-* implementing a very simple structured [message protocol]()
-* each thead having access to a []`struct app_state_t`]() to store key information for the peer
+* implementing a [discovery_thread](https://github.com/matthewdeaves/csend/blob/c393d6bf23b3f70750fb68d10c5c1ab0a77cf32b/network.c#L321)
+* implementing a [listener_thread](https://github.com/matthewdeaves/csend/blob/c393d6bf23b3f70750fb68d10c5c1ab0a77cf32b/network.c#L224)
+* implementing a [user_input_thread](https://github.com/matthewdeaves/csend/blob/c393d6bf23b3f70750fb68d10c5c1ab0a77cf32b/peer.c#L172)
+* Moving code from previous versions into [network.c](https://github.com/matthewdeaves/csend/blob/c393d6bf23b3f70750fb68d10c5c1ab0a77cf32b/network.c) with explicit functions to initialise TCP sockets to [listen](https://github.com/matthewdeaves/csend/blob/c393d6bf23b3f70750fb68d10c5c1ab0a77cf32b/network.c#L53) and [send](https://github.com/matthewdeaves/csend/blob/c393d6bf23b3f70750fb68d10c5c1ab0a77cf32b/network.c#L165)
+* Implementing a method to [initialise UDP sockets](https://github.com/matthewdeaves/csend/blob/c393d6bf23b3f70750fb68d10c5c1ab0a77cf32b/network.c#L142) to [broadcast discovery](https://github.com/matthewdeaves/csend/blob/c393d6bf23b3f70750fb68d10c5c1ab0a77cf32b/network.c#L142) messages
+* Implementing a [main method](https://github.com/matthewdeaves/csend/blob/c393d6bf23b3f70750fb68d10c5c1ab0a77cf32b/peer.c#L310) to start threads
+* implementing a very simple structured [message protocol](https://github.com/matthewdeaves/csend/blob/c393d6bf23b3f70750fb68d10c5c1ab0a77cf32b/protocol.c)
+* each thead having access to a [`struct app_state_t`](https://github.com/matthewdeaves/csend/blob/c393d6bf23b3f70750fb68d10c5c1ab0a77cf32b/peer.h#L44) to store key information for the peer such as the list of peers and a method to aid in multithreaded access to the list
 
 The code is well commented. Both programs output to the terminal.
 
@@ -48,7 +49,7 @@ It really is a very simple format which I think in future can be improved to use
 // Example: TEXT|username@192.168.1.5|Hello, world!
 
 ```
-The parse_message() function attempts to parse incomming messages according to the above format, 
+The [parse_message()](https://github.com/matthewdeaves/csend/blob/a4cea91a61c4f70d5ce5de417bf0d7a5a40cc184/protocol.c#L38) function attempts to parse incomming messages according to the above format, 
 
 #### Threads
 Each peer maintains an array of network peers within a struct called [app_state_t]() defined in peer.h. This list of peers needs to be modified in a threadsafe manner as a peer can be added to the list via the discovery and listener threads.
