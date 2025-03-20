@@ -1,0 +1,37 @@
+services:
+  peer1:
+    build: .
+    container_name: peer1
+    command: /app/p2p_chat peer1
+    tty: true
+    stdin_open: true
+    networks:
+      p2p_net:
+        ipv4_address: 172.20.0.2
+
+  peer2:
+    build: .
+    container_name: peer2
+    command: /app/p2p_chat peer2
+    tty: true
+    stdin_open: true
+    networks:
+      p2p_net:
+        ipv4_address: 172.20.0.3
+
+  peer3:
+    build: .
+    container_name: peer3
+    command: /app/p2p_chat peer3
+    tty: true
+    stdin_open: true
+    networks:
+      p2p_net:
+        ipv4_address: 172.20.0.4
+
+networks:
+  p2p_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
