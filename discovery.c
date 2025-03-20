@@ -1,6 +1,26 @@
 #include "discovery.h"
 #include <unistd.h>
 
+/**
+ * Initializes the UDP socket for peer discovery
+ *
+ * This function sets up a UDP socket for peer discovery by:
+ * - Creating a new UDP socket
+ * - Setting socket options (SO_REUSEADDR)
+ * - Enabling broadcast capability (SO_BROADCAST)
+ * - Binding the socket to the configured UDP port
+ * - Setting a socket timeout for non-blocking operations
+ *
+ * The socket is configured to listen on all available network interfaces (INADDR_ANY)
+ * and will be used for both sending and receiving discovery messages.
+ *
+ * int Return status:
+ *         0: Success - UDP socket initialized and ready
+ *        -1: Failure - Socket creation, option setting, or binding failed
+ *            (error details are logged via perror)
+ *
+ * On failure, the function ensures the socket is closed and set to -1 in the state
+ */
 int init_discovery(app_state_t *state) {
     struct sockaddr_in address;
     int opt = 1;
@@ -70,6 +90,22 @@ int broadcast_discovery(app_state_t *state) {
     return 0;
 }
 
+/*
+ * Processes incoming discovery messages and responds accordingly
+ *
+ * This function handles two types of discovery messages:
+ * - MSG_DISCOVERY: Initial discovery requests from other peers
+ * - MSG_DISCOVERY_RESPONSE: Responses to our discovery requests
+ *
+ * When a discovery message is received, the function responds with a 
+ * discovery response and adds the sender to the peer list. When a
+ * discovery response is received, the sender is added to the peer list.
+ *
+ * Return status:
+ *         1: New peer was discovered and added
+ *         0: Existing peer was found (no addition)
+ *        -1: Not a discovery message or error occurred
+*/
 int handle_discovery_message(app_state_t *state, const char *buffer, 
                             char *sender_ip, socklen_t addr_len,
                             struct sockaddr_in *sender_addr) {
