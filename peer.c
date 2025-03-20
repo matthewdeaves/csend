@@ -1,4 +1,5 @@
 #include "peer.h"
+#include "discovery.h"
 #include "ui_terminal.h"
 #include <stdarg.h>
 #include <signal.h>
