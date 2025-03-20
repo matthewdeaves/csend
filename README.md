@@ -6,12 +6,34 @@ I'll be tagging various points of evolution of this code base with a write up of
 
 ---
 
+## [v0.0.5](https://github.com/matthewdeaves/csend/tree/v0.0.5)
+
+A refactor and implementation of some development tools. Refactoring includes:
+
+* move code related to discovery into separate [discovery.h](https://github.com/matthewdeaves/csend/blob/1feaaf242574599ae306c8125f2ba27a7b66690e/discovery.h) and [disocvery.c](https://github.com/matthewdeaves/csend/blob/1feaaf242574599ae306c8125f2ba27a7b66690e/discovery.c) files
+
+Implementing developer tooling includes:
+
+* Adding a [Dockerfile](https://github.com/matthewdeaves/csend/blob/1feaaf242574599ae306c8125f2ba27a7b66690e/Dockerfile), [docker-compose.yml](https://github.com/matthewdeaves/csend/blob/1feaaf242574599ae306c8125f2ba27a7b66690e/docker-compose.yml) and [p2p.sh](https://github.com/matthewdeaves/csend/blob/1feaaf242574599ae306c8125f2ba27a7b66690e/p2p.sh) enabling 3 Docker containers to be fired up each running an instance of the compiled binary for testing on local machine 
+
+### Running Docker
+
+Exceute `./p2p.sh start` in a terminal window (not within VSCode terminal) and the script will auto launch 3 separate terminal windows attached to each container for CLI use.
+
+Execute `./p2p.sh stop` in any terminal window to shut them down.
+
+---
+
 ## [v0.0.4](https://github.com/matthewdeaves/csend/tree/v0.0.4)
 
 A very simple refactor to:
 
 * move code related to the terminal user interface into separate files with functionally the same as [v0.0.3](https://github.com/matthewdeaves/csend/tree/v0.0.3) but with terminal UI code moved to [ui_terminal.h](https://github.com/matthewdeaves/csend/blob/390e72b0b2020471c7348b23957101f81da2588b/ui_terminal.h) and  [ui_terminal.c](https://github.com/matthewdeaves/csend/blob/390e72b0b2020471c7348b23957101f81da2588b/ui_terminal.c)
-* add a [Makefile](https://github.com/matthewdeaves/csend/blob/e52e6e47febbaba3fb970071b84d6c0a0341260a/Makefile)
+
+Improved developer tooling with:
+
+* a [Makefile](https://github.com/matthewdeaves/csend/blob/e52e6e47febbaba3fb970071b84d6c0a0341260a/Makefile)
+* a [codemerge.sh](https://github.com/matthewdeaves/csend/blob/dc84874cfd4fe14f15c6adbc4dafaabbf3e8d120/codemerge.sh) tool with options to combine all .c files into a single text file which can be used with LLMs to inspect the code. I find `./codemerge.sh -s dependency` gives good results with an LLM by organising the code with header files first
 
 Compile with:
 
