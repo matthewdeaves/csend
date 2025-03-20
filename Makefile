@@ -7,9 +7,9 @@ LDFLAGS = -lpthread
 TARGET = p2p_chat
 
 # Source files and object files
-SRCS = peer.c network.c protocol.c ui_terminal.c
+SRCS = peer.c network.c protocol.c ui_terminal.c discovery.c
 OBJS = $(SRCS:.c=.o)
-HEADERS = peer.h ui_terminal.h
+HEADERS = peer.h ui_terminal.h discovery.h
 
 # Default target
 all: $(TARGET)
