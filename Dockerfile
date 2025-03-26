@@ -11,12 +11,14 @@ RUN apt-get update && apt-get install -y \
 # Create app directory
 WORKDIR /app
 
-# Copy source files
-COPY discovery.h peer.h ui_terminal.h ./
-COPY discovery.c network.c peer.c protocol.c ui_terminal.c ./
+# Copy all header files
+COPY discovery.h peer.h ui_terminal.h utils.h signal_handler.h network.h protocol.h ./
+
+# Copy all source files
+COPY discovery.c network.c peer.c protocol.c ui_terminal.c utils.c signal_handler.c ./
 
 # Compile the application
-RUN gcc -o p2p_chat discovery.c network.c peer.c protocol.c ui_terminal.c -lpthread
+RUN gcc -Wall -Wextra -o p2p_chat discovery.c network.c peer.c protocol.c ui_terminal.c utils.c signal_handler.c -lpthread
 
 # Default command - will be overridden by docker-compose
 CMD ["/app/p2p_chat", "user"]
