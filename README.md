@@ -6,6 +6,16 @@ I'll be tagging various points of evolution of this code base with a write up of
 
 ---
 
+## [v0.0.6](https://github.com/matthewdeaves/csend/tree/v0.0.6)
+
+A refactor to improve code organization and modularity
+
+- Extract utility [functions into utils.c](https://github.com/matthewdeaves/csend/blob/cfbebed99219f4882619dcae5e50dae67c279815/utils.c) for better reusability
+- Create dedicated [signal_handler.c](https://github.com/matthewdeaves/csend/blob/cfbebed99219f4882619dcae5e50dae67c279815/signal_handler.c) for cleaner signal management
+- Add proper header files for all major components
+
+---
+
 ## [v0.0.5](https://github.com/matthewdeaves/csend/tree/v0.0.5)
 
 A refactor and implementation of some development tools. Refactoring includes:
