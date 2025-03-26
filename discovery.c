@@ -1,5 +1,4 @@
 #include "discovery.h"
-#include <unistd.h>
 
 /**
  * Initializes the UDP socket for peer discovery
