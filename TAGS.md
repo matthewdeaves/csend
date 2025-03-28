@@ -10,9 +10,11 @@ I'll be tagging various points of evolution of this code base with a write up of
 
 A refactor to improve code organization and modularity
 
-- Extract utility [functions into utils.c](https://github.com/matthewdeaves/csend/blob/cfbebed99219f4882619dcae5e50dae67c279815/utils.c) for better reusability
-- Create dedicated [signal_handler.c](https://github.com/matthewdeaves/csend/blob/cfbebed99219f4882619dcae5e50dae67c279815/signal_handler.c) for cleaner signal management
-- Add proper header files for all major components
+- Extract utility [functions into utils.c](https://github.com/matthewdeaves/csend/blob/c86282b7e76a075df6ef3887829dd9c1b0f4bef8/utils.c) for better reusability
+- Create dedicated [signal_handler.c](https://github.com/matthewdeaves/csend/blob/c86282b7e76a075df6ef3887829dd9c1b0f4bef8/signal_handler.c) for cleaner signal management
+- Move messaging code into [messaging.c](https://github.com/matthewdeaves/csend/blob/c86282b7e76a075df6ef3887829dd9c1b0f4bef8/messaging.c)
+- Add proper header files for all major components and streamline all includes
+- Very detailed comments throughout the code to aid in learning (yes, I print and read my code with a coffee)
 
 ---
 

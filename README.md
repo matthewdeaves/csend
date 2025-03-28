@@ -79,7 +79,7 @@ bash
 
     ./docker.sh status
 
-Note: To detach from a container's terminal without stopping it, use the key sequence Ctrl+P followed by Ctrl+Q. Do a Ctrl+C if you want to test SIGTERM handling and gracefull shutdown.
+Note: To detach from a container's terminal without stopping it, use the key sequence Ctrl+P followed by Ctrl+Q. Do a Ctrl+C if you want to test SIGINT handling and graceful shutdown.
 
 Usage Commands
 Once the application is running, you can use the following commands in the terminal:
