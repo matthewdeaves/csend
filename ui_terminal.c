@@ -22,6 +22,9 @@
 #include <time.h>        // For time() to get the current time, used in print_peers for checking timeouts.
 #include <pthread.h>     // For thread synchronization primitives: pthread_mutex_lock() and pthread_mutex_unlock() to safely access the shared peer list.
 #include <stdlib.h>      // For atoi() to convert the peer number string to an integer in the /send command.
+#include <sys/select.h> // For select() system call and related macros (fd_set, FD_ZERO, FD_SET)
+#include <unistd.h>     // For STDIN_FILENO constant (standard input file descriptor, usually 0)
+#include <errno.h>      // For errno variable and error constants like EINTR
 
 /**
  * @brief Displays a help message listing available user commands to standard output.
@@ -281,72 +284,120 @@
      }
  }
 
- /**
+  /**
   * @brief Main function for the user input thread.
   * @details This function runs in a dedicated thread and continuously handles user interaction.
   *          It performs the following in a loop:
-  *          1. Prints a command prompt ("> ").
-  *          2. Flushes stdout to ensure the prompt is displayed immediately.
-  *          3. Reads a line of input from standard input (`stdin`) using `fgets`.
-  *          4. Removes the trailing newline character from the input.
-  *          5. If the input is not empty, calls `handle_command` to process it.
-  *          6. If `handle_command` returns 1 (indicating `/quit`), the loop breaks.
-  *          7. The loop also breaks if `fgets` returns NULL (e.g., end-of-file or read error)
-  *             or if the application's `running` flag becomes 0 (signaled by `/quit` or SIGINT/SIGTERM).
+  *          1. Uses `select` to wait for input on standard input (`stdin`) or for a timeout (1 second).
+  *             This prevents the thread from blocking indefinitely and allows graceful shutdown.
+  *          2. If `select` indicates input is ready, reads a line using `fgets`.
+  *          3. Removes the trailing newline character.
+  *          4. If the input is not empty, calls `handle_command` to process it.
+  *          5. Prints the command prompt ("> ") only *after* processing input or handling empty input,
+  *             right before waiting again with `select`. It does *not* print the prompt on timeout.
+  *          6. The loop breaks on `/quit`, EOF, read error, or when the application's `running` flag becomes 0.
   * @param arg A void pointer, expected to be cast to `app_state_t*`, providing access to the shared application state.
   * @return NULL. Standard practice for Pthread functions; the return value is not used here.
   */
  void *user_input_thread(void *arg) {
-     // Cast the void pointer argument back to the expected app_state_t pointer.
-     app_state_t *state = (app_state_t *)arg;
-     // Buffer to store the user's input line.
-     char input[BUFFER_SIZE];
+    // Cast the void pointer argument back to the expected app_state_t pointer.
+    app_state_t *state = (app_state_t *)arg;
+    // Buffer to store the user's input line.
+    char input[BUFFER_SIZE];
+    // File descriptor set used with select() to monitor standard input.
+    fd_set readfds;
+    // Timeout structure for select() to prevent indefinite blocking.
+    struct timeval timeout;
 
-     // Display the help message once when the thread starts.
-     print_help_message();
+    // Display the help message once when the thread starts.
+    print_help_message();
 
-     // Main loop: continues as long as the application is running.
-     while (state->running) {
-         // Print the command prompt.
-         printf("> ");
-         // Flush standard output to ensure the prompt appears before waiting for input.
-         fflush(stdout);
+    // Print the initial command prompt before entering the loop.
+    printf("> ");
+    fflush(stdout);
 
-         // Read a line of text from standard input (the keyboard).
-         // `fgets` reads up to `BUFFER_SIZE - 1` characters or until a newline is encountered.
-         // It includes the newline in the buffer (if it fits) and null-terminates the string.
-         // Returns NULL on end-of-file or error.
-         if (fgets(input, BUFFER_SIZE, stdin) == NULL) {
-             // Check if fgets failed because we are shutting down or due to a real error.
-             if (state->running) {
-                 // If we are still supposed to be running, log an error.
-                 perror("Error reading input from stdin"); // Use perror for system errors
-             }
-             // Break the loop if input fails (EOF or error).
-             break;
-         }
+    // Main loop: continues as long as the application is running.
+    while (state->running) {
+        // --- Prepare for select() ---
+        // Clear the file descriptor set.
+        FD_ZERO(&readfds);
+        // Add the standard input file descriptor (STDIN_FILENO, usually 0) to the set.
+        FD_SET(STDIN_FILENO, &readfds);
 
-         // Remove the trailing newline character, if present, added by fgets.
-         // `strcspn` finds the index of the first occurrence of any character in the reject string ("\n").
-         // By setting the character at that index to '\0', we effectively remove the newline.
-         input[strcspn(input, "\n")] = '\0';
+        // Set the timeout for select().
+        timeout.tv_sec = 1;  // Wait for up to 1 second.
+        timeout.tv_usec = 0; // 0 microseconds.
 
-         // If the input line is empty after removing the newline (e.g., user just pressed Enter),
-         // ignore it and prompt again.
-         if (strlen(input) == 0) {
-             continue;
-         }
+        // --- Wait for input or timeout using select() ---
+        int activity = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &timeout);
 
-         // Process the command entered by the user.
-         // `handle_command` returns 1 if the user entered `/quit`.
-         if (handle_command(state, input) == 1) {
-             // If handle_command signals to quit, break out of the input loop.
-             break;
-         }
-         // Otherwise, the loop continues for the next command.
-     } // End of while(state->running) loop
+        // --- Handle select() results ---
+        if (activity < 0) {
+            // An error occurred during select().
+            if (errno == EINTR) {
+                // Interrupted by signal, simply continue the loop to check state->running.
+                continue;
+            } else {
+                // A non-interrupt error occurred. Log it and exit the thread.
+                perror("select error in user input thread");
+                break;
+            }
+        }
 
-     log_message("User input thread stopped.");
-     // Return NULL as the thread exit value.
-     return NULL;
- }
+        // Check if the application is still supposed to be running after select() returns.
+        if (!state->running) {
+            break; // Exit the loop if the running flag is now false.
+        }
+
+        // If activity is 0, select() timed out. No input was ready.
+        // DO NOT print the prompt here. Just loop again to wait.
+        if (activity == 0) {
+            continue;
+        }
+
+        // If we reach here, activity > 0, meaning input is ready on STDIN_FILENO.
+
+        // --- Read the available input ---
+        if (fgets(input, BUFFER_SIZE, stdin) == NULL) {
+            // Check if fgets failed because we are shutting down or due to a real error/EOF.
+            if (state->running) {
+                if (feof(stdin)) {
+                    log_message("EOF detected on stdin. Exiting input loop.");
+                } else {
+                    perror("Error reading input from stdin");
+                }
+            }
+            // Break the loop if input fails (EOF or error).
+            break;
+        }
+
+        // --- Process the received input ---
+        input[strcspn(input, "\n")] = '\0'; // Remove trailing newline.
+
+        // Check if the input line is empty (user just pressed Enter).
+        if (strlen(input) == 0) {
+            // Input was empty. Print the prompt again and wait for the next input.
+            printf("> ");
+            fflush(stdout);
+            continue; // Go back to select()
+        }
+
+        // Process the non-empty command entered by the user.
+        if (handle_command(state, input) == 1) {
+            // If handle_command signals to quit (/quit command), break out of the input loop.
+            break;
+        }
+
+        // --- Command processed (or was unknown/invalid) ---
+        // Print the prompt again, ready for the next command.
+        printf("> ");
+        fflush(stdout);
+
+        // Loop continues to wait for next input via select().
+
+    } // End of while(state->running) loop
+
+    log_message("User input thread stopped.");
+    // Return NULL as the thread exit value.
+    return NULL;
+}

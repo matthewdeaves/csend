@@ -14,11 +14,11 @@ WORKDIR /app
 # Copy the Makefile first
 COPY Makefile ./
 
-# Copy all header files
-COPY discovery.h peer.h ui_terminal.h utils.h signal_handler.h network.h protocol.h ./
+# Copy all header files (ADDED messaging.h)
+COPY discovery.h peer.h ui_terminal.h utils.h signal_handler.h network.h protocol.h messaging.h ./
 
-# Copy all source files
-COPY discovery.c network.c peer.c protocol.c ui_terminal.c utils.c signal_handler.c ./
+# Copy all source files (ADDED messaging.c)
+COPY discovery.c network.c peer.c protocol.c ui_terminal.c utils.c signal_handler.c messaging.c ./
 
 # Compile the application using the Makefile
 # This will use the CFLAGS and LDFLAGS defined in the Makefile
