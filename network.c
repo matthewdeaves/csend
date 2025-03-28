@@ -1,242 +1,125 @@
-#include "peer.h"
-#include <netdb.h>
+// Include the header file for this module, declaring the functions defined here.
+// It also brings in necessary types like app_state_t and size_t.
+#include "network.h"
 
+// --- System Headers ---
+// Required for getifaddrs() and freeifaddrs() to query network interface addresses.
+#include <ifaddrs.h>
+// Required for network address conversion functions (inet_ntop, inet_pton)
+// and socket-related functions/structures.
+#include <arpa/inet.h>
+// Core socket functions and structures (socket, bind, listen, accept, connect, send, recv, setsockopt).
+#include <sys/socket.h>
+// Defines internet domain address structures (struct sockaddr_in) and constants (AF_INET, INADDR_ANY).
+#include <netinet/in.h> // Often included by arpa/inet.h or sys/socket.h, but good practice to be explicit.
+
+// Standard C library for input/output, primarily used here for perror.
+#include <stdio.h>
+// Standard C library for string manipulation (strncpy, strncmp, memset, strlen).
+#include <string.h>
+// Defines error constants like errno and EINTR (Interrupted system call).
+#include <errno.h>
+// Required for struct timeval, used by select() and set_socket_timeout().
+#include <sys/time.h>
+
+/**
+ * @brief Retrieves the primary non-loopback IPv4 address of the local machine.
+ * @details Iterates through the network interfaces using `getifaddrs`. It looks for
+ *          the first active IPv4 interface that is not the loopback interface
+ *          (i.e., not starting with "127.").
+ * @param buffer A character buffer where the retrieved IP address string will be stored.
+ * @param size The size of the provided buffer. `strncpy` is used to prevent overflow.
+ * @return 0 on success (IP address found and copied to buffer).
+ * @return -1 on failure (e.g., `getifaddrs` failed, or no suitable IPv4 address found).
+ *         Error details for `getifaddrs` are printed via `perror`.
+ */
 int get_local_ip(char *buffer, size_t size) {
+    // Pointers for iterating through the linked list of interface addresses.
     struct ifaddrs *ifaddr, *ifa;
+    // Variable to store the address family (e.g., AF_INET for IPv4).
     int family;
-    
+
+    // Get a linked list of all network interfaces on the system.
     if (getifaddrs(&ifaddr) == -1) {
-        perror("getifaddrs");
-        return -1;
+        perror("getifaddrs failed");
+        return -1; // Return failure if unable to get interface list.
     }
-    
-    // Walk through linked list, finding the first non-loopback IPv4 address
+
+    // Iterate through the linked list of interfaces.
+    // `ifa` points to the current interface structure in the list.
     for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        // Skip interfaces that don't have an address structure associated with them.
         if (ifa->ifa_addr == NULL)
             continue;
-            
+
+        // Get the address family of the current interface.
         family = ifa->ifa_addr->sa_family;
-        
-        // Check it is IPv4
+
+        // Check if it's an IPv4 address.
         if (family == AF_INET) {
-            // Convert IP to string to check if it's loopback
-            char ip_str[INET_ADDRSTRLEN];
+            // Buffer to hold the string representation of the IP address.
+            char ip_str[INET_ADDRSTRLEN]; // Max length for IPv4 string + null terminator.
+            // Cast the generic sockaddr to the specific sockaddr_in for IPv4.
             struct sockaddr_in *ipv4 = (struct sockaddr_in *)ifa->ifa_addr;
+
+            // Convert the binary IPv4 address to a human-readable string.
+            // AF_INET: Address family.
+            // &(ipv4->sin_addr): Pointer to the binary IP address.
+            // ip_str: Destination buffer for the string.
+            // INET_ADDRSTRLEN: Size of the destination buffer.
             inet_ntop(AF_INET, &(ipv4->sin_addr), ip_str, INET_ADDRSTRLEN);
-            
-            // Skip loopback addresses (127.x.x.x)
+
+            // Check if the IP address is a loopback address (starts with "127.").
+            // We want the primary *external* or *LAN* IP, not the internal loopback.
             if (strncmp(ip_str, "127.", 4) == 0) {
-                continue;
+                continue; // Skip this interface and move to the next.
             }
-            
-            // Copy the IP address to the output buffer
+
+            // Found a non-loopback IPv4 address. Copy it to the output buffer.
+            // Use strncpy for safety, ensuring we don't write past the buffer end.
             strncpy(buffer, ip_str, size);
-            buffer[size-1] = '\0';
-            
+            // Explicitly null-terminate the buffer, as strncpy might not if size is reached.
+            buffer[size - 1] = '\0';
+
+            // Free the memory allocated by getifaddrs.
             freeifaddrs(ifaddr);
-            return 0;
+            return 0; // Return success.
         }
+        // Note: Could add an 'else if (family == AF_INET6)' block here to handle IPv6 if needed.
     }
-    
+
+    // If the loop finishes without finding a suitable address, free the memory.
     freeifaddrs(ifaddr);
+    // Return failure code indicating no suitable IP was found.
     return -1;
 }
 
+/**
+ * @brief Sets receive and send timeouts for a given socket.
+ * @details Configures the `SO_RCVTIMEO` and `SO_SNDTIMEO` socket options.
+ *          If a receive or send operation on the socket takes longer than the
+ *          specified timeout, the operation will fail with `errno` set to
+ *          `EAGAIN` or `EWOULDBLOCK`.
+ * @param socket The file descriptor of the socket to configure.
+ * @param seconds The timeout duration in seconds. Fractional seconds are not supported here.
+ */
 void set_socket_timeout(int socket, int seconds) {
+    // Structure to define the timeout duration.
     struct timeval tv;
+    // Set the seconds part of the timeout.
     tv.tv_sec = seconds;
+    // Set the microseconds part of the timeout (0 in this case).
     tv.tv_usec = 0;
-    setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-}
 
-int init_listener(app_state_t *state) {
-    struct sockaddr_in address;
-    int opt = 1;
-    
-    // Create TCP socket for incoming messages
-    if ((state->tcp_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        perror("TCP socket creation failed");
-        return -1;
-    }
-    
-    // Set socket options
-    if (setsockopt(state->tcp_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
-        perror("TCP setsockopt failed");
-        close(state->tcp_socket);
-        state->tcp_socket = -1;
-        return -1;
-    }
-    
-    // Configure address
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(PORT_TCP);
-    
-    // Bind socket
-    if (bind(state->tcp_socket, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        perror("TCP bind failed");
-        close(state->tcp_socket);
-        state->tcp_socket = -1;
-        return -1;
-    }
-    
-    // Listen for connections
-    if (listen(state->tcp_socket, 10) < 0) {
-        perror("TCP listen failed");
-        close(state->tcp_socket);
-        state->tcp_socket = -1;
-        return -1;
-    }
-    
-    log_message("TCP listener initialized on port %d", PORT_TCP);
-    return 0;
-}
+    // Set the receive timeout option.
+    // SOL_SOCKET: Option level (general socket options).
+    // SO_RCVTIMEO: Option name for receive timeout.
+    // &tv: Pointer to the timeval structure containing the timeout value.
+    // sizeof(tv): Size of the timeval structure.
+    // Note: Error checking for setsockopt is omitted here for brevity, but should ideally be included.
+    setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
 
-int send_message(const char *ip, const char *message, const char *msg_type) {
-    int sock;
-    struct sockaddr_in server_addr;
-    char buffer[BUFFER_SIZE];
-    app_state_t *state = g_state;
-    
-    // Create socket
-    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        perror("Socket creation failed");
-        return -1;
-    }
-    
-    // Set timeout
-    set_socket_timeout(sock, 5);
-    
-    // Configure server address
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(PORT_TCP);
-    
-    // Convert IP address
-    if (inet_pton(AF_INET, ip, &server_addr.sin_addr) <= 0) {
-        perror("Invalid address");
-        close(sock);
-        return -1;
-    }
-    
-    // Connect to server
-    if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        perror("Connection failed");
-        close(sock);
-        return -1;
-    }
-    
-    // Format message
-    format_message(buffer, BUFFER_SIZE, msg_type, state->username, message);
-    
-    // Send message
-    if (send(sock, buffer, strlen(buffer), 0) < 0) {
-        perror("Send failed");
-        close(sock);
-        return -1;
-    }
-    
-    // Close socket
-    close(sock);
-    return 0;
-}
-
-/*
- * This function runs in a separate thread and is responsible for:
- * 1. Listening for incoming TCP connections from other peers
- * 2. Accepting connections and reading message data
- * 3. Parsing received messages and handling them based on message type
- * 4. Adding new peers to the application's peer list when messages are received
- * 5. Processing text messages and displaying them to the user
- * 6. Handling quit notifications from peers leaving the network
- * */
-void *listener_thread(void *arg) {
-    app_state_t *state = (app_state_t *)arg;
-    struct sockaddr_in client_addr;
-    int addrlen = sizeof(client_addr);
-    int client_sock;
-    char buffer[BUFFER_SIZE];
-    char sender_ip[INET_ADDRSTRLEN];
-    char sender_username[32];
-    char msg_type[32];
-    char content[BUFFER_SIZE];
-    fd_set readfds;
-    struct timeval timeout;
-    
-    log_message("Listener thread started");
-    
-    while (state->running) {
-        // Set up select to make accept non-blocking
-        FD_ZERO(&readfds);
-        FD_SET(state->tcp_socket, &readfds);
-        
-        timeout.tv_sec = 1;
-        timeout.tv_usec = 0;
-        
-        int activity = select(state->tcp_socket + 1, &readfds, NULL, NULL, &timeout);
-        
-        if (activity < 0 && errno != EINTR) {
-            perror("Select error");
-            break;
-        }
-        
-        // Check if we should continue running
-        if (!state->running) {
-            break;
-        }
-        
-        // If timeout or error, continue
-        if (activity <= 0) {
-            continue;
-        }
-        
-        // Accept incoming connection
-        if ((client_sock = accept(state->tcp_socket, (struct sockaddr *)&client_addr, 
-                                 (socklen_t*)&addrlen)) < 0) {
-            if (errno != EINTR) {
-                perror("Accept failed");
-            }
-            continue;
-        }
-        
-        // Get client IP
-        inet_ntop(AF_INET, &client_addr.sin_addr, sender_ip, INET_ADDRSTRLEN);
-        
-        // Read message
-        memset(buffer, 0, BUFFER_SIZE);
-        if (read(client_sock, buffer, BUFFER_SIZE) > 0) {
-            // Parse message
-            if (parse_message(buffer, sender_ip, sender_username, msg_type, content) == 0) {
-                // Add peer to list
-                if (add_peer(state, sender_ip, sender_username) > 0) {
-                    log_message("New peer discovered: %s@%s", sender_username, sender_ip);
-                }
-                
-                // Handle message based on type
-                if (strcmp(msg_type, MSG_TEXT) == 0) {
-                    log_message("Message from %s@%s: %s", sender_username, sender_ip, content);
-                }
-                else if (strcmp(msg_type, MSG_QUIT) == 0) {
-                    log_message("Peer %s@%s has left the network", sender_username, sender_ip);
-                    
-                    // Remove peer
-                    pthread_mutex_lock(&state->peers_mutex);
-                    for (int i = 0; i < MAX_PEERS; i++) {
-                        if (state->peers[i].active && strcmp(state->peers[i].ip, sender_ip) == 0) {
-                            state->peers[i].active = 0;
-                            break;
-                        }
-                    }
-                    pthread_mutex_unlock(&state->peers_mutex);
-                }
-            }
-        }
-        
-        // Close client socket
-        close(client_sock);
-    }
-    
-    log_message("Listener thread stopped");
-    return NULL;
+    // Set the send timeout option.
+    // SO_SNDTIMEO: Option name for send timeout.
+    setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
 }
