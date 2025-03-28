@@ -9,7 +9,8 @@ TARGET = p2p_chat
 # Source files and object files
 SRCS = peer.c network.c protocol.c ui_terminal.c discovery.c utils.c signal_handler.c
 OBJS = $(SRCS:.c=.o)
-HEADERS = peer.h ui_terminal.h discovery.h utils.h signal_handler.h
+# Ensure ALL header files are listed here for the simple dependency rule below
+HEADERS = peer.h network.h protocol.h ui_terminal.h discovery.h utils.h signal_handler.h
 
 # Default target
 all: $(TARGET)

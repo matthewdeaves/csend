@@ -1,4 +1,15 @@
-#include "discovery.h"
+#include "discovery.h"  // Already includes peer.h, sys/socket.h, netinet/in.h
+
+#include "utils.h"      // For log_message
+#include "protocol.h"   // For format_message, parse_message
+#include "network.h"    // For get_local_ip, set_socket_timeout
+
+#include <stdio.h>      // For perror
+#include <string.h>     // For memset, strlen, strcmp, strcpy
+#include <time.h>       // For time, time_t
+#include <unistd.h>     // For close, usleep
+#include <arpa/inet.h>  // For inet_ntop, htonl, htons (though htons might be in netinet/in.h)
+#include <errno.h>      // For errno (used implicitly by perror, good to include)
 
 /**
  * Initializes the UDP socket for peer discovery

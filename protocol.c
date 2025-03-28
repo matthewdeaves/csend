@@ -1,4 +1,9 @@
-#include "peer.h"
+#include "protocol.h"   // Includes peer.h (providing BUFFER_SIZE, INET_ADDRSTRLEN)
+
+#include "network.h"    // For get_local_ip
+
+#include <stdio.h>      // For snprintf
+#include <string.h>     // For strcpy, strncpy, strtok_r, strchr
 
 // Message format: TYPE|SENDER|CONTENT
 // Example: TEXT|username@192.168.1.5|Hello, world!

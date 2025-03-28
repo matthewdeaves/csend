@@ -1,7 +1,8 @@
-#include <stdio.h>    /* For printf, fflush, stdout */
-#include <stdarg.h>   /* For va_list, va_start, va_end */
-#include <time.h>     /* For time_t, time, localtime, strftime */
-#include <stddef.h>   /* For NULL */
+#include "utils.h"      // For the function declaration
+
+#include <stdio.h>      // For vsnprintf, printf
+#include <stdarg.h>     // For va_list, va_start, va_end
+#include <time.h>       // For time_t, time, localtime, strftime
 
 /*
  * This function creates a timestamped log entry and outputs it to the console.

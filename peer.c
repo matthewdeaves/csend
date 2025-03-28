@@ -1,9 +1,16 @@
 #include "peer.h"
-#include "discovery.h"
-#include "ui_terminal.h"
-#include <stdarg.h>
-#include <signal.h>
-#include <unistd.h>
+#include "discovery.h"  // For init_discovery, discovery_thread
+#include "network.h"    // For init_listener, listener_thread
+#include "ui_terminal.h"// For user_input_thread
+#include "signal_handler.h" // For handle_signal
+#include "utils.h"      // For log_message
+
+#include <string.h>     // For memset, strncpy, strcmp
+#include <unistd.h>     // For close, usleep
+#include <stdlib.h>     // For EXIT_SUCCESS, EXIT_FAILURE
+#include <stdio.h>      // For general standard I/O (might be needed indirectly)
+#include <signal.h>     // For struct sigaction, sigaction()
+#include <pthread.h>    // For pthread_create, pthread_join (though already in peer.h)
 
 // Global state pointer for signal handler (see peer.h for definition of app_state_t struct
 // which holds information about the peer that is running)

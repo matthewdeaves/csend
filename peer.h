@@ -1,24 +1,13 @@
 #ifndef PEER_H
 #define PEER_H
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <net/if.h>
-#include <ifaddrs.h>
-#include <netdb.h>
-#include <signal.h>
-#include <pthread.h>
-#include <errno.h>
-#include <time.h>
-#include <fcntl.h>
-#include <sys/select.h>
+#include <time.h>       // For time_t
+#include <pthread.h>    // For pthread_mutex_t
+#include <signal.h>     // For sig_atomic_t
+#include <netinet/in.h> // For INET_ADDRSTRLEN (often included by arpa/inet.h)
+#include <arpa/inet.h>  // For INET_ADDRSTRLEN
 
+// --- Constants ---
 #define PORT_TCP 8080
 #define PORT_UDP 8081
 #define BUFFER_SIZE 1024
@@ -26,25 +15,22 @@
 #define DISCOVERY_INTERVAL 10 // seconds
 #define PEER_TIMEOUT 30 // seconds
 
-// Message types
-#define MSG_DISCOVERY "DISCOVERY"
-#define MSG_DISCOVERY_RESPONSE "DISCOVERY_RESPONSE"
-#define MSG_TEXT "TEXT"
-#define MSG_QUIT "QUIT"
+// --- Data Structures ---
 
 // Peer structure
 typedef struct {
-    char ip[INET_ADDRSTRLEN];
+    char ip[INET_ADDRSTRLEN]; // Requires <arpa/inet.h> or <netinet/in.h>
     char username[32];
-    time_t last_seen;
+    time_t last_seen;         // Requires <time.h>
     int active;
 } peer_t;
 
-// Global state
+// Application state structure
 typedef struct app_state_t {
     volatile sig_atomic_t running;  // Flag indicating if the application is running; volatile ensures visibility across threads
-                                    // and sig_atomic_t guarantees atomic access from signal handlers
-    
+                                    // and sig_atomic_t guarantees atomic access from signal handlers. 
+                                    // Requires <signal.h>
+
     peer_t peers[MAX_PEERS];        // Array of peer structures containing information about connected peers
                                     // Limited to MAX_PEERS entries to prevent unbounded memory usage
     
@@ -61,36 +47,40 @@ typedef struct app_state_t {
                                     // Ensures thread safety when multiple threads read/write peer information
                                     // Basically means r/w to this var can not be interrupted. Threads call for to
                                     // hold the lock on this var and will be blocked until the lock is released by another
+                                    // Requires <pthread.h>
 } app_state_t;
 
-// Function declarations
 
-// Main components
+// --- Function Declarations (defined in peer.c) ---
+
+/**
+ * @brief Initializes the application state structure.
+ * @param state Pointer to the app_state_t structure to initialize.
+ * @param username The username for this peer.
+ */
 void init_app_state(app_state_t *state, const char *username);
+
+/**
+ * @brief Cleans up resources associated with the application state.
+ * Closes sockets and destroys the mutex.
+ * @param state Pointer to the app_state_t structure to clean up.
+ */
 void cleanup_app_state(app_state_t *state);
 
-// Network functions
-int init_listener(app_state_t *state);
-int init_discovery(app_state_t *state);
-void *listener_thread(void *arg);
-void *discovery_thread(void *arg);
-void *user_input_thread(void *arg);
-int send_message(const char *ip, const char *message, const char *msg_type);
-int broadcast_discovery(app_state_t *state);
-
-// Protocol functions
-int parse_message(const char *buffer, char *sender_ip, char *sender_username, char *msg_type, char *content);
-int format_message(char *buffer, int buffer_size, const char *msg_type, 
-                  const char *sender, const char *content);
-
-// Utility functions
-void handle_signal(int sig);
-void log_message(const char *format, ...);
+/**
+ * @brief Adds a new peer to the list or updates an existing one.
+ * This function is thread-safe.
+ * @param state Pointer to the application state.
+ * @param ip IP address of the peer.
+ * @param username Username of the peer.
+ * @return 1 if a new peer was added, 0 if an existing peer was updated, -1 if the list is full.
+ */
 int add_peer(app_state_t *state, const char *ip, const char *username);
-void set_socket_timeout(int socket, int seconds);
-int get_local_ip(char *buffer, size_t size);
 
-// Global state for signal handler
+
+// --- Global State ---
+
+// Global pointer to the application state, primarily for the signal handler.
 extern app_state_t *g_state;
 
 #endif // PEER_H

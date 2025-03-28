@@ -1,5 +1,23 @@
-#include "peer.h"
-#include <netdb.h>
+#include "network.h"    // Already includes peer.h, stddef.h
+
+#include "utils.h"      // For log_message
+#include "protocol.h"   // For format_message, parse_message
+
+// Required for getifaddrs/freeifaddrs
+#include <ifaddrs.h>
+// Required for inet_ntop/inet_pton and socket functions
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h> // Often included by arpa/inet.h or sys/socket.h, but good to be explicit
+
+#include <stdio.h>      // For perror
+#include <string.h>     // For strncpy, strncmp, memset, strlen
+#include <unistd.h>     // For read, close
+#include <errno.h>      // For errno, EINTR
+#include <sys/select.h> // For select, fd_set, FD_ZERO, FD_SET
+#include <sys/time.h>   // For struct timeval (used in set_socket_timeout)
+
+// Removed <netdb.h> as it didn't seem to be used directly
 
 int get_local_ip(char *buffer, size_t size) {
     struct ifaddrs *ifaddr, *ifa;

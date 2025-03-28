@@ -6,10 +6,17 @@
  * to the user, and processing commands in the terminal interface.
  */
 
- #include "ui_terminal.h"
- #include "peer.h"
- #include <stdio.h>
- #include <string.h>
+#include "ui_terminal.h" // Already includes peer.h
+
+#include "network.h"     // For send_message
+#include "utils.h"       // For log_message
+#include "protocol.h"    // For MSG_TEXT, MSG_QUIT
+
+#include <stdio.h>       // For fgets, printf, stdout, fflush
+#include <string.h>      // For strlen, strncmp, strcmp, strcspn, strcpy, strtok
+#include <time.h>        // For time, difftime
+#include <pthread.h>     // For pthread_mutex_lock/unlock (though already in peer.h)
+#include <stdlib.h>      // For atoi
  
  /**
   * @brief Displays the help message with available commands
