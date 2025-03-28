@@ -3,7 +3,7 @@
 #include "peer.h"
 // Include headers for other modules providing necessary functionality.
 #include "discovery.h"      // For init_discovery() and discovery_thread()
-#include "network.h"        // For init_listener() and listener_thread()
+#include "messaging.h"        // For init_listener() and listener_thread()
 #include "ui_terminal.h"    // For user_input_thread()
 #include "signal_handler.h" // For handle_signal() function used with signal handling
 #include "utils.h"          // For log_message() utility function

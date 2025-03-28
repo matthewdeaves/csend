@@ -15,6 +15,7 @@
 #include "network.h"     // Needed for send_message() to send messages over TCP.
 #include "utils.h"       // Needed for log_message() for displaying status/error messages.
 #include "protocol.h"    // Needed for message type constants like MSG_TEXT and MSG_QUIT.
+#include "messaging.h"   // Needed for send_message()
 
 // --- Standard Library Includes ---
 #include <stdio.h>       // For standard input/output functions: fgets (read input), printf (display output), stdout, fflush (ensure output is displayed promptly).
