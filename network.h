@@ -34,13 +34,13 @@ int init_listener(app_state_t *state);
 /**
  * @brief Sends a formatted message to a specific peer via TCP.
  * Creates a temporary connection for sending the message.
- * Note: Uses the global g_state to get the sender's username.
  * @param ip The IP address of the recipient peer.
  * @param message The content of the message.
  * @param msg_type The type of the message (e.g., MSG_TEXT, MSG_QUIT).
+ * @param sender_username The username of the peer sending the message.
  * @return 0 on success, -1 on failure.
  */
-int send_message(const char *ip, const char *message, const char *msg_type);
+int send_message(const char *ip, const char *message, const char *msg_type, const char *sender_username);
 
 /**
  * @brief The main function for the TCP listener thread.

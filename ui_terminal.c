@@ -130,7 +130,7 @@
          pthread_mutex_unlock(&state->peers_mutex);
          
          if (found) {
-             if (send_message(target_ip, msg_start, MSG_TEXT) < 0) {
+             if (send_message(target_ip, msg_start, MSG_TEXT, state->username) < 0) {
                  log_message("Failed to send message to %s", target_ip);
              } else {
                  log_message("Message sent to %s", target_ip);
@@ -145,7 +145,7 @@
          
          for (int i = 0; i < MAX_PEERS; i++) {
              if (state->peers[i].active) {
-                 if (send_message(state->peers[i].ip, input + 11, MSG_TEXT) < 0) {
+                 if (send_message(state->peers[i].ip, input + 11, MSG_TEXT, state->username) < 0) {
                      log_message("Failed to send message to %s", state->peers[i].ip);
                  }
              }
@@ -162,7 +162,7 @@
          for (int i = 0; i < MAX_PEERS; i++) {
              if (state->peers[i].active) {
                  // Send quit notification to each peer
-                 if (send_message(state->peers[i].ip, "", MSG_QUIT) < 0) {
+                 if (send_message(state->peers[i].ip, "", MSG_QUIT, state->username) < 0) {
                      log_message("Failed to send quit notification to %s", state->peers[i].ip);
                  }
              }

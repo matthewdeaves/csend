@@ -111,11 +111,11 @@ int init_listener(app_state_t *state) {
     return 0;
 }
 
-int send_message(const char *ip, const char *message, const char *msg_type) {
+int send_message(const char *ip, const char *message, const char *msg_type, const char *sender_username) {
+  
     int sock;
     struct sockaddr_in server_addr;
     char buffer[BUFFER_SIZE];
-    app_state_t *state = g_state;
     
     // Create socket
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -146,7 +146,8 @@ int send_message(const char *ip, const char *message, const char *msg_type) {
     }
     
     // Format message
-    format_message(buffer, BUFFER_SIZE, msg_type, state->username, message);
+    format_message(buffer, BUFFER_SIZE, msg_type, sender_username, message);
+
     
     // Send message
     if (send(sock, buffer, strlen(buffer), 0) < 0) {
