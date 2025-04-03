@@ -6,6 +6,20 @@ I'll be tagging various points of evolution of this code base with a write up of
 
 ---
 
+## [v0.0.7](https://github.com/matthewdeaves/csend/tree/v0.0.7)
+
+Refactor: Structure project for cross-platform build
+
+- Created posix/, classic_mac/, and shared/ directories.
+- Moved existing POSIX source code into posix/.
+- Moved protocol.[ch] into shared/ as first shared module.
+- Updated #include paths in posix/ code for shared/protocol.h.
+- Updated root Makefile to build POSIX target from new structure.
+- Updated codemerge.sh to support platform selection (posix/classic/all).
+- Updated Dockerfile and docker-compose.yml for new structure.
+
+---
+
 ## [v0.0.6](https://github.com/matthewdeaves/csend/tree/v0.0.6)
 
 A refactor to improve code organization and modularity
