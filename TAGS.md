@@ -5,6 +5,41 @@ To start with I am focussing on the Ubuntu and macOS support as that will be the
 I'll be tagging various points of evolution of this code base with a write up of important learnings and aspects of the code as I go.
 
 ---
+## [v0.0.8](https://github.com/matthewdeaves/csend/tree/v0.0.8)
+
+Add Classic Mac GUI Shell and Build System
+
+- Add initial Classic Mac GUI shell (`classic_mac/main.c`) including:
+    - Toolbox initialization (QuickDraw, Fonts, Windows, Menus, TE, Dialogs).
+    - Main event loop (`WaitNextEvent`).
+    - Loading and displaying a basic dialog window (`GetNewDialog` from resource).
+    - Basic event handling (mouse down for drag/close, update events).
+- Add resource definitions (`classic_mac/csend.r`) for the dialog (`DLOG`/`DITL` ID 128).
+- Add Classic Mac build system (`Makefile.classicmac`) using Retro68 toolchain:
+    - Compiles `classic_mac/main.c` (shared code excluded for now).
+    - Uses `Rez` to combine code, resources, and `Retro68APPL.r`.
+    - Dynamically locates `RIncludes` based on compiler path.
+    - Outputs `.APPL`, `.bin`, `.dsk` files to `build/classic_mac/`.
+- Refactor POSIX `Makefile`:
+    - Organize outputs into `build/posix/` (executable) and `build/obj/posix/` (objects).
+    - Update `clean` target to remove entire `build/` directory.
+- Update Docker configuration (`Dockerfile`, `docker-compose.yml`) to use the new POSIX executable path (`/app/build/posix/csend_posix`).
+
+---
+
+## [v0.0.7](https://github.com/matthewdeaves/csend/tree/v0.0.7)
+
+Refactor: Structure project for cross-platform build
+
+- Created posix/, classic_mac/, and shared/ directories.
+- Moved existing POSIX source code into posix/.
+- Moved protocol.[ch] into shared/ as first shared module.
+- Updated #include paths in posix/ code for shared/protocol.h.
+- Updated root Makefile to build POSIX target from new structure.
+- Updated codemerge.sh to support platform selection (posix/classic/all).
+- Updated Dockerfile and docker-compose.yml for new structure.
+
+---
 
 ## [v0.0.6](https://github.com/matthewdeaves/csend/tree/v0.0.6)
 
