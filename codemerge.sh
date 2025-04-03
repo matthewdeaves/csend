@@ -6,9 +6,7 @@
 # Default values
 output_file="combined_code.txt"
 include_headers=true
-sort_method="dependency" # Default sort method changed to dependency
-file_pattern="*.c"
-target_dir="."
+platform="all" # Default platform selection
 add_separator=true
 separator_line="//===================================="
 include_makefile=false
@@ -18,21 +16,21 @@ include_docker=false
 show_help() {
     echo "Usage: $0 [options]"
     echo
+    echo "Merges source code from shared/, posix/, and classic_mac/ directories."
+    echo
     echo "Options:"
-    echo "  -o, --output FILE       Specify output file (default: combined_code.txt)"
-    echo "  -d, --directory DIR     Specify target directory (default: current directory)"
-    echo "  -p, --pattern PATTERN   File pattern to match (default: *.c)"
-    echo "  -s, --sort METHOD       Sorting method: alphabetical, dependency, manual (default: dependency)"
-    echo "  -n, --no-headers        Don't include filename headers"
-    echo "  -m, --no-separators     Don't include separator lines between files"
-    echo "  -M, --include-makefile  Append Makefile content at the end"
-    echo "  -D, --include-docker    Append Dockerfile, docker-compose.yml and docker.sh content at the end"
-    echo "  -h, --help              Display this help message"
+    echo "  -o, --output FILE          Specify output file (default: combined_code.txt)"
+    echo "  -P, --platform PLATFORM    Specify platform: posix, classic, all (default: all)"
+    echo "  -n, --no-headers           Don't include filename headers"
+    echo "  -m, --no-separators        Don't include separator lines between files"
+    echo "  -M, --include-makefile     Append root Makefile content at the end"
+    echo "  -D, --include-docker       Append root Dockerfile, docker-compose.yml and docker.sh content at the end"
+    echo "  -h, --help                 Display this help message"
     echo
     echo "Examples:"
-    echo "  $0 -o ai_review.txt -p \"*.py\" -s dependency --include-docker"
-    echo "  $0 --directory src --pattern \"*.h\" --sort manual -M"
-    echo "  $0 -p \"*.java\" --no-headers"
+    echo "  $0 -o posix_for_ai.txt -P posix -M"
+    echo "  $0 --platform classic --no-separators"
+    echo "  $0 -o project_snapshot.txt # Defaults to --platform all"
 }
 
 # Parse command line arguments
@@ -42,16 +40,14 @@ while [[ $# -gt 0 ]]; do
             output_file="$2"
             shift 2
             ;;
-        -d|--directory)
-            target_dir="$2"
-            shift 2
-            ;;
-        -p|--pattern)
-            file_pattern="$2"
-            shift 2
-            ;;
-        -s|--sort)
-            sort_method="$2"
+        -P|--platform)
+            platform_arg=$(echo "$2" | tr '[:upper:]' '[:lower:]') # Convert to lowercase
+            if [[ "$platform_arg" == "posix" || "$platform_arg" == "classic" || "$platform_arg" == "all" ]]; then
+                platform="$platform_arg"
+            else
+                echo "Error: Invalid platform '$2'. Use 'posix', 'classic', or 'all'."
+                exit 1
+            fi
             shift 2
             ;;
         -n|--no-headers)
@@ -82,33 +78,31 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Check if target directory exists
-if [ ! -d "$target_dir" ]; then
-    echo "Error: Directory '$target_dir' does not exist."
-    exit 1
-fi
-
 # Create or clear the output file
 > "$output_file"
 
 # Function to append a file with optional header/separator
+# Takes full path as $1, uses it to generate relative path for header
 append_file_content() {
     local file_to_append="$1"
     local output_target="$2"
     local use_headers="$3"
     local use_separator="$4"
     local sep_line="$5"
+    # Use # for Makefiles/Dockerfiles/Shell, // for C/C++ as a guess
+    local header_prefix="//"
+    local file_basename=$(basename "$file_to_append")
+
+    if [[ "$file_basename" == *Makefile* || "$file_basename" == *Dockerfile* || "$file_basename" == *docker-compose.yml* || "$file_basename" == *.sh ]]; then
+        header_prefix="#"
+    fi
 
     if [ -f "$file_to_append" ]; then
         echo "Appending $file_to_append..."
         if [ "$use_headers" = true ]; then
             echo -e "\n$sep_line" >> "$output_target"
-            # Use # for Makefiles/Dockerfiles, // for others as a guess
-            local header_prefix="//"
-            if [[ "$file_to_append" == *Makefile* || "$file_to_append" == *Dockerfile* || "$file_to_append" == *docker-compose.yml* || "$file_to_append" == *docker.sh* ]]; then
-                header_prefix="#"
-            fi
-            echo "$header_prefix FILE: $file_to_append" >> "$output_target"
+            # Display path relative to script execution dir (which should be project root)
+            echo "$header_prefix FILE: ./$file_to_append" >> "$output_target"
             echo -e "$sep_line\n" >> "$output_target"
         elif [ "$use_separator" = true ]; then
              # Add a smaller separator if headers are off but separators are on
@@ -116,170 +110,104 @@ append_file_content() {
         fi
 
         cat "$file_to_append" >> "$output_target"
-
+        # Add extra newline for spacing, only if separators are enabled
         if [ "$use_separator" = true ]; then
-            echo -e "\n\n" >> "$output_target"
+             echo "" >> "$output_target"
         fi
         return 0 # Success
     else
-        echo "Warning: File '$file_to_append' not found in '$target_dir', skipping."
+        echo "Warning: File '$file_to_append' not found, skipping."
         return 1 # Failure
     fi
 }
 
-
-# Function to get files in dependency order (basic implementation)
-get_files_in_dependency_order() {
+# Function to process all .h and .c files in a given directory
+process_directory() {
     local dir="$1"
-    local pattern="$2"
+    local output_target="$2"
+    local use_headers="$3"
+    local use_separator="$4"
+    local sep_line="$5"
+    local processed=0
 
-    # This is a simplified dependency ordering
-    # First, find header files that might be included by others (adjust pattern if needed)
-    find "$dir" -maxdepth 1 -name "*.h" 2>/dev/null | sort
+    if [ ! -d "$dir" ]; then
+        echo "Info: Directory '$dir' does not exist, skipping."
+        return 0
+    fi
 
-    # Then find implementation files
-    # We prioritize files that might be core/base functionality
-    find "$dir" -maxdepth 1 -name "$pattern" | grep -E '(main|core|base|util|common)' 2>/dev/null || true
+    echo "Processing directory: $dir"
 
-    # Then the rest of the files
-    find "$dir" -maxdepth 1 -name "$pattern" | grep -v -E '(main|core|base|util|common)' 2>/dev/null || true
-}
-
-# Function to get files in manual order (interactive)
-get_files_in_manual_order() {
-    local dir="$1"
-    local pattern="$2"
-    local files=()
-    local ordered_files=()
-
-    # Get all matching files (only in the target dir, not subdirs)
+    # Process header files first, sorted alphabetically
     while IFS= read -r file; do
-        files+=("$file")
-    done < <(find "$dir" -maxdepth 1 -name "$pattern" | sort)
-
-    if [ ${#files[@]} -eq 0 ]; then
-        echo "No files matching '$pattern' found in '$dir'."
-        return
-    fi
-
-    echo "Manual ordering mode. Select files in the order you want them to appear:"
-
-    local i=1
-    for file in "${files[@]}"; do
-        echo "$i) $(basename "$file")" # Show only basename for clarity
-        ((i++))
-    done
-
-    echo "Enter file numbers in desired order (space-separated), or press Enter to skip:"
-    read -r file_order
-
-    if [[ -z "$file_order" ]]; then
-         echo "Skipping manual order, using alphabetical."
-         for file in "${files[@]}"; do echo "$file"; done
-         return
-    fi
-
-    local selected_indices=()
-    for num in $file_order; do
-        if [[ "$num" =~ ^[0-9]+$ ]] && [ "$num" -ge 1 ] && [ "$num" -le ${#files[@]} ]; then
-            local index=$((num-1))
-            # Avoid adding duplicates if user enters same number twice
-            if [[ ! " ${selected_indices[@]} " =~ " ${index} " ]]; then
-                 ordered_files+=("${files[$index]}")
-                 selected_indices+=("$index")
-            fi
-        else
-            echo "Warning: Invalid input '$num', skipping."
+        if [ -f "$file" ]; then
+            append_file_content "$file" "$output_target" "$use_headers" "$use_separator" "$sep_line"
+             ((processed++))
         fi
-    done
+    done < <(find "$dir" -maxdepth 1 -name '*.h' 2>/dev/null | sort)
 
-    # Add any files that weren't manually selected at the end (alphabetically)
-    local remaining_files=()
-    local i=0
-    for file in "${files[@]}"; do
-        is_selected=false
-        for selected_index in "${selected_indices[@]}"; do
-            if [[ $i -eq $selected_index ]]; then
-                is_selected=true
-                break
-            fi
-        done
-        if ! $is_selected; then
-            remaining_files+=("$file")
+    # Process source files, sorted alphabetically
+    while IFS= read -r file; do
+        if [ -f "$file" ]; then
+            append_file_content "$file" "$output_target" "$use_headers" "$use_separator" "$sep_line"
+            ((processed++))
         fi
-        ((i++))
-    done
+    done < <(find "$dir" -maxdepth 1 -name '*.c' 2>/dev/null | sort)
 
-    # Append remaining files to the ordered list
-    ordered_files+=("${remaining_files[@]}")
-
-
-    for file in "${ordered_files[@]}"; do
-        echo "$file"
-    done
+    return $processed
 }
+
 
 # --- Main Processing ---
 
 echo "Starting code merge..."
 echo "Output file: $output_file"
-echo "Target directory: $target_dir"
-echo "File pattern: $file_pattern"
-echo "Sort method: $sort_method"
+echo "Platform(s): $platform"
 
-# Get primary code files based on sorting method
-files_to_process=()
-processed_count=0
+total_processed_count=0
+processed_shared=0
+processed_posix=0
+processed_classic=0
 
-case "$sort_method" in
-    alphabetical)
-        while IFS= read -r file; do files_to_process+=("$file"); done < <(find "$target_dir" -maxdepth 1 -name "$file_pattern" | sort)
-        ;;
-    dependency)
-        while IFS= read -r file; do files_to_process+=("$file"); done < <(get_files_in_dependency_order "$target_dir" "$file_pattern")
-        ;;
-    manual)
-        while IFS= read -r file; do files_to_process+=("$file"); done < <(get_files_in_manual_order "$target_dir" "$file_pattern")
-        ;;
-    *)
-        echo "Error: Unknown sorting method '$sort_method'"
-        exit 1
-        ;;
-esac
+# 1. Process Shared Files (Always included unless platform is invalid)
+process_directory "shared" "$output_file" "$include_headers" "$add_separator" "$separator_line"
+processed_shared=$?
+total_processed_count=$((total_processed_count + processed_shared))
 
-# Process each primary code file
-if [ ${#files_to_process[@]} -gt 0 ]; then
-    echo "Processing ${#files_to_process[@]} files matching '$file_pattern'..."
-    for file in "${files_to_process[@]}"; do
-        if [ -f "$file" ]; then
-            append_file_content "$file" "$output_file" "$include_headers" "$add_separator" "$separator_line"
-            ((processed_count++))
-        fi
-    done
-else
-    echo "No files found matching pattern '$file_pattern' in '$target_dir'."
+# 2. Process POSIX Files (if selected)
+if [[ "$platform" == "posix" || "$platform" == "all" ]]; then
+    process_directory "posix" "$output_file" "$include_headers" "$add_separator" "$separator_line"
+    processed_posix=$?
+    total_processed_count=$((total_processed_count + processed_posix))
 fi
 
+# 3. Process Classic Mac Files (if selected)
+if [[ "$platform" == "classic" || "$platform" == "all" ]]; then
+    process_directory "classic_mac" "$output_file" "$include_headers" "$add_separator" "$separator_line"
+    processed_classic=$?
+    total_processed_count=$((total_processed_count + processed_classic))
+fi
 
-# Append Makefile if requested
+# 4. Append Makefile if requested (looks in root directory)
+makefile_found=false
 if [ "$include_makefile" = true ]; then
-    makefile_path="$target_dir/Makefile"
-    append_file_content "$makefile_path" "$output_file" "$include_headers" "$add_separator" "#====================================" # Use # separator for Makefile
+    if append_file_content "Makefile" "$output_file" "$include_headers" "$add_separator" "#===================================="; then
+        makefile_found=true
+    fi
 fi
 
-# Append Docker files if requested
+# 5. Append Docker files if requested (looks in root directory)
+docker_found=false
 if [ "$include_docker" = true ]; then
-    dockerfile_path="$target_dir/Dockerfile"
-    composefile_path="$target_dir/docker-compose.yml"
-    containerfile_path="$target_dir/docker.sh"
-    append_file_content "$dockerfile_path" "$output_file" "$include_headers" "$add_separator" "#====================================" # Use # separator for Dockerfile
-    append_file_content "$composefile_path" "$output_file" "$include_headers" "$add_separator" "#====================================" # Use # separator for docker-compose
-    append_file_content "$containerfile_path" "$output_file" "$include_headers" "$add_separator" "#====================================" # Use # separator for container.sh
+    docker_count=0
+    if append_file_content "Dockerfile" "$output_file" "$include_headers" "$add_separator" "#===================================="; then ((docker_count++)); fi
+    if append_file_content "docker-compose.yml" "$output_file" "$include_headers" "$add_separator" "#===================================="; then ((docker_count++)); fi
+    if append_file_content "docker.sh" "$output_file" "$include_headers" "$add_separator" "#===================================="; then ((docker_count++)); fi
+    if [ $docker_count -gt 0 ]; then docker_found=true; fi
 fi
 
 echo "------------------------------------"
 echo "Code merge complete."
 echo "Output written to: $output_file"
-echo "Total primary files processed: $processed_count"
-if [ "$include_makefile" = true ]; then echo "Included Makefile (if found)."; fi
-if [ "$include_docker" = true ]; then echo "Included Dockerfile and docker-compose.yml (if found)."; fi
+echo "Total source files processed: $total_processed_count (Shared: $processed_shared, POSIX: $processed_posix, Classic: $processed_classic)"
+if [ "$include_makefile" = true ]; then echo "Included Makefile: $makefile_found"; fi
+if [ "$include_docker" = true ]; then echo "Included Docker files: $docker_found"; fi
