@@ -50,7 +50,7 @@ Thumbs.db
 *.tmp
 
 # Compiled binaries
-p2p_chat
+csend_posix
 
 # Developer tool stuff
 combined_code.txt
