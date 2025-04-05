@@ -4,9 +4,9 @@ A simple peer-to-peer chat application built in C. This project aims to support 
 
 Currently, the POSIX version is functional and utilizes UDP for peer discovery on the local network and TCP for direct messaging between peers. It is multi-threaded and includes a basic command-line interface. Docker support is provided for easy setup and testing of the POSIX version.
 
-The Classic Mac version is under development.
+The Classic Mac version is under development and so far just displayed a GUI and allows you to quit the program by clicking the close window button.
 
-Detailed information on the versions can be found [here](TAGS.md)
+Detailed information on the versions of the project can be found [here](TAGS.md). I'm building this out in a way to help others learn and follow along with tags to document the major stages of development from simple slient server apps through to a combined and then shared set C source for different platforms.
 
 ## Project Structure
 
@@ -30,6 +30,18 @@ Detailed information on the versions can be found [here](TAGS.md)
 *   **Logging:** Basic timestamped logging to stdout (`posix/utils.c`, `posix/utils.h`).
 *   **Docker Support:** Includes `Dockerfile`, `docker-compose.yml`, and a helper script (`docker.sh`) to easily build and run multiple peer instances of the POSIX version in containers.
 
+## Features (Classic Mac Version)
+
+The Mac Version is very simple as I learn how to get a simple event driven program structure working. So at the moment the app is very basic.
+
+*   **Basic GUI:** I built a GUI using ResEdit on a virtual Quadra 800 using Qemu and my [tools to make that easy](https://github.com/matthewdeaves/QemuMac). Because I am writing C code for classic Mac in VSCode I have to then use DeRez on the classic Mac to convert the .resource file into a text representation that retro68 can work with. I will explain more of this in future. The GUI has:
+    - two User Controls that are invisible (but will be used to show the peer list and the message history)
+    - A text box for you to type a message
+    - A Send button to send a message
+    - Support for quitting the app by clicking the close window button.
+
+I've done the ground work to begin the process of sharing C code between the POSIX and classic Mac version. I'll start with the message protocol code.
+
 ## Prerequisites
 
 ### For Building POSIX Version Locally:
@@ -45,8 +57,8 @@ Detailed information on the versions can be found [here](TAGS.md)
 
 ### For Building Classic Mac Version:
 
-*   Retro68 cross-compiler toolchain (setup instructions TBD)
-*   Classic Mac OS environment (e.g., via QEMU) for testing
+*   Retro68 cross-compiler toolchain [https://github.com/autc04/Retro68](https://github.com/autc04/Retro68)
+*   Classic Mac OS environment (e.g., via QEMU) for testing (you could consider using my other project [QemuMac](https://github.com/matthewdeaves/QemuMac))
 
 ## Building
 
@@ -61,11 +73,22 @@ Detailed information on the versions can be found [here](TAGS.md)
     ```bash
     make
     ```
-    This will create an executable file named `csend_posix` in the project root directory.
+    This will create an executable file named `build/posix/csend_posix`.
 
 ### Classic Mac Version
 
-(Build instructions TBD - will use Retro68 and a separate build script/Makefile)
+You need to have 
+
+1.  Clone the repository:
+    ```bash
+    git clone git@github.com:matthewdeaves/csend.git
+    cd csend
+    ```
+2.  Compile the application using the Makefile:
+    ```bash
+    make -f Makefile.classicmac
+    ```
+    This will create `build/classic_mac/csend-mac.bin` which can be moved to a classic Mac and then expanded using [binUnpk](https://www.macintoshrepository.org/74045-binunpk) resulting in a runnable application.
 
 ## Running
 
@@ -111,3 +134,7 @@ Once the POSIX application is running (locally or in Docker), you can use the fo
 * /broadcast <message>: Send a <message> to all currently active peers.
 * /quit: Send a quit notification to all peers, gracefully shut down the application, and exit.
 * /help: Display the list of available commands.
+
+### Classic Mac Version
+
+I suggest you use my [QemuMac](https://github.com/matthewdeaves/QemuMac) project to run a VM of Mac OS 7.x using Qemu. It has two scripts that work with the same config files to either run a virtual classic Mac or to mount a shared drive image on the host Ubuntu/Linux machine allowing you to copy files (such as the compiled `build/classic_mac/csend-mac.bin`) file to be uncompressed on the VM and then run.

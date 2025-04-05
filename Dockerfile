@@ -23,11 +23,10 @@ COPY shared ./shared/
 COPY posix ./posix/
 
 # Compile the application using the Makefile
-# The Makefile should handle finding sources in ./posix and ./shared
-# and placing object files in ./obj and the final binary in ./
+# The Makefile will place the output in ./build/posix/csend_posix
 RUN make
 
 # Default command - will be overridden by docker-compose,
 # but good practice to have a sensible default.
-# Use the executable name defined in the Makefile (csend_posix)
-CMD ["/app/csend_posix", "default_user"]
+# Use the executable name and path defined in the Makefile
+CMD ["/app/build/posix/csend_posix", "default_user"]

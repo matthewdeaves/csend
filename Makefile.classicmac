@@ -1,0 +1,131 @@
+# Makefile for csend Classic Mac build using Retro68
+# Outputs are generated in the build/ directory.
+# NOTE: Currently only builds classic_mac/main.c, excluding shared code.
+
+# --- Variables ---
+
+# Assume Retro68 tools are in the PATH
+CC_MAC = m68k-apple-macos-gcc
+REZ = Rez
+
+# --- Dynamically Find RIncludes ---
+
+# Find the full path to the compiler
+CC_MAC_PATH = $(shell which $(CC_MAC))
+
+# Check if the compiler was found in the PATH
+ifeq ($(CC_MAC_PATH),)
+    $(error "$(CC_MAC) not found in PATH. Please ensure the Retro68 toolchain is installed and its bin directory is added to your PATH environment variable.")
+endif
+
+# Derive the toolchain directory (assuming structure like .../Retro68-build/toolchain/bin/compiler)
+TOOLCHAIN_BIN_DIR = $(shell dirname $(CC_MAC_PATH))
+TOOLCHAIN_DIR = $(shell dirname $(TOOLCHAIN_BIN_DIR))
+
+# Construct the expected path to RIncludes relative to the toolchain directory
+RINCLUDES = $(TOOLCHAIN_DIR)/m68k-apple-macos/RIncludes
+
+# Check if the derived RIncludes directory actually exists
+ifeq ($(wildcard $(RINCLUDES)/.),) # Check for existence of the directory itself
+    $(error "Retro68 RIncludes directory not found at the expected location relative to the compiler: $(RINCLUDES). Check your Retro68 installation.")
+endif
+
+# --- Compiler, Linker, Rez Flags ---
+
+# Compiler flags
+# -Iclassic_mac: Ensure compiler finds headers in the classic_mac directory
+# -Ishared: Include path for shared code (REMOVED FOR NOW)
+CFLAGS_MAC = -g -ffunction-sections -Iclassic_mac
+
+# Linker flags (passed via the compiler driver using -Wl,)
+# -Wl,-gc-sections: Linker garbage collection
+# -Wl,--mac-strip-macsbug: Strip MacsBug symbols (remove for debugging)
+LDFLAGS_MAC = -Wl,-gc-sections -Wl,--mac-strip-macsbug
+# Add libraries like -lretro if needed: LDFLAGS_MAC += -lretro
+
+# Rez flags
+# -I$(RINCLUDES): Tell Rez where to find standard resources like Retro68APPL.r
+REZFLAGS = -I"$(RINCLUDES)" # Quote the path in case it contains spaces
+
+# --- Source and Build Directories ---
+
+MAC_DIR = classic_mac
+# SHARED_DIR = shared # Not used yet
+
+BUILD_BASE_DIR = build
+BUILD_DIR = $(BUILD_BASE_DIR)/classic_mac
+OBJ_DIR = $(BUILD_BASE_DIR)/obj/classic_mac
+
+# --- Source Files ---
+
+MAC_C_FILES = $(wildcard $(MAC_DIR)/*.c)
+# SHARED_C_FILES = $(wildcard $(SHARED_DIR)/*.c) # Excluded for now
+SOURCES_ALL = $(MAC_C_FILES) # Only Mac files for now
+
+# --- Object Files ---
+
+MAC_OBJS = $(patsubst $(MAC_DIR)/%.c, $(OBJ_DIR)/%.o, $(MAC_C_FILES))
+# SHARED_OBJS = $(patsubst $(SHARED_DIR)/%.c, $(OBJ_DIR)/shared_%.o, $(SHARED_C_FILES)) # Excluded for now
+OBJS = $(MAC_OBJS) # Only Mac objects for now
+
+# --- Resource and Target Definitions ---
+
+R_FILE_MAC = $(MAC_DIR)/csend.r
+INTERMEDIATE_TARGET = $(OBJ_DIR)/csend-mac.code.bin
+
+TARGET_MAC_BASE = $(BUILD_DIR)/csend-mac
+TARGET_MAC_APPL = $(TARGET_MAC_BASE).APPL
+TARGET_MAC_BIN = $(TARGET_MAC_BASE).bin
+TARGET_MAC_DSK = $(TARGET_MAC_BASE).dsk
+FINAL_TARGETS = $(TARGET_MAC_APPL) $(TARGET_MAC_BIN) $(TARGET_MAC_DSK)
+
+# --- Targets ---
+
+# Default target: Build all final outputs
+all: $(FINAL_TARGETS)
+
+# Rule to create the final outputs using Rez
+# Depends on the intermediate code binary, the TEXTUAL resource definition file (.r),
+# and ensures the build directory exists.
+$(FINAL_TARGETS): $(INTERMEDIATE_TARGET) $(R_FILE_MAC) Makefile.classicmac | $(BUILD_DIR)
+	@echo "Using RIncludes from: $(RINCLUDES)"
+	@echo "Running Rez to create final targets in $(BUILD_DIR)..."
+	# Combine intermediate code, compiled .r resources, and standard APPL template
+	$(REZ) $(REZFLAGS) \
+		--copy "$(INTERMEDIATE_TARGET)" \
+		"$(RINCLUDES)/Retro68APPL.r" \
+		$(R_FILE_MAC) \
+		-t "APPL" -c "CSND" \
+		-o "$(TARGET_MAC_BIN)" --cc "$(TARGET_MAC_APPL)" --cc "$(TARGET_MAC_DSK)" # Quote output paths
+	@echo "Classic Mac build complete. Outputs in $(BUILD_DIR)"
+
+# Rule to link the intermediate code binary from object files
+# Depends on all object files and ensures the object directory exists.
+$(INTERMEDIATE_TARGET): $(OBJS) Makefile.classicmac | $(OBJ_DIR)
+	@echo "Linking intermediate target: $@"
+	# Use CC_MAC (gcc) for linking C code
+	$(CC_MAC) $(OBJS) -o $@ $(LDFLAGS_MAC)
+
+# Rule to compile Classic Mac C source files into object files in OBJ_DIR
+# Depends on the source file and ensures the object directory exists.
+$(OBJ_DIR)/%.o: $(MAC_DIR)/%.c Makefile.classicmac | $(OBJ_DIR)
+	@echo "Compiling $< -> $@"
+	$(CC_MAC) $(CFLAGS_MAC) -c $< -o $@
+
+# Rule to compile shared C source files into object files in OBJ_DIR (COMMENTED OUT)
+# $(OBJ_DIR)/shared_%.o: $(SHARED_DIR)/%.c Makefile.classicmac | $(OBJ_DIR)
+#	@echo "Compiling $< -> $@"
+#	$(CC_MAC) $(CFLAGS_MAC) -c $< -o $@
+
+# Rule to create the build and object directories if they don't exist
+$(BUILD_DIR) $(OBJ_DIR):
+	@mkdir -p $@
+
+# Target to clean up build files
+clean:
+	@echo "Cleaning Classic Mac build files..."
+	@rm -rf $(BUILD_BASE_DIR) # Remove the whole build directory
+	@echo "Clean complete."
+
+# Phony targets are not files
+.PHONY: all clean
