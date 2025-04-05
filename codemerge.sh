@@ -11,26 +11,30 @@ add_separator=true
 separator_line="//===================================="
 include_makefile=false
 include_docker=false
+include_tree=true # Default: include tree output
 
 # Display help message
 show_help() {
     echo "Usage: $0 [options]"
     echo
     echo "Merges source code from shared/, posix/, and classic_mac/ directories."
+    echo "Includes project structure via 'tree .' at the beginning by default."
+    echo "Includes .r resource files from classic_mac/."
     echo
     echo "Options:"
     echo "  -o, --output FILE          Specify output file (default: combined_code.txt)"
     echo "  -P, --platform PLATFORM    Specify platform: posix, classic, all (default: all)"
     echo "  -n, --no-headers           Don't include filename headers"
     echo "  -m, --no-separators        Don't include separator lines between files"
-    echo "  -M, --include-makefile     Append root Makefile content at the end"
+    echo "  -M, --include-makefile     Append root Makefile and Makefile.classicmac content at the end" # Updated help text
     echo "  -D, --include-docker       Append root Dockerfile, docker-compose.yml and docker.sh content at the end"
+    echo "  -T, --no-tree              Don't include 'tree .' output at the beginning"
     echo "  -h, --help                 Display this help message"
     echo
     echo "Examples:"
     echo "  $0 -o posix_for_ai.txt -P posix -M"
-    echo "  $0 --platform classic --no-separators"
-    echo "  $0 -o project_snapshot.txt # Defaults to --platform all"
+    echo "  $0 --platform classic --no-separators --no-tree"
+    echo "  $0 -o project_snapshot.txt # Defaults to --platform all and includes tree"
 }
 
 # Parse command line arguments
@@ -66,6 +70,10 @@ while [[ $# -gt 0 ]]; do
             include_docker=true
             shift
             ;;
+        -T|--no-tree)
+            include_tree=false
+            shift
+            ;;
         -h|--help)
             show_help
             exit 0
@@ -89,29 +97,44 @@ append_file_content() {
     local use_headers="$3"
     local use_separator="$4"
     local sep_line="$5"
-    # Use # for Makefiles/Dockerfiles/Shell, // for C/C++ as a guess
+    # Use # for Makefiles/Dockerfiles/Shell, // for C/C++/Rez as a guess
     local header_prefix="//"
     local file_basename=$(basename "$file_to_append")
 
+    # Guess comment style based on extension
     if [[ "$file_basename" == *Makefile* || "$file_basename" == *Dockerfile* || "$file_basename" == *docker-compose.yml* || "$file_basename" == *.sh ]]; then
         header_prefix="#"
+    elif [[ "$file_basename" == *.r ]]; then
+        header_prefix="//" # Rez files often use C/C++ style comments
     fi
+
 
     if [ -f "$file_to_append" ]; then
         echo "Appending $file_to_append..."
         if [ "$use_headers" = true ]; then
-            echo -e "\n$sep_line" >> "$output_target"
+            # Add leading newline before separator only if file is not empty
+            if [ -s "$output_target" ]; then
+                 echo -e "\n$sep_line" >> "$output_target"
+            else
+                 echo "$sep_line" >> "$output_target" # No leading newline for the very first header
+            fi
             # Display path relative to script execution dir (which should be project root)
             echo "$header_prefix FILE: ./$file_to_append" >> "$output_target"
             echo -e "$sep_line\n" >> "$output_target"
         elif [ "$use_separator" = true ]; then
              # Add a smaller separator if headers are off but separators are on
-             echo -e "\n--- $file_to_append ---\n" >> "$output_target"
+             # Add leading newline before separator only if file is not empty
+             if [ -s "$output_target" ]; then
+                 echo -e "\n--- $file_to_append ---\n" >> "$output_target"
+             else
+                 echo -e "--- $file_to_append ---\n" >> "$output_target" # No leading newline for the very first separator
+             fi
         fi
 
         cat "$file_to_append" >> "$output_target"
-        # Add extra newline for spacing, only if separators are enabled
-        if [ "$use_separator" = true ]; then
+        # Add extra newline for spacing after content, only if separators are enabled AND headers are off
+        # (Headers already add a trailing newline)
+        if [ "$use_separator" = true ] && [ "$use_headers" = false ]; then
              echo "" >> "$output_target"
         fi
         return 0 # Success
@@ -121,8 +144,8 @@ append_file_content() {
     fi
 }
 
-# Function to process all .h and .c files in a given directory
-process_directory() {
+# Function to process specific file types (.h, .c) in a given directory
+process_hc_directory() {
     local dir="$1"
     local output_target="$2"
     local use_headers="$3"
@@ -135,7 +158,7 @@ process_directory() {
         return 0
     fi
 
-    echo "Processing directory: $dir"
+    echo "Processing C/H files in directory: $dir"
 
     # Process header files first, sorted alphabetically
     while IFS= read -r file; do
@@ -163,35 +186,95 @@ echo "Starting code merge..."
 echo "Output file: $output_file"
 echo "Platform(s): $platform"
 
+# 0. Add Tree Output if requested
+tree_output_added=false
+if [ "$include_tree" = true ]; then
+    if command -v tree &> /dev/null; then
+        echo "Adding project structure (tree .)..."
+        {
+            echo "#===================================="
+            echo "# Project Structure (tree .)"
+            echo "#===================================="
+
+            # If tree command fails or produces no output, create a simple directory listing
+            if ! tree_output=$(tree -I 'build|obj' . 2>/dev/null) || [ -z "$tree_output" ]; then
+                echo "# Tree command failed or produced no output. Using simple directory listing:"
+                echo "# Main directories:"
+                find . -type d -maxdepth 1 -not -path "*/\.*" | sort
+                echo "# ----------------"
+                echo "# Files in root:"
+                find . -type f -maxdepth 1 -not -path "*/\.*" | sort
+            else
+                # Output the tree command result
+                echo "$tree_output"
+            fi
+
+            echo -e "\n#====================================\n"
+        } >> "$output_file"
+        tree_output_added=true
+    else
+        echo "Warning: 'tree' command not found. Using simple directory listing instead."
+        {
+            echo "#===================================="
+            echo "# Project Structure (simple directory listing)"
+            echo "#===================================="
+            echo "# Main directories:"
+            find . -type d -maxdepth 1 -not -path "*/\.*" | sort
+            echo "# ----------------"
+            echo "# Files in root:"
+            find . -type f -maxdepth 1 -not -path "*/\.*" | sort
+            echo -e "\n#====================================\n"
+        } >> "$output_file"
+        tree_output_added=true
+    fi
+fi
+
+
 total_processed_count=0
 processed_shared=0
 processed_posix=0
-processed_classic=0
+processed_classic_hc=0 # C and H files for classic
+processed_classic_r=0  # .r files for classic
 
 # 1. Process Shared Files (Always included unless platform is invalid)
-process_directory "shared" "$output_file" "$include_headers" "$add_separator" "$separator_line"
+process_hc_directory "shared" "$output_file" "$include_headers" "$add_separator" "$separator_line"
 processed_shared=$?
 total_processed_count=$((total_processed_count + processed_shared))
 
 # 2. Process POSIX Files (if selected)
 if [[ "$platform" == "posix" || "$platform" == "all" ]]; then
-    process_directory "posix" "$output_file" "$include_headers" "$add_separator" "$separator_line"
+    process_hc_directory "posix" "$output_file" "$include_headers" "$add_separator" "$separator_line"
     processed_posix=$?
     total_processed_count=$((total_processed_count + processed_posix))
 fi
 
 # 3. Process Classic Mac Files (if selected)
 if [[ "$platform" == "classic" || "$platform" == "all" ]]; then
-    process_directory "classic_mac" "$output_file" "$include_headers" "$add_separator" "$separator_line"
-    processed_classic=$?
-    total_processed_count=$((total_processed_count + processed_classic))
+    # Process .h and .c files
+    process_hc_directory "classic_mac" "$output_file" "$include_headers" "$add_separator" "$separator_line"
+    processed_classic_hc=$?
+    total_processed_count=$((total_processed_count + processed_classic_hc))
+
+    # Process .r files specifically for classic_mac
+    echo "Processing R files in directory: classic_mac"
+    while IFS= read -r file; do
+        if [ -f "$file" ]; then
+            append_file_content "$file" "$output_file" "$include_headers" "$add_separator" "$separator_line"
+            ((processed_classic_r++))
+        fi
+    done < <(find "classic_mac" -maxdepth 1 -name '*.r' 2>/dev/null | sort)
+    total_processed_count=$((total_processed_count + processed_classic_r))
+
 fi
 
-# 4. Append Makefile if requested (looks in root directory)
-makefile_found=false
+# 4. Append Makefiles if requested
+makefiles_found_count=0
 if [ "$include_makefile" = true ]; then
     if append_file_content "Makefile" "$output_file" "$include_headers" "$add_separator" "#===================================="; then
-        makefile_found=true
+        ((makefiles_found_count++))
+    fi
+    if append_file_content "Makefile.classicmac" "$output_file" "$include_headers" "$add_separator" "#===================================="; then
+        ((makefiles_found_count++))
     fi
 fi
 
@@ -208,6 +291,11 @@ fi
 echo "------------------------------------"
 echo "Code merge complete."
 echo "Output written to: $output_file"
-echo "Total source files processed: $total_processed_count (Shared: $processed_shared, POSIX: $processed_posix, Classic: $processed_classic)"
-if [ "$include_makefile" = true ]; then echo "Included Makefile: $makefile_found"; fi
+if [ "$include_tree" = true ]; then echo "Included tree structure: $tree_output_added"; fi
+echo "Total source/resource files processed: $total_processed_count"
+echo "  Shared C/H: $processed_shared"
+echo "  POSIX C/H: $processed_posix"
+echo "  Classic C/H: $processed_classic_hc"
+echo "  Classic R: $processed_classic_r"
+if [ "$include_makefile" = true ]; then echo "Included Makefile(s): $makefiles_found_count"; fi # Updated summary message
 if [ "$include_docker" = true ]; then echo "Included Docker files: $docker_found"; fi
