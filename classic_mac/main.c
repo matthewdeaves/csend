@@ -154,12 +154,12 @@ void HandleEvent(EventRecord *event)
                             gDone = true; // Set the global flag to terminate the loop
                         }
                     }
-                    break; // Added break statement for inGoAway case
+                    break;
                 // Add cases for inZoomIn, inZoomOut if needed
                 default:
                     break;
             }
-            break; // Added break statement for outer mouseDown case
+            break;
 
         case keyDown:
         case autoKey:

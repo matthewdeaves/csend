@@ -15,6 +15,7 @@ Detailed information on the versions of the project can be found [here](TAGS.md)
 *   `shared/`: Platform-independent code shared between versions (e.g., communication protocol).
 *   `Makefile`: Builds the POSIX version.
 *   `Dockerfile`, `docker-compose.yml`, `docker.sh`: Support files for running the POSIX version in Docker containers.
+* `setup_retro68.sh` : Script to download, build and setup your PATH for retro68 ready to compile the classic Mac binary
 
 ## Features (POSIX Version)
 
@@ -57,7 +58,7 @@ I've done the ground work to begin the process of sharing C code between the POS
 
 ### For Building Classic Mac Version:
 
-*   Retro68 cross-compiler toolchain [https://github.com/autc04/Retro68](https://github.com/autc04/Retro68)
+*   Retro68 cross-compiler toolchain [https://github.com/autc04/Retro68](https://github.com/autc04/Retro68). You can run `./setup_retro68.sh` to download, build and setup retro68
 *   Classic Mac OS environment (e.g., via QEMU) for testing (you could consider using my other project [QemuMac](https://github.com/matthewdeaves/QemuMac))
 
 ## Building
@@ -89,6 +90,9 @@ You need to have
     make -f Makefile.classicmac
     ```
     This will create `build/classic_mac/csend-mac.bin` which can be moved to a classic Mac and then expanded using [binUnpk](https://www.macintoshrepository.org/74045-binunpk) resulting in a runnable application.
+
+#### A Note on ResEdit and .rsrc files
+I use ResEdit on a Mac VM to create the GUI for csend, saved as a csend.rsrc file. You can't work with .rsrc files on modern Ubuntu/macOS and have to convert the .rsrc file into a text format that retro68 can work with. I've written a detailed explanation of this [here](resedit.md)
 
 ## Running
 
