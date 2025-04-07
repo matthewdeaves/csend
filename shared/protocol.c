@@ -3,10 +3,6 @@
 // providing necessary constants like BUFFER_SIZE and INET_ADDRSTRLEN.
 #include "protocol.h"
 
-// Include the network header for the get_local_ip() function, needed to embed
-// the sender's IP address in outgoing messages.
-#include "network.h"
-
 // Include the utils header for the log_message() function, used for logging
 // warnings and errors within the protocol formatting and parsing logic.
 #include "utils.h"
@@ -29,69 +25,50 @@
 /**
  * @brief Formats a message according to the application's protocol string format.
  * @details Constructs a string in the format "TYPE|SENDER@IP|CONTENT".
- *          It retrieves the local machine's IP address using `get_local_ip`
- *          to include in the SENDER@IP part.
+ *          Uses the local IP address provided by the caller.
  * @param buffer A pointer to the character buffer where the formatted message string will be written.
- *               The caller must ensure this buffer is large enough.
- * @param buffer_size The total size (in bytes) of the `buffer`. Used by `snprintf` to prevent overflows.
+ * @param buffer_size The total size (in bytes) of the `buffer`.
  * @param msg_type A string representing the message type (e.g., "TEXT", "DISCOVERY", "QUIT").
  * @param sender The username of the peer sending the message.
+ * @param local_ip_str The local IP address string provided by the caller. Uses "unknown" if NULL or empty.
  * @param content The main payload/content of the message. Can be an empty string.
  * @return 0 on success.
- * @return -1 if the formatted message (including null terminator) would exceed `buffer_size`.
- *         In this case, the content of `buffer` might be truncated but will be null-terminated
- *         if `buffer_size` > 0.
+ * @return -1 if the formatted message (including null terminator) would exceed `buffer_size` or on encoding error.
  */
 int format_message(char *buffer, int buffer_size, const char *msg_type,
-                  const char *sender, const char *content) {
-    // Buffer to temporarily hold the "sender@ip" part of the message.
-    // Size should be adequate for username + '@' + IP address + null terminator.
-    // Using BUFFER_SIZE might be overkill but is safe. A smaller, calculated size could be used.
-    char sender_with_ip[BUFFER_SIZE]; // Consider a smaller size like 32 + 1 + INET_ADDRSTRLEN ?
-    // Buffer to hold the local IP address string.
-    char local_ip[INET_ADDRSTRLEN];
+                  const char *sender, const char *local_ip_str, const char *content) {
+    char sender_with_ip[BUFFER_SIZE];
+    const char *ip_to_use;
 
-    // Attempt to retrieve the local IP address.
-    if (get_local_ip(local_ip, INET_ADDRSTRLEN) < 0) {
-        // If getting the local IP fails, use "unknown" as a fallback.
-        // This allows message formatting to proceed but indicates an issue.
-        log_message("Warning: format_message failed to get local IP. Using 'unknown'.");
-        strcpy(local_ip, "unknown");
+    // Determine which IP string to use (provided or fallback)
+    if (local_ip_str != NULL && local_ip_str[0] != '\0') {
+        ip_to_use = local_ip_str;
+    } else {
+        log_message("Warning: format_message received NULL or empty local_ip_str. Using 'unknown'.");
+        ip_to_use = "unknown";
     }
 
     // Format the "sender@ip" part using snprintf for safety.
-    // Writes "username@ip_address" into the sender_with_ip buffer.
-    // Returns the number of characters that *would* have been written (excluding null term).
-    int sender_len = snprintf(sender_with_ip, sizeof(sender_with_ip), "%s@%s", sender, local_ip);
-    // Basic check if sender formatting failed or truncated (though unlikely with BUFFER_SIZE).
+    int sender_len = snprintf(sender_with_ip, sizeof(sender_with_ip), "%s@%s", sender, ip_to_use);
      if (sender_len < 0 || sender_len >= (int)sizeof(sender_with_ip)) {
          log_message("Error: format_message failed formatting sender@ip (buffer too small or encoding error).");
          return -1;
      }
 
-
     // Format the complete message string: "TYPE|SENDER@IP|CONTENT".
-    // Use snprintf to write the final formatted string into the output `buffer`.
-    // `snprintf` prevents buffer overflows by writing at most `buffer_size - 1` characters
-    // and always appending a null terminator if `buffer_size` > 0.
     int result = snprintf(buffer, buffer_size, "%s|%s|%s",
                          msg_type, sender_with_ip, content);
 
-    // Check if snprintf truncated the output.
-    // `result` holds the number of characters (excluding null terminator) that *would*
-    // have been written if the buffer was large enough.
-    // If `result` is greater than or equal to `buffer_size`, it means truncation occurred.
+    // Check for truncation or encoding errors
     if (result >= buffer_size) {
         log_message("Warning: format_message output truncated (buffer size %d, needed %d).", buffer_size, result + 1);
-        return -1; // Indicate failure due to insufficient buffer space.
+        return -1;
     }
      if (result < 0) {
          log_message("Error: format_message failed formatting final message (encoding error).");
-         return -1; // Indicate failure due to encoding error
+         return -1;
      }
 
-
-    // Formatting was successful and fit within the buffer.
     return 0;
 }
 

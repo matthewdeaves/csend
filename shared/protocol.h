@@ -3,11 +3,10 @@
 #ifndef PROTOCOL_H // If PROTOCOL_H is not defined...
 #define PROTOCOL_H // ...define PROTOCOL_H.
 
-// Include peer.h primarily for shared constants.
+// Include common definitions needed by the protocol functions and callers.
 // - BUFFER_SIZE: Defines the expected maximum size for message content and temporary buffers used in protocol.c.
 // - INET_ADDRSTRLEN: Defines the necessary size for buffers holding IPv4 address strings (used in parse_message output).
-// Including peer.h ensures that the protocol functions and their callers agree on these buffer sizes.
-#include "peer.h"
+#include "common_defs.h"
 
 // --- Message Type Constants ---
 // Define string constants representing the different types of messages used in the protocol.
@@ -28,21 +27,21 @@
 /**
  * @brief Formats message components into a single string according to the application protocol.
  * @details Constructs a string following the format: "TYPE|SENDER@IP|CONTENT".
- *          It automatically retrieves the local machine's IP address to embed within the SENDER@IP field.
+ *          The caller must provide the local IP address to be embedded.
  *          This function is used before sending any message (discovery, text, quit) over the network.
  * @param buffer Pointer to the character buffer where the resulting formatted string will be written.
- *               The caller must provide a buffer large enough to hold the entire formatted message plus null terminator.
- * @param buffer_size The total size (in bytes) of the `buffer`. This is crucial for `snprintf` (used internally)
- *                    to prevent buffer overflows.
- * @param msg_type A string representing the message type (should be one of the MSG_* constants defined above).
+ *               The caller must provide a buffer large enough.
+ * @param buffer_size The total size (in bytes) of the `buffer`.
+ * @param msg_type A string representing the message type (e.g., MSG_TEXT).
  * @param sender The username of the peer sending the message.
- * @param content The payload or content of the message (e.g., the chat text for MSG_TEXT, or often empty for others).
- * @return 0 on successful formatting (the entire message fit within `buffer_size`).
- * @return -1 if the formatted message (including the null terminator) would exceed `buffer_size`, indicating
- *         that the output in `buffer` is truncated or if an encoding error occurred during formatting.
+ * @param local_ip_str A string containing the local IP address of the sender (e.g., "192.168.1.10").
+ *                     If NULL or empty, "unknown" will be used.
+ * @param content The payload or content of the message.
+ * @return 0 on successful formatting.
+ * @return -1 if the formatted message would exceed `buffer_size` or on encoding error.
  */
 int format_message(char *buffer, int buffer_size, const char *msg_type,
-                  const char *sender, const char *content);
+    const char *sender, const char *local_ip_str, const char *content); // Added local_ip_str
 
 /**
  * @brief Parses an incoming message string received from the network into its components.

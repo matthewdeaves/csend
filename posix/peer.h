@@ -14,22 +14,13 @@
 // Provides definitions related to signal handling, specifically `sig_atomic_t`
 // used for the 'running' flag to ensure atomic access from signal handlers.
 #include <signal.h>
-// Provides definitions for internet domain addresses and constants, including
-// `INET_ADDRSTRLEN` (maximum length of an IPv4 address string).
-#include <netinet/in.h> // Often includes arpa/inet.h, but good practice to include both if needed.
-// Provides functions for network address manipulation, reinforcing the availability
-// of `INET_ADDRSTRLEN` and potentially other functions used elsewhere (like inet_ntop).
-#include <arpa/inet.h>
+
+// --- Project Includes ---
+#include "common_defs.h" // Include the new shared definitions
 
 // --- Constants ---
 // These `#define` directives create symbolic names for constant values used throughout the application.
 
-// Defines the TCP port number used for listening for incoming peer connections and sending messages.
-#define PORT_TCP 8080
-// Defines the UDP port number used for peer discovery broadcasts and responses.
-#define PORT_UDP 8081
-// Defines the standard size (in bytes) for message buffers used for sending and receiving data.
-#define BUFFER_SIZE 1024
 // Defines the maximum number of peers that can be stored in the application's peer list.
 #define MAX_PEERS 10
 // Defines the interval (in seconds) between sending UDP discovery broadcast messages.
