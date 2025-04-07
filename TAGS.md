@@ -5,6 +5,47 @@ To start with I am focussing on the Ubuntu and macOS support as that will be the
 I'll be tagging various points of evolution of this code base with a write up of important learnings and aspects of the code as I go.
 
 ---
+
+## [v0.0.9](https://github.com/matthewdeaves/csend/tree/v0.0.9)
+
+Further work on code sharing between POSIX and ANSI C builds through strategic refactoring to plain C, enabling better cross-platform compatibility while maintaining platform-specific optimizations where needed.
+
+Core Refactoring
+
+- Refactored peer management with new _update_peer_entry helper function
+    - Centralized timestamp and username update logic
+    - Reduced code duplication between updating existing peers and adding new ones
+    - Ensured consistent handling of NULL or empty usernames
+- Moved utility code to shared directory
+    - Relocated utils.c and utils.h from posix/ to shared/
+    - Created shared/common_defs.h for constants used by both platforms
+    - Refactored format_message() to use dependency injection for local IP
+
+Build System Improvements
+
+- Enhanced Classic Mac build
+    - Updated Makefile.classicmac to include shared source files
+    - Added RetroConsole library linking for printf output
+    - Changed linker from gcc to g++ to resolve C++ symbols
+- Code organization
+    - Moved application constants (MAX_PEERS, DISCOVERY_INTERVAL, PEER_TIMEOUT) to common header
+    - Maintained protocol constants in protocol.h for better semantic cohesion
+
+Development Tools
+
+- Added code duplication detection
+    - New cpd_check.sh script integrates PMD's Copy/Paste Detector
+    - Automatically downloads and manages PMD dependencies
+    - Helps identify refactoring opportunities across the codebase
+- Enhanced Docker development environment
+    - Added Docker context management for both Engine and Desktop environments
+    - Implemented automatic detection of connectivity issues
+    - Added dependency checks and installation prompts
+    - Fixed context-related issues and improved error handling
+    - Adjusted IP range for Docker containers to avoid conflicts
+
+---
+
 ## [v0.0.8](https://github.com/matthewdeaves/csend/tree/v0.0.8)
 
 Add Classic Mac GUI Shell and Build System
