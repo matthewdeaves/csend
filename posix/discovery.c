@@ -131,15 +131,21 @@ int broadcast_discovery(app_state_t *state) {
     struct sockaddr_in broadcast_addr;
     // Buffer to hold the formatted discovery message.
     char buffer[BUFFER_SIZE];
+    // Buffer for local IP
+    char local_ip[INET_ADDRSTRLEN];
+
+    // Get the local IP address
+    if (get_local_ip(local_ip, INET_ADDRSTRLEN) < 0) {
+        log_message("Warning: broadcast_discovery failed to get local IP. Using 'unknown'.");
+        strcpy(local_ip, "unknown"); // Fallback
+    }
 
     // Format the discovery message using the defined protocol.
     // Includes message type (MSG_DISCOVERY), sender's username, and empty content.
-    // Note: format_message internally gets the local IP to include.
-    if (format_message(buffer, BUFFER_SIZE, MSG_DISCOVERY, state->username, "") < 0) {
+    if (format_message(buffer, BUFFER_SIZE, MSG_DISCOVERY, state->username, local_ip, "") < 0) { // Pass local_ip
         log_message("Error: Failed to format discovery broadcast message (buffer too small?).");
-        return -1; // Indicate failure if formatting fails (e.g., buffer too small)
+        return -1;
     }
-
 
     // Prepare the broadcast address structure.
     // Initialize the structure to zero.
@@ -198,6 +204,7 @@ int handle_discovery_message(app_state_t *state, const char *buffer,
     char sender_username[32]; // Max username length + null terminator
     char msg_type[32];        // Max message type length + null terminator
     char content[BUFFER_SIZE]; // Buffer for message content (though not used for discovery)
+    char local_ip[INET_ADDRSTRLEN]; // Bufer for local IP
 
     // Attempt to parse the received buffer using the protocol definition.
     // This extracts type, sender (username@ip), and content.
@@ -212,8 +219,15 @@ int handle_discovery_message(app_state_t *state, const char *buffer,
 
             // Prepare a response message buffer.
             char response[BUFFER_SIZE];
-            // Format the response message (type = MSG_DISCOVERY_RESPONSE, include our username).
-            if (format_message(response, BUFFER_SIZE, MSG_DISCOVERY_RESPONSE, state->username, "") < 0) {
+
+            // Get local IP before formatting response
+            if (get_local_ip(local_ip, INET_ADDRSTRLEN) < 0) {
+                log_message("Warning: handle_discovery_message failed to get local IP for response. Using 'unknown'.");
+                strcpy(local_ip, "unknown");
+            }
+
+            // Format the response message (type = MSG_DISCOVERY_RESPONSE, include our username and local IP).
+            if (format_message(response, BUFFER_SIZE, MSG_DISCOVERY_RESPONSE, state->username, local_ip, "") < 0) {
                  log_message("Error: Failed to format discovery response message (buffer too small?).");
                  // Continue to add peer even if response formatting fails
             } else {
@@ -225,7 +239,6 @@ int handle_discovery_message(app_state_t *state, const char *buffer,
                     // Non-fatal error, continue processing the received discovery.
                 }
             }
-
 
             // Add or update the peer who sent the discovery message in our list.
             // Use the sender_ip derived from the packet source address.

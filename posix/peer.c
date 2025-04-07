@@ -3,7 +3,7 @@
 #include "peer.h"
 // Include headers for other modules providing necessary functionality.
 #include "discovery.h"      // For init_discovery() and discovery_thread()
-#include "messaging.h"        // For init_listener() and listener_thread()
+#include "messaging.h"      // For init_listener() and listener_thread()
 #include "ui_terminal.h"    // For user_input_thread()
 #include "signal_handler.h" // For handle_signal() function used with signal handling
 #include "utils.h"          // For log_message() utility function
@@ -15,6 +15,7 @@
 #include <stdio.h>      // For standard I/O functions (used indirectly, e.g., by logging or error reporting)
 #include <signal.h>     // For signal handling functions (sigaction, struct sigaction) and constants (SIGINT, SIGTERM)
 #include <pthread.h>    // For POSIX threads functions (pthread_create, pthread_join, pthread_mutex_init, etc.)
+#include <time.h>       // Need time() for the helper function
 
 // --- Global Variable ---
 
@@ -29,6 +30,33 @@
  *          here as a common pattern for simple signal handling in C.
  */
 app_state_t *g_state = NULL;
+
+// --- Static Helper Function ---
+
+/**
+ * @brief Updates the timestamp and optionally the username of a peer entry.
+ * @details Sets the peer's last_seen time to the current time and updates the username
+ *          if a non-empty username is provided. This function is used to reduce code duplication
+ *          between updating an existing peer and initializing a new peer entry.
+ * @param peer Pointer to the peer_t structure to update.
+ * @param username The potential new username (can be NULL or empty).
+ * @note If username is NULL or empty, the existing username remains unchanged.
+ *       This is important for updates where we may only want to refresh the timestamp.
+ */
+static void _update_peer_entry(peer_t *peer, const char *username) {
+    if (!peer) return; // Basic null check to ensure peer is not NULL
+
+    peer->last_seen = time(NULL); // Update the last_seen timestamp to the current time
+
+    // Optionally update the username if a non-empty username is provided.
+    if (username && username[0] != '\0') {
+        strncpy(peer->username, username, sizeof(peer->username) - 1);
+        // Ensure null termination after strncpy to prevent buffer overflow.
+        peer->username[sizeof(peer->username) - 1] = '\0';
+    }
+    // If username is NULL or empty, the existing username remains unchanged.
+}
+
 
 // --- Function Definitions ---
 
@@ -64,8 +92,6 @@ void init_app_state(app_state_t *state, const char *username) {
 
     // Initialize the mutex that will protect the `peers` array from race conditions
     // when accessed by multiple threads (discovery, listener, UI).
-    // The second argument `NULL` specifies default mutex attributes.
-    // Error checking for pthread_mutex_init is omitted for brevity but recommended in production code.
     pthread_mutex_init(&state->peers_mutex, NULL);
 
     // Set the global state pointer to point to the state structure we are initializing.
@@ -80,7 +106,6 @@ void init_app_state(app_state_t *state, const char *username) {
     sigaction(SIGINT, &sa, NULL); // Third argument NULL means we don't care about the old handler.
     // Register the handler for SIGTERM (termination signal, e.g., from `kill` command).
     sigaction(SIGTERM, &sa, NULL);
-    // Note: Error checking for sigaction is omitted.
 }
 
 /**
@@ -90,6 +115,7 @@ void init_app_state(app_state_t *state, const char *username) {
  *          - Closing the TCP listening socket if it's open (`>= 0`).
  *          - Closing the UDP discovery socket if it's open (`>= 0`).
  *          - Destroying the `peers_mutex` to release associated resources.
+ *          - Logging each step of the cleanup process for debugging purposes.
  * @param state Pointer to the `app_state_t` structure containing the resources to clean up.
  * @warning This function, especially `pthread_mutex_destroy`, should only be called *after*
  *          all threads that might use these resources (sockets, mutex) have terminated or
@@ -97,40 +123,36 @@ void init_app_state(app_state_t *state, const char *username) {
  *          in `main` after `pthread_join` ensures all threads have finished.
  */
 void cleanup_app_state(app_state_t *state) {
-    log_message("Starting cleanup...");
+    log_message("Starting cleanup..."); // Log the start of cleanup process
+
     // Close the TCP socket if it was successfully opened.
     if (state->tcp_socket >= 0) {
         log_message("Closing TCP socket %d", state->tcp_socket);
-        close(state->tcp_socket);
-        state->tcp_socket = -1; // Mark as closed.
+        close(state->tcp_socket); // Close the socket using the standard POSIX close() function
+        state->tcp_socket = -1; // Mark as closed to prevent double-close issues
     }
 
     // Close the UDP socket if it was successfully opened.
     if (state->udp_socket >= 0) {
         log_message("Closing UDP socket %d", state->udp_socket);
-        close(state->udp_socket);
-        state->udp_socket = -1; // Mark as closed.
+        close(state->udp_socket); // Close the socket using the standard POSIX close() function
+        state->udp_socket = -1; // Mark as closed to prevent double-close issues
     }
 
     // Destroy the mutex associated with the peers list.
     // This releases any resources held by the mutex object.
-    // It's crucial that no thread attempts to lock/unlock this mutex after it's destroyed.
     log_message("Destroying peers mutex");
     pthread_mutex_destroy(&state->peers_mutex);
-    // Note: Error checking for close() and pthread_mutex_destroy() is omitted.
 
-    log_message("Cleanup complete");
+    log_message("Cleanup complete"); // Log the completion of cleanup process
 }
 
 /**
  * @brief Adds a new peer to the list or updates the last_seen time of an existing peer.
- * @details This function provides thread-safe access to the shared `peers` array.
- *          It first checks if a peer with the same IP address already exists.
- *          - If found and active, it updates the `last_seen` timestamp and optionally the username.
- *          - If not found, it looks for an inactive (`active == 0`) slot in the array.
- *          - If an empty slot is found, it populates it with the new peer's information
- *            (IP, username, current time as `last_seen`) and marks it as active.
- *          The entire operation is protected by locking and unlocking `state->peers_mutex`.
+ * @details Provides thread-safe access to the shared `peers` array. Checks if a peer with the same IP exists,
+ *          updates it if found, or adds a new peer if an empty slot is available.
+ *          The function uses a helper function `_update_peer_entry` to avoid code duplication
+ *          between updating existing peers and initializing new ones.
  * @param state Pointer to the application state containing the `peers` array and mutex.
  * @param ip The IP address string of the peer to add or update.
  * @param username The username string of the peer. Can be NULL or empty if only updating `last_seen`.
@@ -139,68 +161,41 @@ void cleanup_app_state(app_state_t *state) {
  * @return -1 if no existing peer was found and the peer list is full (no inactive slots available).
  */
 int add_peer(app_state_t *state, const char *ip, const char *username) {
-    // Acquire the lock on the peers mutex before accessing the shared peers array.
-    // This prevents race conditions if multiple threads call add_peer concurrently.
-    // If the mutex is already held by another thread, this call will block until it's released.
-    pthread_mutex_lock(&state->peers_mutex);
+    pthread_mutex_lock(&state->peers_mutex); // Lock the mutex to ensure thread-safe access
 
     // --- Step 1: Check if the peer already exists ---
     for (int i = 0; i < MAX_PEERS; i++) {
-        // Check if the current slot 'i' is active and the IP address matches.
         if (state->peers[i].active && strcmp(state->peers[i].ip, ip) == 0) {
-            // Peer found. Update its last_seen time to the current time.
-            state->peers[i].last_seen = time(NULL);
+            // Peer found. Update its details using the helper function.
+            _update_peer_entry(&state->peers[i], username); // Use the refactored helper function
 
-            // Optionally update the username if a non-empty username is provided.
-            // This allows discovery responses/messages to update usernames if they changed.
-            if (username && username[0] != '\0') {
-                strncpy(state->peers[i].username, username, sizeof(state->peers[i].username) - 1);
-                // Ensure null termination after strncpy.
-                state->peers[i].username[sizeof(state->peers[i].username) - 1] = '\0';
-            }
-
-            // Release the mutex lock as we are done modifying the shared data.
-            pthread_mutex_unlock(&state->peers_mutex);
+            pthread_mutex_unlock(&state->peers_mutex); // Unlock the mutex before returning
             return 0; // Indicate that an existing peer was updated.
         }
     }
 
     // --- Step 2: If peer doesn't exist, find an empty slot to add it ---
     for (int i = 0; i < MAX_PEERS; i++) {
-        // Check if the current slot 'i' is inactive (available).
         if (!state->peers[i].active) {
             // Found an empty slot. Populate it with the new peer's data.
-            // Copy the IP address safely.
             strncpy(state->peers[i].ip, ip, INET_ADDRSTRLEN - 1);
             state->peers[i].ip[INET_ADDRSTRLEN - 1] = '\0'; // Ensure null termination
+            state->peers[i].active = 1; // Mark the slot as active
 
-            // Set the last_seen time to the current time.
-            state->peers[i].last_seen = time(NULL);
-            // Mark the slot as active.
-            state->peers[i].active = 1;
+            // Explicitly clear username before potential update in helper
+            // This ensures we don't inherit a username from a previously inactive peer
+            state->peers[i].username[0] = '\0';
 
-            // Set the username, ensuring null termination.
-            // If username is NULL or empty, set a default or leave it empty (depends on desired behavior).
-            // Here, we copy if provided, otherwise it might remain from a previous inactive peer.
-            // It might be better to explicitly set to "unknown" or empty if username is NULL/empty.
-            if (username && username[0] != '\0') {
-                strncpy(state->peers[i].username, username, sizeof(state->peers[i].username) - 1);
-                state->peers[i].username[sizeof(state->peers[i].username) - 1] = '\0';
-            } else {
-                // Explicitly set to empty if no username provided for a new entry
-                 state->peers[i].username[0] = '\0';
-            }
+            // Set timestamp and potentially username using the helper function.
+            _update_peer_entry(&state->peers[i], username); // Use the refactored helper function
 
-
-            // Release the mutex lock.
-            pthread_mutex_unlock(&state->peers_mutex);
+            pthread_mutex_unlock(&state->peers_mutex); // Unlock the mutex before returning
             return 1; // Indicate that a new peer was added.
         }
     }
 
     // --- Step 3: If loop finishes, no existing peer found and no empty slots available ---
-    // Release the mutex lock.
-    pthread_mutex_unlock(&state->peers_mutex);
+    pthread_mutex_unlock(&state->peers_mutex); // Unlock the mutex before returning
     log_message("Peer list is full. Cannot add peer %s@%s.", username ? username : "??", ip);
     return -1; // Indicate that the list is full.
 }
@@ -218,98 +213,64 @@ int add_peer(app_state_t *state, const char *ip, const char *username) {
  *          8. Cleans up resources (`cleanup_app_state`).
  *          9. Exits with success or failure status.
  * @param argc Number of command-line arguments.
- * @param argv Array of command-line argument strings. `argv[1]` is potentially the username.
+ * @param argv Array of command-line argument strings. `argv2` is potentially the username.
  * @return EXIT_SUCCESS (0) if the application runs and terminates normally.
  * @return EXIT_FAILURE (1) if initialization or thread creation fails.
  */
 int main(int argc, char *argv[]) {
     // Structure to hold the application's state.
     app_state_t state;
-    // Thread identifiers for the created threads.
-    pthread_t listener_tid, discovery_tid, input_tid;
-    // Default username if none is provided via command line.
-    char username[32] = "anonymous";
+    pthread_t listener_tid, discovery_tid, input_tid; // Thread identifiers for various functionalities
+    char username[32] = "anonymous"; // Default username if none is provided
 
-    // Check if a username was provided as the first command-line argument.
+    // If a username is provided as a command-line argument, use it
     if (argc > 1) {
-        // Copy the provided username safely into the username buffer.
         strncpy(username, argv[1], sizeof(username) - 1);
-        username[sizeof(username) - 1] = '\0'; // Ensure null termination.
+        username[sizeof(username) - 1] = '\0'; // Ensure null termination
     }
 
-    // Initialize the application state structure, including signal handlers.
-    init_app_state(&state, username);
-
+    init_app_state(&state, username); // Initialize the application state
     log_message("Starting P2P messaging application as '%s'", state.username);
 
-    // Initialize the network components (TCP listener and UDP discovery sockets).
-    // If either initialization fails, log the error, clean up, and exit.
+    // Initialize the TCP listener
     if (init_listener(&state) < 0) {
         log_message("Fatal: Failed to initialize TCP listener. Exiting.");
-        cleanup_app_state(&state); // Attempt cleanup even on partial init failure.
+        cleanup_app_state(&state); // Attempt cleanup even on partial init failure
         return EXIT_FAILURE;
     }
-     if (init_discovery(&state) < 0) {
+
+    // Initialize the UDP discovery
+    if (init_discovery(&state) < 0) {
         log_message("Fatal: Failed to initialize UDP discovery. Exiting.");
-        cleanup_app_state(&state); // Attempt cleanup.
+        cleanup_app_state(&state); // Attempt cleanup
         return EXIT_FAILURE;
     }
 
-
-    // Start the worker threads.
-    // Pass the address of the state structure as the argument to each thread function.
-    // Error checking for pthread_create is important.
+    // Create threads for listener, discovery, and user input
     int listener_err = pthread_create(&listener_tid, NULL, listener_thread, &state);
     int discovery_err = pthread_create(&discovery_tid, NULL, discovery_thread, &state);
     int input_err = pthread_create(&input_tid, NULL, user_input_thread, &state);
 
-    // Check if any thread creation failed.
+    // Check for thread creation errors
     if (listener_err != 0 || discovery_err != 0 || input_err != 0) {
         log_message("Fatal: Failed to create one or more threads. Exiting.");
-        // If thread creation fails, signal any potentially started threads to stop.
-        state.running = 0;
-
-        // Give potentially started threads a brief moment to notice the flag change
-        // before we destroy the mutex in cleanup_app_state. This is a pragmatic
-        // approach; more robust error handling might involve trying to join started threads.
-        usleep(100000); // 100ms delay.
-
-        // Clean up resources.
+        state.running = 0; // Signal any started threads to stop
+        usleep(100000); // Brief delay to allow threads to notice the flag change
         cleanup_app_state(&state);
         return EXIT_FAILURE;
     }
 
     log_message("Threads created successfully.");
-
-    // Wait for the user input thread to complete.
-    // This thread will likely exit when the user enters the "/quit" command,
-    // which sets state.running = 0 and returns from the thread function.
-    // pthread_join blocks the main thread until input_tid finishes.
-    pthread_join(input_tid, NULL); // Second argument NULL means we don't care about the thread's return value.
-
+    pthread_join(input_tid, NULL); // Wait for the user input thread to finish (e.g., user types /quit)
     log_message("User input thread finished. Initiating shutdown...");
-
-    // Signal the other threads (listener, discovery) to stop by setting the running flag to 0.
-    // These threads periodically check this flag in their main loops.
-    // Note: The user input thread might have already set this flag if /quit was used. Setting it again is harmless.
-    state.running = 0;
-
-    // Wait for the listener and discovery threads to terminate gracefully.
-    // pthread_join ensures that the main thread doesn't proceed until these threads
-    // have exited their loops and returned. This is crucial before cleanup.
+    state.running = 0; // Signal all threads to stop gracefully
     log_message("Waiting for listener thread to finish...");
-    pthread_join(listener_tid, NULL);
+    pthread_join(listener_tid, NULL); // Wait for the listener thread to finish
     log_message("Listener thread joined.");
-
     log_message("Waiting for discovery thread to finish...");
-    pthread_join(discovery_tid, NULL);
+    pthread_join(discovery_tid, NULL); // Wait for the discovery thread to finish
     log_message("Discovery thread joined.");
-
-    // All threads have finished. Now it's safe to clean up shared resources.
-    // This closes sockets and destroys the mutex.
-    cleanup_app_state(&state);
-
+    cleanup_app_state(&state); // Clean up application resources
     log_message("Application terminated gracefully.");
-    // Return success status.
-    return EXIT_SUCCESS;
+    return EXIT_SUCCESS; // Return success status
 }

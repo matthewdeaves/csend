@@ -110,6 +110,8 @@ int send_message(const char *ip, const char *message, const char *msg_type, cons
     struct sockaddr_in server_addr;
     // Buffer to hold the formatted message before sending.
     char buffer[BUFFER_SIZE];
+    // Buffer for local IP
+    char local_ip[INET_ADDRSTRLEN];
 
     // Create a new TCP socket for this outgoing connection.
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -146,9 +148,15 @@ int send_message(const char *ip, const char *message, const char *msg_type, cons
         return -1;
     }
 
+    // Get local IP before formatting
+    if (get_local_ip(local_ip, INET_ADDRSTRLEN) < 0) {
+        log_message("Warning: send_message failed to get local IP. Using 'unknown'.");
+        strcpy(local_ip, "unknown");
+    }
+
     // Format the message payload using the application protocol.
-    // This includes the type, sender (username@local_ip), and content.
-    if (format_message(buffer, BUFFER_SIZE, msg_type, sender_username, message) < 0) {
+    // This includes the type, sender (username@local_ip), local_ip and content.
+    if (format_message(buffer, BUFFER_SIZE, msg_type, sender_username, local_ip, message) < 0) {
         log_message("Error: Failed to format outgoing message (buffer too small?).");
         close(sock);
         return -1;

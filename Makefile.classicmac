@@ -1,11 +1,11 @@
 # Makefile for csend Classic Mac build using Retro68
 # Outputs are generated in the build/ directory.
-# NOTE: Currently only builds classic_mac/main.c, excluding shared code.
 
 # --- Variables ---
 
 # Assume Retro68 tools are in the PATH
 CC_MAC = m68k-apple-macos-gcc
+CXX_MAC = m68k-apple-macos-g++ # Added C++ compiler driver
 REZ = Rez
 
 # --- Dynamically Find RIncludes ---
@@ -34,14 +34,14 @@ endif
 
 # Compiler flags
 # -Iclassic_mac: Ensure compiler finds headers in the classic_mac directory
-# -Ishared: Include path for shared code (REMOVED FOR NOW)
-CFLAGS_MAC = -g -ffunction-sections -Iclassic_mac
+# -Ishared: Include path for shared code
+CFLAGS_MAC = -g -ffunction-sections -Iclassic_mac -Ishared
 
 # Linker flags (passed via the compiler driver using -Wl,)
 # -Wl,-gc-sections: Linker garbage collection
 # -Wl,--mac-strip-macsbug: Strip MacsBug symbols (remove for debugging)
-LDFLAGS_MAC = -Wl,-gc-sections -Wl,--mac-strip-macsbug
-# Add libraries like -lretro if needed: LDFLAGS_MAC += -lretro
+# -lRetroConsole: Link the console library for printf output
+LDFLAGS_MAC = -Wl,-gc-sections -Wl,--mac-strip-macsbug -lRetroConsole
 
 # Rez flags
 # -I$(RINCLUDES): Tell Rez where to find standard resources like Retro68APPL.r
@@ -50,7 +50,7 @@ REZFLAGS = -I"$(RINCLUDES)" # Quote the path in case it contains spaces
 # --- Source and Build Directories ---
 
 MAC_DIR = classic_mac
-# SHARED_DIR = shared # Not used yet
+SHARED_DIR = shared
 
 BUILD_BASE_DIR = build
 BUILD_DIR = $(BUILD_BASE_DIR)/classic_mac
@@ -59,14 +59,14 @@ OBJ_DIR = $(BUILD_BASE_DIR)/obj/classic_mac
 # --- Source Files ---
 
 MAC_C_FILES = $(wildcard $(MAC_DIR)/*.c)
-# SHARED_C_FILES = $(wildcard $(SHARED_DIR)/*.c) # Excluded for now
-SOURCES_ALL = $(MAC_C_FILES) # Only Mac files for now
+SHARED_C_FILES = $(wildcard $(SHARED_DIR)/*.c)
+SOURCES_ALL = $(MAC_C_FILES) $(SHARED_C_FILES)
 
 # --- Object Files ---
 
 MAC_OBJS = $(patsubst $(MAC_DIR)/%.c, $(OBJ_DIR)/%.o, $(MAC_C_FILES))
-# SHARED_OBJS = $(patsubst $(SHARED_DIR)/%.c, $(OBJ_DIR)/shared_%.o, $(SHARED_C_FILES)) # Excluded for now
-OBJS = $(MAC_OBJS) # Only Mac objects for now
+SHARED_OBJS = $(patsubst $(SHARED_DIR)/%.c, $(OBJ_DIR)/shared_%.o, $(SHARED_C_FILES))
+OBJS = $(MAC_OBJS) $(SHARED_OBJS)
 
 # --- Resource and Target Definitions ---
 
@@ -103,8 +103,8 @@ $(FINAL_TARGETS): $(INTERMEDIATE_TARGET) $(R_FILE_MAC) Makefile.classicmac | $(B
 # Depends on all object files and ensures the object directory exists.
 $(INTERMEDIATE_TARGET): $(OBJS) Makefile.classicmac | $(OBJ_DIR)
 	@echo "Linking intermediate target: $@"
-	# Use CC_MAC (gcc) for linking C code
-	$(CC_MAC) $(OBJS) -o $@ $(LDFLAGS_MAC)
+	# Use CXX_MAC (g++) for linking because RetroConsole is C++
+	$(CXX_MAC) $(OBJS) -o $@ $(LDFLAGS_MAC) # Changed from CC_MAC to CXX_MAC
 
 # Rule to compile Classic Mac C source files into object files in OBJ_DIR
 # Depends on the source file and ensures the object directory exists.
@@ -112,10 +112,10 @@ $(OBJ_DIR)/%.o: $(MAC_DIR)/%.c Makefile.classicmac | $(OBJ_DIR)
 	@echo "Compiling $< -> $@"
 	$(CC_MAC) $(CFLAGS_MAC) -c $< -o $@
 
-# Rule to compile shared C source files into object files in OBJ_DIR (COMMENTED OUT)
-# $(OBJ_DIR)/shared_%.o: $(SHARED_DIR)/%.c Makefile.classicmac | $(OBJ_DIR)
-#	@echo "Compiling $< -> $@"
-#	$(CC_MAC) $(CFLAGS_MAC) -c $< -o $@
+# Rule to compile shared C source files into object files in OBJ_DIR
+$(OBJ_DIR)/shared_%.o: $(SHARED_DIR)/%.c Makefile.classicmac | $(OBJ_DIR)
+	@echo "Compiling $< -> $@"
+	$(CC_MAC) $(CFLAGS_MAC) -c $< -o $@
 
 # Rule to create the build and object directories if they don't exist
 $(BUILD_DIR) $(OBJ_DIR):
