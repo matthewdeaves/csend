@@ -18,16 +18,6 @@
 // --- Project Includes ---
 #include "common_defs.h" // Include the new shared definitions
 
-// --- Constants ---
-// These `#define` directives create symbolic names for constant values used throughout the application.
-
-// Defines the maximum number of peers that can be stored in the application's peer list.
-#define MAX_PEERS 10
-// Defines the interval (in seconds) between sending UDP discovery broadcast messages.
-#define DISCOVERY_INTERVAL 10
-// Defines the duration (in seconds) after which an inactive peer is considered timed out and removed/ignored.
-#define PEER_TIMEOUT 30
-
 // --- Data Structures ---
 
 /**

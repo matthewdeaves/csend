@@ -14,12 +14,20 @@
 #define INET_ADDRSTRLEN 16
 
 // --- Port Constants ---
-// Moved from peer.h as they are fundamental to the protocol
 
 // Defines the TCP port number used for listening for incoming peer connections and sending messages.
 #define PORT_TCP 8080
 // Defines the UDP port number used for peer discovery broadcasts and responses.
 #define PORT_UDP 8081
+
+// --- Peer Constants ---
+
+// Defines the maximum number of peers that can be stored in the application's peer list.
+#define MAX_PEERS 10
+// Defines the interval (in seconds) between sending UDP discovery broadcast messages.
+#define DISCOVERY_INTERVAL 10
+// Defines the duration (in seconds) after which an inactive peer is considered timed out and removed/ignored.
+#define PEER_TIMEOUT 30
 
 
 #endif // COMMON_DEFS_H

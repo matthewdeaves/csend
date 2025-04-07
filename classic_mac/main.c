@@ -8,6 +8,9 @@
 #include <Menus.h>
 #include <Resources.h> // Needed for GetResource, ReleaseResource
 
+// Shared constant definitions
+#include "common_defs.h"
+
 // --- Constants ---
 #define kBaseResID 128 // Resource ID for our DLOG/DITL
 
