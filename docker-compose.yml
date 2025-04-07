@@ -10,8 +10,7 @@ services:
     stdin_open: true    # Keep STDIN open even if not attached
     networks:
       p2p_net:
-        ipv4_address: 172.20.0.2
-
+        ipv4_address: 192.168.150.2
   peer2:
     build: .
     container_name: peer2
@@ -21,7 +20,7 @@ services:
     stdin_open: true
     networks:
       p2p_net:
-        ipv4_address: 172.20.0.3
+        ipv4_address: 192.168.150.3
 
   peer3:
     build: .
@@ -32,11 +31,11 @@ services:
     stdin_open: true
     networks:
       p2p_net:
-        ipv4_address: 172.20.0.4
+        ipv4_address: 192.168.150.4
 
 networks:
   p2p_net:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.20.0.0/16
+        - subnet: 192.168.150.0/24
