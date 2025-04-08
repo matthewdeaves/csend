@@ -8,7 +8,7 @@ CC_MAC = m68k-apple-macos-gcc
 CXX_MAC = m68k-apple-macos-g++ # Added C++ compiler driver
 REZ = Rez
 
-# --- Dynamically Find RIncludes ---
+# --- Dynamically Find RIncludes and CIncludes ---
 
 # Find the full path to the compiler
 CC_MAC_PATH = $(shell which $(CC_MAC))
@@ -30,12 +30,35 @@ ifeq ($(wildcard $(RINCLUDES)/.),) # Check for existence of the directory itself
     $(error "Retro68 RIncludes directory not found at the expected location relative to the compiler: $(RINCLUDES). Check your Retro68 installation.")
 endif
 
+# --- Construct and Check C Includes Path ---
+# Construct the expected path to C Includes relative to the toolchain directory
+# Based on ls output, headers are directly in the 'include' directory.
+CINCLUDES = $(TOOLCHAIN_DIR)/m68k-apple-macos/include
+
+# Check if the derived CIncludes directory actually exists
+ifeq ($(wildcard $(CINCLUDES)/.),) # Check for existence of the directory itself
+    $(error "Retro68 CIncludes directory not found at the expected location relative to the compiler: $(CINCLUDES). Check your Retro68 installation.")
+endif
+
+# --- ADDED: Construct Universal C Includes Path ---
+# This path often contains headers not symlinked into the target-specific include dir.
+UNIVERSAL_CINCLUDES = $(TOOLCHAIN_DIR)/universal/CIncludes
+
+# Check if the derived Universal CIncludes directory actually exists
+ifeq ($(wildcard $(UNIVERSAL_CINCLUDES)/.),) # Check for existence of the directory itself
+    $(error "Retro68 Universal CIncludes directory not found at the expected location relative to the toolchain: $(UNIVERSAL_CINCLUDES). Check your Retro68 installation.")
+endif
+# --- END Path Finding Section ---
+
+
 # --- Compiler, Linker, Rez Flags ---
 
 # Compiler flags
 # -Iclassic_mac: Ensure compiler finds headers in the classic_mac directory
 # -Ishared: Include path for shared code
-CFLAGS_MAC = -g -ffunction-sections -Iclassic_mac -Ishared
+# -I"$(CINCLUDES)": Explicitly add the standard Mac OS headers path
+# -I"$(UNIVERSAL_CINCLUDES)": Add path to universal headers # ADDED
+CFLAGS_MAC = -g -ffunction-sections -Iclassic_mac -Ishared -I"$(CINCLUDES)" -I"$(UNIVERSAL_CINCLUDES)"
 
 # Linker flags (passed via the compiler driver using -Wl,)
 # -Wl,-gc-sections: Linker garbage collection
@@ -89,6 +112,8 @@ all: $(FINAL_TARGETS)
 # and ensures the build directory exists.
 $(FINAL_TARGETS): $(INTERMEDIATE_TARGET) $(R_FILE_MAC) Makefile.classicmac | $(BUILD_DIR)
 	@echo "Using RIncludes from: $(RINCLUDES)"
+	@echo "Using CIncludes from: $(CINCLUDES)"
+	@echo "Using Universal CIncludes from: $(UNIVERSAL_CINCLUDES)" # ADDED Echo
 	@echo "Running Rez to create final targets in $(BUILD_DIR)..."
 	# Combine intermediate code, compiled .r resources, and standard APPL template
 	$(REZ) $(REZFLAGS) \

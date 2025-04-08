@@ -2,8 +2,9 @@
 
 # Script to download, build, and install the Retro68 toolchain on Ubuntu,
 # OR update an existing installation and rebuild.
-# Automatically unzips '/misc/misc.zip'
-# into the repo's InterfacesAndLibraries folder for... reasons...
+# Clears the Retro68 source tree's InterfacesAndLibraries folder and then
+# extracts 'misc/MPW_Interfaces.zip' (containing Apple's Universal
+# Interfaces + added MacTCP headers) into it before building the toolchain.
 #
 # Installs prerequisites, clones/updates the repo, builds/rebuilds the
 # toolchain in a dedicated directory within the user's home folder,
@@ -29,12 +30,13 @@ TOOLCHAIN_DIR="${BUILD_DIR}/toolchain"
 BIN_DIR="${TOOLCHAIN_DIR}/bin"
 # Target directory for included interfaces/libraries within the Retro68 repo
 INCLUDE_DIR_TARGET="${REPO_DIR}/InterfacesAndLibraries"
-# Name of the zip file to look for
-MISC_ZIP_FILE="misc.zip"
+# Name of the zip file containing the Universal Interfaces
+MPW_ZIP_FILE="MPW_Interfaces.zip"
 # Determine the directory where this script resides
+# Use BASH_SOURCE[0] which is the standard way to get the script's path
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-# Full path to the misc zip file
-MISC_ZIP_PATH="${SCRIPT_DIR}/misc/${MISC_ZIP_FILE}"
+# Full path to the MPW interfaces zip file
+MPW_ZIP_PATH="${SCRIPT_DIR}/misc/${MPW_ZIP_FILE}"
 
 # --- Flags / Options ---
 MODE="install" # Default mode
@@ -65,8 +67,8 @@ run_sudo() {
 usage() {
     echo "Usage: $0 [-h]"
     echo "  Installs or updates the Retro68 toolchain in ${INSTALL_PARENT_DIR}."
-    echo "  Automatically extracts ${MISC_ZIP_FILE} from the script's directory"
-    echo "  into ${INCLUDE_DIR_TARGET} if found."
+    echo "  Automatically extracts ${MPW_ZIP_FILE} from the script's misc directory"
+    echo "  into ${INCLUDE_DIR_TARGET} if found, providing Universal Interfaces."
     echo ""
     echo "Options:"
     echo "  -h          Display this help message."
@@ -102,8 +104,8 @@ echo "Base Directory: ${INSTALL_PARENT_DIR}"
 echo "Repository: ${REPO_DIR}"
 echo "Build Directory: ${BUILD_DIR}"
 echo "Toolchain Binaries: ${BIN_DIR}"
-echo "Looking for misc zip: ${MISC_ZIP_PATH}"
-echo "Include Directory Target: ${INCLUDE_DIR_TARGET}"
+echo "Looking for Universal Interfaces zip: ${MPW_ZIP_PATH}"
+echo "Target for Interfaces: ${INCLUDE_DIR_TARGET}"
 echo ""
 
 # Determine if it's an install or update based on directory existence
@@ -156,7 +158,7 @@ echo ""
 if [ "$MODE" == "install" ]; then
     echo "Step 2: Cloning Retro68 repository..."
     if [ -d "$REPO_DIR" ]; then
-        echo "Warning: Repository directory ${REPO_DIR} already exists but build directory was missing."
+        echo "Warning: Repository directory ${REPO_DIR} already exists."
         echo "Skipping clone. If you want a fresh clone, remove ${REPO_DIR} first."
     else
         echo "Cloning into ${REPO_DIR}..."
@@ -184,25 +186,35 @@ elif [ "$MODE" == "update" ]; then
     echo ""
 fi
 
-# 3.5. Unzip misc.zip into InterfacesAndLibraries
-echo "Step 3.5: Checking for and extracting ${MISC_ZIP_FILE}..."
-# Verify misc.zip exists in the script's directory
-if [ -f "$MISC_ZIP_PATH" ]; then
-    echo "Found ${MISC_ZIP_FILE}. Extracting to ${INCLUDE_DIR_TARGET}..."
-    # Ensure target directory exists (create if necessary)
+# 3.5. Refresh Universal Interfaces in Retro68 source tree
+echo "Step 3.5: Refreshing Universal Interfaces (${MPW_ZIP_FILE})..."
+# Verify MPW_Interfaces.zip exists in the script's misc directory
+if [ -f "$MPW_ZIP_PATH" ]; then
+    echo "Found ${MPW_ZIP_FILE}. Refreshing ${INCLUDE_DIR_TARGET}..."
+
+    # Ensure the target directory exists
     echo "Ensuring target directory exists: ${INCLUDE_DIR_TARGET}"
     mkdir -p "$INCLUDE_DIR_TARGET"
 
-    # Unzip contents into target, overwriting existing files (-o)
-    if unzip -o "$MISC_ZIP_PATH" -d "$INCLUDE_DIR_TARGET"; then
-        echo "${MISC_ZIP_FILE} extracted successfully."
+    # Empty the target directory's contents
+    echo "Emptying existing contents of ${INCLUDE_DIR_TARGET}"
+    # Use :? to prevent accidental deletion if variable is empty/unset
+    # Use /* to target contents, not the directory itself
+    rm -rf "${INCLUDE_DIR_TARGET:?}/"*
+
+    # Unzip the new contents directly into the target directory
+    echo "Extracting ${MPW_ZIP_FILE} into ${INCLUDE_DIR_TARGET}..."
+    if unzip -o "$MPW_ZIP_PATH" -d "$INCLUDE_DIR_TARGET"; then
+        echo "${MPW_ZIP_FILE} extracted successfully into ${INCLUDE_DIR_TARGET}."
     else
-        echo "Error: Failed to extract ${MISC_ZIP_FILE}." >&2
-        # Decide if this is fatal - assuming yes if the file exists but fails to extract.
+        echo "Error: Failed to extract ${MPW_ZIP_FILE} into ${INCLUDE_DIR_TARGET}." >&2
         exit 1
     fi
 else
-    echo "Warning: ${MISC_ZIP_FILE} not found in script directory (${SCRIPT_DIR}). Skipping extraction."
+    echo "Warning: ${MPW_ZIP_FILE} not found in script's misc directory (${MPW_ZIP_PATH})."
+    echo "Retro68 will be built using only the default Multiversal Interfaces."
+    # Ensure the target directory exists even if empty, as Retro68 might expect it
+    mkdir -p "$INCLUDE_DIR_TARGET"
 fi
 echo ""
 
@@ -212,7 +224,7 @@ if [ "$MODE" == "install" ]; then
     echo "Step 4: Creating build directory..."
     if [ -d "$BUILD_DIR" ]; then
         echo "Warning: Build directory ${BUILD_DIR} already exists."
-        # Decide if you want to clean it? For now, just proceed.
+        echo "Consider removing it for a completely clean build: rm -rf ${BUILD_DIR}"
     else
         mkdir -p "$BUILD_DIR"
         echo "Build directory ${BUILD_DIR} created."
@@ -259,6 +271,8 @@ if [ -f "$BASHRC_FILE" ]; then
         echo "PATH added."
         echo ""
         echo "------------------------------------------------------------------"
+        # This is the line the user suspected (around original line 273)
+        # It looks syntactically correct.
         echo "IMPORTANT: To use the Retro68 commands (like m68k-apple-macos-gcc),"
         echo "you need to reload your shell configuration or open a new terminal."
         echo "You can do this now by running:"
