@@ -8,35 +8,36 @@
 #include <string.h>    // For memset, strlen, strcmp, strcpy
 #include <stdlib.h>    // For NULL
 #include <Memory.h>    // For BlockMoveData, NewPtr, DisposePtr
-#include <MixedMode.h> // ADDED: For UPP routines
+#include <MixedMode.h> // For UPP routines
 
 // --- Global Variable Definitions ---
-short   gMacTCPRefNum = 0;    // Driver reference number for MacTCP
-ip_addr gMyLocalIP = 0;       // Our local IP address (network byte order)
-char    gMyLocalIPStr[INET_ADDRSTRLEN] = "0.0.0.0"; // Our local IP as string
-unsigned long gLastBroadcastTimeTicks = 0; // Time in Ticks
+short   gMacTCPRefNum = 0;
+ip_addr gMyLocalIP = 0;
+char    gMyLocalIPStr[INET_ADDRSTRLEN] = "0.0.0.0";
+unsigned long gLastBroadcastTimeTicks = 0;
 
 // Peer List Globals
 peer_t  gPeerList[MAX_PEERS];
 short   gPeerCount = 0;
 
 // UDP Read Globals
-UDPiopb gUDPReadPB;           // Parameter block for the asynchronous UDP read
-char    gUDPRecvBuffer[BUFFER_SIZE]; // Buffer for receiving UDP data (for parsed data)
-Boolean gUDPReadPending = false;      // Flag indicating if an async read is outstanding
-Ptr     gUDPReceiveAreaPtr = NULL;    // Pointer to dynamically allocated receive area
-UDPIOCompletionUPP gUDPReadCompletionUPP = NULL; // ADDED: Global UPP definition
+UDPiopb gUDPReadPB;
+char    gUDPRecvBuffer[BUFFER_SIZE]; // Used for parsing output, not direct receive
+Boolean gUDPReadPending = false;
+Ptr     gUDPReceiveAreaPtr = NULL;
+UDPIOCompletionUPP gUDPReadCompletionUPP = NULL;
+
+// --- ADDED: State for Deferred Processing ---
+Boolean gNeedToSendResponse = false;
+ip_addr gResponseDestIP = 0;
+udp_port gResponseDestPort = 0;
 
 // --- Static Global for UDP Endpoint ---
-static StreamPtr sUDPEndpoint = NULL; // UDP Endpoint
+static StreamPtr sUDPEndpoint = NULL;
 
 // --- Initialization and Cleanup ---
-
-/**
- * @brief Initializes MacTCP networking (Driver, IP Address, DNR).
- */
+// ... (InitializeNetworking remains the same) ...
 OSErr InitializeNetworking(void) {
-    // ... (Code remains the same as your last correct version) ...
     OSErr err;
     ParamBlockRec pb; // PBOpen uses standard ParamBlockRec
     CntrlParam cntrlPB; // ipctlGetAddr uses CntrlParam
@@ -102,9 +103,7 @@ OSErr InitializeNetworking(void) {
     return noErr; // Return noErr if we got this far
 }
 
-/**
- * @brief Cleans up networking resources (DNR, Driver, UDP Endpoint).
- */
+// ... (CleanupNetworking remains the same) ...
 void CleanupNetworking(void) {
     UDPiopb udpPB; // Use UDPiopb for udpRelease
     OSErr err;
@@ -169,10 +168,7 @@ void CleanupNetworking(void) {
 
 
 // --- UDP Discovery Functions ---
-
-/**
- * @brief Initializes the UDP endpoint for discovery broadcasts and receives.
- */
+// ... (InitUDPDiscovery remains the same) ...
 OSErr InitUDPDiscovery(void) {
     OSErr err;
     UDPiopb udpPB; // Use UDPiopb for udpCreate
@@ -184,7 +180,7 @@ OSErr InitUDPDiscovery(void) {
         return notOpenErr;
     }
 
-    // --- Allocate Receive Buffer Dynamically ---
+    // --- Allocate Receive Buffer Dynamically --- ADDED
     LogToDialog("Allocating UDP receive buffer (size: %d)...", kUDPReceiveBufferSize);
     gUDPReceiveAreaPtr = NewPtr(kUDPReceiveBufferSize);
     if (gUDPReceiveAreaPtr == NULL) {
@@ -247,9 +243,6 @@ OSErr InitUDPDiscovery(void) {
 }
 
 // ... (SendDiscoveryBroadcast remains the same) ...
-/**
- * @brief Sends a UDP discovery broadcast message using PBControl.
- */
 OSErr SendDiscoveryBroadcast(void) {
     OSErr err;
     char buffer[BUFFER_SIZE];
@@ -295,11 +288,7 @@ OSErr SendDiscoveryBroadcast(void) {
     return noErr;
 }
 
-
 // ... (CheckSendBroadcast remains the same) ...
-/**
- * @brief Checks if it's time to send the next discovery broadcast.
- */
 void CheckSendBroadcast(void) {
     unsigned long currentTimeTicks = TickCount();
     const unsigned long intervalTicks = (unsigned long)DISCOVERY_INTERVAL * 60;
@@ -311,10 +300,7 @@ void CheckSendBroadcast(void) {
     }
 }
 
-
-/**
- * @brief Issues an asynchronous UDPRead command.
- */
+// ... (IssueUDPRead remains the same) ...
 OSErr IssueUDPRead(void) {
     OSErr err;
 
@@ -357,16 +343,18 @@ OSErr IssueUDPRead(void) {
     return err;
 }
 
-/**
- * @brief Completion routine for asynchronous UDPRead.
- */
+// ... (UDPReadCompletion remains the same) ...
 pascal void UDPReadCompletion(UDPiopb *pb) {
     #pragma unused(pb)
     gUDPReadPending = false;
 }
 
+
 /**
  * @brief Processes the result of a completed UDPRead operation.
+ * @details Checks the result, parses valid packets, updates peer list,
+ *          sets flags for deferred operations (AddrToStr, SendResponse),
+ *          returns the buffer, and re-issues the read.
  */
 void ProcessUDPReceive(void) {
     OSErr result;
@@ -374,7 +362,8 @@ void ProcessUDPReceive(void) {
     udp_port remotePort;
     Ptr dataPtr;
     unsigned short dataLen;
-    char sender_ip_str[INET_ADDRSTRLEN];
+    char sender_ip_str[INET_ADDRSTRLEN]; // Buffer for AddrToStr result
+    char parsed_sender_ip[INET_ADDRSTRLEN]; // Buffer for IP parsed from message
     char sender_username[32];
     char msg_type[32];
     char content[BUFFER_SIZE];
@@ -382,12 +371,13 @@ void ProcessUDPReceive(void) {
     UDPiopb bfrPB;
 
     if (gUDPReadPending) {
-        return;
+        return; // Read hasn't completed yet
     }
 
     result = gUDPReadPB.ioResult;
 
     if (result == noErr) {
+        // Extract data from the completed PB
         remoteIP = gUDPReadPB.csParam.receive.remoteHost;
         remotePort = gUDPReadPB.csParam.receive.remotePort;
         dataPtr = gUDPReadPB.csParam.receive.rcvBuff;
@@ -395,37 +385,51 @@ void ProcessUDPReceive(void) {
 
         if (dataPtr != gUDPReceiveAreaPtr) {
              LogToDialog("Warning: Received data pointer (0x%lX) doesn't match allocated buffer (0x%lX)!", (unsigned long)dataPtr, (unsigned long)gUDPReceiveAreaPtr);
-             goto reissue_read;
+             goto return_buffer_and_reissue; // Still need to return buffer
         }
 
+        // Null-terminate the received data
         if (dataLen < kUDPReceiveBufferSize) {
             gUDPReceiveAreaPtr[dataLen] = '\0';
         } else {
             gUDPReceiveAreaPtr[kUDPReceiveBufferSize - 1] = '\0';
         }
 
+        // --- Defer AddrToStr ---
+        // We need the IP string for logging and peer management.
+        // For now, we'll risk calling AddrToStr here, but ideally, this
+        // should also be deferred if it proves unstable.
         AddrToStr(remoteIP, sender_ip_str);
+        if (sender_ip_str[0] == '\0') { // Basic check if AddrToStr failed
+            strcpy(sender_ip_str, "?.?.?.?");
+        }
 
+        // Ignore messages from self
         if (strcmp(sender_ip_str, gMyLocalIPStr) == 0) {
-             goto reissue_read;
+             goto return_buffer_and_reissue; // Skip processing, just return buffer and reissue read
         }
 
         LogToDialog("UDP Data Received (%d bytes) from %s:%d", dataLen, sender_ip_str, remotePort);
 
-        if (parse_message(gUDPReceiveAreaPtr, sender_ip_str, sender_username, msg_type, content) == 0) {
+        // Parse the message
+        // Pass sender_ip_str as output buffer for parsed IP, though we primarily use the AddrToStr result
+        if (parse_message(gUDPReceiveAreaPtr, parsed_sender_ip, sender_username, msg_type, content) == 0) {
+            // Use the IP from AddrToStr (sender_ip_str) for logging and peer management
             LogToDialog("Parsed UDP Msg: Type='%s', Sender='%s', IP='%s', Content='%s'",
                         msg_type, sender_username, sender_ip_str, content);
 
             if (strcmp(msg_type, MSG_DISCOVERY) == 0) {
                 LogToDialog("Received DISCOVERY from %s@%s", sender_username, sender_ip_str);
-                err = SendUDPResponse(remoteIP, remotePort);
-                if (err != noErr) {
-                    LogToDialog("Error sending UDP discovery response to %s: %d", sender_ip_str, err);
-                }
+                // --- Defer SendUDPResponse ---
+                gNeedToSendResponse = true;
+                gResponseDestIP = remoteIP;
+                gResponseDestPort = remotePort;
+                // Add/Update peer immediately (assumed safe)
                 AddOrUpdatePeer(sender_ip_str, sender_username);
             }
             else if (strcmp(msg_type, MSG_DISCOVERY_RESPONSE) == 0) {
                 LogToDialog("Received DISCOVERY_RESPONSE from %s@%s", sender_username, sender_ip_str);
+                // Add/Update peer immediately (assumed safe)
                 AddOrUpdatePeer(sender_ip_str, sender_username);
             }
             else {
@@ -435,41 +439,37 @@ void ProcessUDPReceive(void) {
             LogToDialog("Failed to parse UDP message from %s: %s", sender_ip_str, gUDPReceiveAreaPtr);
         }
 
-        // Return the buffer to MacTCP
+return_buffer_and_reissue:
+        // Return the buffer to MacTCP (Synchronous call - potential risk)
         memset(&bfrPB, 0, sizeof(UDPiopb));
         bfrPB.ioCRefNum = gMacTCPRefNum;
         bfrPB.csCode = udpBfrReturn;
         bfrPB.udpStream = sUDPEndpoint;
-        bfrPB.csParam.receive.rcvBuff = dataPtr;
+        bfrPB.csParam.receive.rcvBuff = dataPtr; // Pointer to the buffer we received
         err = PBControlSync((ParmBlkPtr)&bfrPB);
         if (err != noErr) {
              LogToDialog("Error: PBControlSync(udpBfrReturn) failed. Error: %d", err);
+             // If buffer return fails, MacTCP might run out of buffers.
+             // Maybe we should stop trying to read? For now, just log.
         }
 
     } else if (result != 1) { // Ignore inProgress (1)
         LogToDialog("UDP Read completed with error: %d. Re-issuing.", result);
     }
 
-reissue_read:
-    // Re-issue the asynchronous read
+    // Re-issue the asynchronous read regardless of previous result (unless fatal error)
     if (result != connectionTerminated && result != invalidStreamPtr) {
        IssueUDPRead();
     } else {
        LogToDialog("UDP Stream seems terminated (Error: %d). Not re-issuing read.", result);
     }
-
-    // --- REMOVED DisposeRoutineDescriptor from here ---
-    // if (gUDPReadPB.ioCompletion != NULL) {
-    //     DisposeRoutineDescriptor(gUDPReadPB.ioCompletion);
-    //     gUDPReadPB.ioCompletion = NULL;
-    // }
 }
 
-// ... (SendUDPResponse remains the same) ...
 /**
- * @brief Sends a UDP discovery response back to a specific sender.
+ * @brief Sends a UDP discovery response back to a specific sender. (Synchronous)
  */
 OSErr SendUDPResponse(ip_addr destIP, udp_port destPort) {
+    // ... (This function remains the same as before, using PBControlSync) ...
     OSErr err;
     char buffer[BUFFER_SIZE];
     struct wdsEntry wds[2];
@@ -513,8 +513,21 @@ OSErr SendUDPResponse(ip_addr destIP, udp_port destPort) {
     return noErr;
 }
 
+/**
+ * @brief Checks if a deferred UDP response needs to be sent and sends it.
+ * @details Called from the main event loop during a safe time.
+ */
+void CheckAndSendDeferredResponse(void) {
+    if (gNeedToSendResponse) {
+        LogToDialog("Processing deferred UDP response to %lu:%u", gResponseDestIP, gResponseDestPort);
+        SendUDPResponse(gResponseDestIP, gResponseDestPort);
+        gNeedToSendResponse = false; // Clear the flag
+    }
+}
 
-// ... (Peer Management Functions remain the same) ...
+
+// --- Peer Management Functions ---
+// ... (InitPeerList, AddOrUpdatePeer, FindPeerByIP, PruneInactivePeers remain the same) ...
 /**
  * @brief Initializes the global peer list.
  */

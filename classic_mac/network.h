@@ -4,7 +4,7 @@
 
 #include <MacTypes.h>
 #include <MacTCP.h>          // Include this first. It defines the necessary types.
-#include <MixedMode.h>       // ADDED: For UniversalProcPtr and UPP routines
+#include <MixedMode.h>       // For UniversalProcPtr and UPP routines
 
 #define __MACTCPCOMMONTYPES__ // Prevent AddressXlation.h from including conflicting types
 #include <AddressXlation.h>  // Needs types defined in MacTCP.h
@@ -31,16 +31,21 @@ extern ip_addr gMyLocalIP;    // Our local IP address (network byte order)
 extern char    gMyLocalIPStr[INET_ADDRSTRLEN]; // Our local IP as string
 extern unsigned long gLastBroadcastTimeTicks; // Time of last broadcast in Ticks
 
-// Peer List Globals (Classic Mac doesn't use app_state_t)
+// Peer List Globals
 extern peer_t  gPeerList[MAX_PEERS];
-extern short   gPeerCount; // Number of active peers currently in the list
+extern short   gPeerCount;
 
 // UDP Read Globals
-extern UDPiopb gUDPReadPB;           // Parameter block for the asynchronous UDP read
-extern char    gUDPRecvBuffer[BUFFER_SIZE]; // Buffer for receiving UDP data (for parsed data)
-extern Boolean gUDPReadPending;      // Flag indicating if an async read is outstanding
-extern Ptr     gUDPReceiveAreaPtr;   // Pointer to dynamically allocated receive area
-extern UDPIOCompletionUPP gUDPReadCompletionUPP; // ADDED: Global UPP for completion routine
+extern UDPiopb gUDPReadPB;
+extern char    gUDPRecvBuffer[BUFFER_SIZE]; // Temp buffer for holding *parsed* data if needed
+extern Boolean gUDPReadPending;
+extern Ptr     gUDPReceiveAreaPtr;
+extern UDPIOCompletionUPP gUDPReadCompletionUPP;
+
+// --- ADDED: State for Deferred Processing ---
+extern Boolean gNeedToSendResponse; // Flag: Do we need to send a DISCOVERY_RESPONSE?
+extern ip_addr gResponseDestIP;     // IP to send response to
+extern udp_port gResponseDestPort;  // Port to send response to
 
 // --- Function Prototypes ---
 
@@ -52,15 +57,16 @@ void CleanupNetworking(void);
 OSErr InitUDPDiscovery(void);
 OSErr SendDiscoveryBroadcast(void);
 void CheckSendBroadcast(void);
-OSErr IssueUDPRead(void); // Function to issue the async read
-void ProcessUDPReceive(void); // Function to process completed read
-pascal void UDPReadCompletion(UDPiopb *pb); // Completion routine (implementation in .c)
-OSErr SendUDPResponse(ip_addr destIP, udp_port destPort); // Send DISCOVERY_RESPONSE
+OSErr IssueUDPRead(void);
+void ProcessUDPReceive(void); // Processes completed read, sets flags
+pascal void UDPReadCompletion(UDPiopb *pb);
+OSErr SendUDPResponse(ip_addr destIP, udp_port destPort); // Sends the response
+void CheckAndSendDeferredResponse(void); // ADDED: Called from main loop
 
 // Peer Management
 void InitPeerList(void);
-int AddOrUpdatePeer(const char *ip, const char *username); // Returns 1 if new, 0 if updated, -1 if full
-short FindPeerByIP(const char *ip); // Returns index or -1
-void PruneInactivePeers(void); // Function to mark timed-out peers inactive
+int AddOrUpdatePeer(const char *ip, const char *username);
+short FindPeerByIP(const char *ip);
+void PruneInactivePeers(void);
 
 #endif // NETWORK_H
