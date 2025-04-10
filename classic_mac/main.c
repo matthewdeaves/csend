@@ -19,7 +19,7 @@
 
 // --- Project Includes ---
 #include "logging.h"   // Logging functions (InitLogFile, CloseLogFile, LogToDialog)
-#include "network.h"   // Networking functions (InitializeNetworking, CleanupNetworking, InitUDPDiscovery, CheckSendBroadcast)
+#include "network.h"   // Networking functions (InitializeNetworking, CleanupNetworking, InitUDPDiscovery, CheckSendBroadcast, IssueUDPRead, ProcessUDPReceive)
 #include "dialog.h"    // Dialog functions (InitDialog, CleanupDialog, HandleDialogClick, etc.)
 
 // --- Global Variables ---
@@ -55,39 +55,35 @@ int main(void) {
         return 1; // Indicate failure
     }
 
-    // *** TEMPORARILY COMMENT OUT UDP INIT ***
-    /*
-    networkErr = InitUDPDiscovery();
+    // 4. Initialize UDP Discovery (Create UDP Endpoint and start listening)
+    networkErr = InitUDPDiscovery(); // *** RE-ENABLED ***
     if (networkErr != noErr) {
         LogToDialog("Fatal: UDP Discovery initialization failed (Error: %d). Exiting.", networkErr);
-        // CleanupNetworking(); // Clean up TCP/DNR part
-        // CloseLogFile();      // Close log file
+        CleanupNetworking(); // Clean up TCP/DNR part
+        CloseLogFile();      // Close log file
         ExitToShell(); // Call ExitToShell directly
         return 1; // Indicate failure
     }
-    */
-    LogToDialog("Skipping UDP Discovery initialization for testing.");
-    // *** END TEMPORARY CHANGE ***
+    LogToDialog("UDP Discovery Initialized."); // *** UPDATED LOG ***
 
-
-    // 4. Initialize the Main Dialog Window and its controls
+    // 5. Initialize the Main Dialog Window and its controls
     dialogOk = InitDialog();
     if (!dialogOk) {
         LogToDialog("Fatal: Dialog initialization failed. Exiting.");
-        CleanupNetworking(); // Clean up network resources (TCP/DNR only now)
+        CleanupNetworking(); // Clean up network resources
         CloseLogFile();
         ExitToShell();
         return 1;
     }
 
-    // 5. Enter the Main Event Loop
+    // 6. Enter the Main Event Loop
     LogToDialog("Entering main event loop...");
     MainEventLoop();
     LogToDialog("Exited main event loop.");
 
-    // 6. Cleanup Resources
+    // 7. Cleanup Resources
     CleanupDialog();
-    CleanupNetworking(); // Cleans up TCP/DNR (and UDP if it were initialized)
+    CleanupNetworking(); // Cleans up TCP/DNR and UDP
     CloseLogFile();
 
     return 0;
@@ -140,7 +136,14 @@ void MainEventLoop(void) {
             }
         } else {
             // --- Idle Time ---
-            // CheckSendBroadcast(); // Don't call this if UDP isn't initialized
+            // Check if the pending UDP read has completed
+            if (!gUDPReadPending) {
+                ProcessUDPReceive(); // Process result and re-issue read if necessary
+            }
+            // Check if it's time to send a broadcast
+            CheckSendBroadcast(); // *** RE-ENABLED ***
+            // Prune inactive peers periodically during idle time
+            PruneInactivePeers();
         }
     } // end while(!gDone)
 }
@@ -180,6 +183,7 @@ void HandleEvent(EventRecord *event) {
                         if (whichWindow != FrontWindow()) {
                             SelectWindow(whichWindow);
                         }
+                        // Note: Clicks in TE fields are handled by DialogSelect -> TEClick
                     }
                     break;
                 default:
@@ -188,15 +192,16 @@ void HandleEvent(EventRecord *event) {
             break;
 
         case keyDown: case autoKey:
-            // Handled by DialogSelect
+            // Handled by DialogSelect if it's for an active TE field
             break;
 
         case updateEvt:
             whichWindow = (WindowPtr)event->message;
             if (whichWindow == (WindowPtr)gMainWindow) {
                 BeginUpdate(whichWindow);
-                DrawDialog(whichWindow);
-                UpdateDialogTE();
+                DrawDialog(whichWindow); // Redraws standard items
+                UpdateDialogTE();        // Redraws TE fields
+                // TODO: Redraw peer list user item if implemented
                 EndUpdate(whichWindow);
             }
             break;
@@ -207,6 +212,10 @@ void HandleEvent(EventRecord *event) {
                 ActivateDialogTE((event->modifiers & activeFlag) != 0);
             }
             break;
+
+        // Handle application-defined events if needed later (e.g., from completion routines)
+        // case app4Evt:
+        //     break;
 
         default:
             break;

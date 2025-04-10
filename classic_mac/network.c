@@ -2,12 +2,13 @@
 #include "network.h"
 #include "logging.h"   // For LogToDialog
 #include "dialog.h"    // For gMyUsername
-#include "protocol.h"  // For format_message, MSG_DISCOVERY
+#include "protocol.h"  // For format_message, parse_message, MSG_*
 
-#include <Devices.h>   // For PBControlSync, PBOpenSync, PBCloseSync, TickCount, CntrlParam, ParmBlkPtr
-#include <string.h>    // For memset, strlen, strcmp
+#include <Devices.h>   // For PBControlSync, PBControlAsync, TickCount, CntrlParam, ParmBlkPtr
+#include <string.h>    // For memset, strlen, strcmp, strcpy
 #include <stdlib.h>    // For NULL
-#include <Memory.h>    // For BlockMoveData if needed
+#include <Memory.h>    // For BlockMoveData, NewPtr, DisposePtr
+#include <MixedMode.h> // ADDED: For UPP routines
 
 // --- Global Variable Definitions ---
 short   gMacTCPRefNum = 0;    // Driver reference number for MacTCP
@@ -15,16 +16,30 @@ ip_addr gMyLocalIP = 0;       // Our local IP address (network byte order)
 char    gMyLocalIPStr[INET_ADDRSTRLEN] = "0.0.0.0"; // Our local IP as string
 unsigned long gLastBroadcastTimeTicks = 0; // Time in Ticks
 
+// Peer List Globals
+peer_t  gPeerList[MAX_PEERS];
+short   gPeerCount = 0;
+
+// UDP Read Globals
+UDPiopb gUDPReadPB;           // Parameter block for the asynchronous UDP read
+char    gUDPRecvBuffer[BUFFER_SIZE]; // Buffer for receiving UDP data (for parsed data)
+Boolean gUDPReadPending = false;      // Flag indicating if an async read is outstanding
+Ptr     gUDPReceiveAreaPtr = NULL;    // Pointer to dynamically allocated receive area
+UDPIOCompletionUPP gUDPReadCompletionUPP = NULL; // ADDED: Global UPP definition
+
 // --- Static Global for UDP Endpoint ---
 static StreamPtr sUDPEndpoint = NULL; // UDP Endpoint
+
+// --- Initialization and Cleanup ---
 
 /**
  * @brief Initializes MacTCP networking (Driver, IP Address, DNR).
  */
 OSErr InitializeNetworking(void) {
+    // ... (Code remains the same as your last correct version) ...
     OSErr err;
-    ParamBlockRec pb;
-    CntrlParam cntrlPB;
+    ParamBlockRec pb; // PBOpen uses standard ParamBlockRec
+    CntrlParam cntrlPB; // ipctlGetAddr uses CntrlParam
 
     LogToDialog("Initializing Networking...");
 
@@ -49,11 +64,11 @@ OSErr InitializeNetworking(void) {
     err = PBControlSync((ParmBlkPtr)&cntrlPB);
     if (err != noErr) {
         LogToDialog("Error: PBControlSync(ipctlGetAddr) failed. Error: %d", err);
-        // Don't call CleanupNetworking here, just mark driver refnum as invalid
-        gMacTCPRefNum = 0;
+        gMacTCPRefNum = 0; // Mark driver as unusable
         return err;
     }
     LogToDialog("PBControlSync(ipctlGetAddr) succeeded.");
+    // Correctly extract the IP address (it's a long starting at csParam[0])
     gMyLocalIP = *((ip_addr *)(&cntrlPB.csParam[0]));
 
     // --- Initialize DNR FIRST ---
@@ -61,8 +76,7 @@ OSErr InitializeNetworking(void) {
     err = OpenResolver(NULL);
     if (err != noErr) {
         LogToDialog("Error: OpenResolver failed. Error: %d", err);
-        // Don't call CleanupNetworking here, just mark driver refnum as invalid
-        gMacTCPRefNum = 0;
+        gMacTCPRefNum = 0; // Mark driver as unusable
         return err; // Return the OpenResolver error
     } else {
         LogToDialog("OpenResolver succeeded.");
@@ -70,160 +84,29 @@ OSErr InitializeNetworking(void) {
 
     // --- Convert Local IP to String AFTER DNR is open ---
     LogToDialog("Attempting AddrToStr for IP: %lu...", gMyLocalIP);
-    err = AddrToStr(gMyLocalIP, gMyLocalIPStr);
-    if (err != noErr) {
-         // This might still return an error if the IP can't be resolved to a name
-         // or if AddrToStr itself has issues, but it shouldn't be notOpenErr (-28) now.
-         LogToDialog("Warning: AddrToStr returned error %d. Result string: '%s'", err, gMyLocalIPStr);
-         // Decide if this is fatal or not. For now, we continue.
-         // If the string is still 0.0.0.0, that's a problem for identifying the user.
-         if (strcmp(gMyLocalIPStr, "0.0.0.0") == 0) {
-             LogToDialog("Error: AddrToStr failed to get a valid IP string.");
-             // Potentially cleanup and return error here if IP string is critical
-             // For now, let initialization succeed but log the error.
-         }
+    // AddrToStr returns OSErr, but we treat it as informational for now
+    AddrToStr(gMyLocalIP, gMyLocalIPStr);
+    // Check if the result is valid
+    if (strcmp(gMyLocalIPStr, "0.0.0.0") == 0 || gMyLocalIPStr[0] == '\0') {
+         LogToDialog("Warning: AddrToStr failed to get a valid IP string. Result: '%s'", gMyLocalIPStr);
+         // Consider setting a default or error state if IP is critical
+         // strcpy(gMyLocalIPStr, "?.?.?.?"); // Indicate unknown IP
     } else {
         LogToDialog("AddrToStr finished. Result string: '%s'", gMyLocalIPStr);
     }
+
+    // --- Initialize Peer List ---
+    InitPeerList();
 
     LogToDialog("Networking initialization complete.");
     return noErr; // Return noErr if we got this far
 }
 
-
-/**
- * @brief Initializes the UDP endpoint for discovery broadcasts using PBControl.
- */
-OSErr InitUDPDiscovery(void) {
-    OSErr err;
-    CntrlParam udpPB;
-    const unsigned short specificPort = 0; // Request dynamic port assignment
-
-    LogToDialog("Initializing UDP Discovery Endpoint...");
-
-    memset(&udpPB, 0, sizeof(CntrlParam));
-    udpPB.ioCRefNum = gMacTCPRefNum;
-    udpPB.csCode = udpCreate; // Use correct constant
-
-    // Map parameters to csParam based on byte offsets from MacTCP Guide (relative to csCode start at byte 26)
-    // csParam starts at byte 28. Offsets relative to csParam start:
-    // Output StreamPtr: Offset 28 -> csParam[0] (long)
-    // Input rcvBuff:    Offset 32 -> csParam[4] (long)
-    // Input rcvBuffLen: Offset 36 -> csParam[8] (long)
-    // Input notifyProc: Offset 40 -> csParam[12] (long)
-    // Input localPort:  Offset 44 -> csParam[16] (word)
-    // Input userDataPtr:Offset 46 -> csParam[18] (long)
-
-    *((Ptr*)         (&udpPB.csParam[4])) = NULL;         // rcvBuff = NULL
-    *((unsigned long*)(&udpPB.csParam[8])) = 0L;           // rcvBuffLen = 0 (No receive buffer needed for sending only)
-    *((ProcPtr*)     (&udpPB.csParam[12])) = NULL;         // notifyProc = NULL
-    *((udp_port*)    (&udpPB.csParam[16])) = specificPort; // localPort = 0 (request dynamic)
-    *((Ptr*)         (&udpPB.csParam[18])) = NULL;         // userDataPtr = NULL
-
-    LogToDialog("Calling PBControlSync (udpCreate) for port %u with rcvBufLen=0...", specificPort);
-    err = PBControlSync((ParmBlkPtr)&udpPB);
-
-    if (err != noErr) {
-        LogToDialog("Error: PBControlSync(udpCreate) failed. Error: %d", err);
-        sUDPEndpoint = NULL;
-        return err;
-    }
-
-    // Retrieve the output StreamPtr from csParam[0]
-    sUDPEndpoint = *((StreamPtr*)(&udpPB.csParam[0]));
-    // Retrieve the *actual* port assigned by MacTCP from csParam[16]
-    unsigned short assignedPort = *((udp_port*)(&udpPB.csParam[16]));
-    LogToDialog("UDP Endpoint created successfully (StreamPtr: 0x%lX) on assigned port %u.", (unsigned long)sUDPEndpoint, assignedPort);
-    gLastBroadcastTimeTicks = 0;
-    return noErr;
-}
-
-/**
- * @brief Sends a UDP discovery broadcast message using PBControl.
- */
-OSErr SendDiscoveryBroadcast(void) {
-    OSErr err;
-    char buffer[BUFFER_SIZE];
-    struct wdsEntry wds[2]; // Need 2 entries for the terminating zero entry
-    CntrlParam udpPB;
-
-    if (sUDPEndpoint == NULL) {
-        LogToDialog("Error: Cannot send broadcast, UDP endpoint not initialized.");
-        return invalidStreamPtr; // Use a more specific error if possible
-    }
-
-    // Format the message using the shared protocol function
-    err = format_message(buffer, BUFFER_SIZE, MSG_DISCOVERY, gMyUsername, gMyLocalIPStr, "");
-    if (err != 0) {
-        LogToDialog("Error: Failed to format discovery broadcast message.");
-        return paramErr; // Or another suitable error code
-    }
-
-    // Prepare the Write Data Structure (WDS)
-    wds[0].length = strlen(buffer);
-    wds[0].ptr = buffer;
-    wds[1].length = 0; // Terminating entry
-    wds[1].ptr = NULL;
-
-    // Prepare the Parameter Block for udpSend
-    memset(&udpPB, 0, sizeof(CntrlParam));
-    udpPB.ioCRefNum = gMacTCPRefNum;
-    udpPB.csCode = udpSend; // Use correct constant
-
-    // Map parameters to csParam based on byte offsets from MacTCP Guide (relative to csCode start at byte 26)
-    // csParam starts at byte 28. Offsets relative to csParam start:
-    // Input streamPtr:   Offset 28 -> csParam[0] (long)
-    // Input remoteHost:  Offset 34 -> csParam[6] (long)
-    // Input remotePort:  Offset 38 -> csParam[10] (word)
-    // Input wdsPtr:      Offset 40 -> csParam[12] (long)
-    // Input checkSum:    Offset 44 -> csParam[16] (byte) - Use byte access or careful word access
-    // Input userDataPtr: Offset 48 -> csParam[20] (long)
-
-    *((StreamPtr*)(&udpPB.csParam[0])) = sUDPEndpoint;   // streamPtr
-    *((ip_addr*)  (&udpPB.csParam[6])) = BROADCAST_IP;   // remoteHost
-    *((udp_port*) (&udpPB.csParam[10])) = PORT_UDP;      // remotePort
-    *((Ptr*)      (&udpPB.csParam[12])) = (Ptr)wds;      // wdsPtr
-    // Accessing byte at offset 44 (csParam[16] is word at 44, so access low byte)
-    *((unsigned char*)(&udpPB.csParam[16])) = 1;         // checkSum = true
-    *((Ptr*)      (&udpPB.csParam[20])) = NULL;         // userDataPtr = NULL
-
-    // Call PBControlSync
-    err = PBControlSync((ParmBlkPtr)&udpPB);
-
-    if (err != noErr) {
-        LogToDialog("Error: PBControlSync(udpSend) failed. Error: %d", err);
-        return err;
-    }
-
-    // LogToDialog("Discovery broadcast sent."); // Optional success log
-    gLastBroadcastTimeTicks = TickCount(); // Update last broadcast time
-    return noErr;
-}
-
-/**
- * @brief Checks if it's time to send the next discovery broadcast.
- */
-void CheckSendBroadcast(void) {
-    unsigned long currentTimeTicks = TickCount();
-    // DISCOVERY_INTERVAL is in seconds, TickCount() is 1/60th seconds
-    const unsigned long intervalTicks = (unsigned long)DISCOVERY_INTERVAL * 60;
-
-    // Only check if the endpoint is initialized
-    if (sUDPEndpoint == NULL) return;
-
-    // Send immediately if never sent before, or if interval has passed
-    if (gLastBroadcastTimeTicks == 0 || (currentTimeTicks - gLastBroadcastTimeTicks) >= intervalTicks) {
-        SendDiscoveryBroadcast(); // Ignore return value for simple periodic broadcast
-    }
-}
-
-
 /**
  * @brief Cleans up networking resources (DNR, Driver, UDP Endpoint).
  */
 void CleanupNetworking(void) {
-    // ParamBlockRec pb; // Not needed anymore as we don't close the driver
-    CntrlParam udpPB;
+    UDPiopb udpPB; // Use UDPiopb for udpRelease
     OSErr err;
 
     LogToDialog("Cleaning up Networking...");
@@ -240,46 +123,488 @@ void CleanupNetworking(void) {
     // --- Release UDP Endpoint ---
     if (sUDPEndpoint != NULL) {
         LogToDialog("Attempting PBControlSync (udpRelease) for endpoint 0x%lX...", (unsigned long)sUDPEndpoint);
-        memset(&udpPB, 0, sizeof(CntrlParam));
+        memset(&udpPB, 0, sizeof(UDPiopb)); // Use UDPiopb
         udpPB.ioCRefNum = gMacTCPRefNum;
-        udpPB.csCode = udpRelease; // Use correct constant
-
-        // Map parameters to csParam based on byte offsets from MacTCP Guide (relative to csCode start at byte 26)
-        // csParam starts at byte 28. Offsets relative to csParam start:
-        // Input streamPtr:   Offset 28 -> csParam[0] (long)
-        // Output rcvBuff:    Offset 32 -> csParam[4] (long) - Not used on input
-        // Output rcvBuffLen: Offset 36 -> csParam[8] (long) - Not used on input
-        // Input userDataPtr: Offset 44 -> csParam[16] (long) - Note: Guide says 46, but 44 fits better with structure
-
-        *((StreamPtr*)(&udpPB.csParam[0])) = sUDPEndpoint; // streamPtr
-        *((Ptr*)      (&udpPB.csParam[16])) = NULL;        // userDataPtr = NULL (Assuming offset 44)
+        udpPB.csCode = udpRelease;
+        udpPB.udpStream = sUDPEndpoint; // Set the stream pointer directly
+        // No other input parameters needed for udpRelease
 
         err = PBControlSync((ParmBlkPtr)&udpPB);
         if (err != noErr) {
             LogToDialog("Warning: PBControlSync(udpRelease) failed. Error: %d", err);
         } else {
             LogToDialog("PBControlSync(udpRelease) succeeded.");
+            // Output parameters (rcvBuff, rcvBuffLen) are in udpPB.csParam.create if needed
         }
-        sUDPEndpoint = NULL; // Mark as released even if call failed
+        sUDPEndpoint = NULL;
     } else {
         LogToDialog("UDP Endpoint was not open, skipping release.");
+    }
+
+    // --- Dispose Dynamically Allocated UDP Receive Buffer ---
+    if (gUDPReceiveAreaPtr != NULL) {
+        LogToDialog("Disposing UDP receive buffer...");
+        DisposePtr(gUDPReceiveAreaPtr);
+        gUDPReceiveAreaPtr = NULL;
+    }
+
+    // --- Dispose UDP Completion Routine UPP --- ADDED
+    if (gUDPReadCompletionUPP != NULL) {
+        LogToDialog("Disposing UDP completion UPP...");
+        DisposeRoutineDescriptor(gUDPReadCompletionUPP);
+        gUDPReadCompletionUPP = NULL;
     }
 
     // --- Close MacTCP Driver ---
     // DO NOT CALL PBCloseSync for the MacTCP driver (.IPP)
     if (gMacTCPRefNum != 0) {
          LogToDialog("MacTCP driver (RefNum: %d) remains open by design.", gMacTCPRefNum);
-        // pb.ioParam.ioRefNum = gMacTCPRefNum;
-        // err = PBCloseSync(&pb); // <-- REMOVED THIS CALL
-        // if (err != noErr) {
-        //     LogToDialog("Error: PBCloseSync failed. Error: %d", err);
-        // } else {
-        //     LogToDialog("PBCloseSync succeeded.");
-        // }
         gMacTCPRefNum = 0; // Still reset our global reference number variable
     } else {
         LogToDialog("MacTCP driver was not open.");
     }
 
     LogToDialog("Networking cleanup complete.");
+}
+
+
+// --- UDP Discovery Functions ---
+
+/**
+ * @brief Initializes the UDP endpoint for discovery broadcasts and receives.
+ */
+OSErr InitUDPDiscovery(void) {
+    OSErr err;
+    UDPiopb udpPB; // Use UDPiopb for udpCreate
+
+    LogToDialog("Initializing UDP Discovery Endpoint (Create/Read)...");
+
+    if (gMacTCPRefNum == 0) {
+        LogToDialog("Error: MacTCP driver not open.");
+        return notOpenErr;
+    }
+
+    // --- Allocate Receive Buffer Dynamically ---
+    LogToDialog("Allocating UDP receive buffer (size: %d)...", kUDPReceiveBufferSize);
+    gUDPReceiveAreaPtr = NewPtr(kUDPReceiveBufferSize);
+    if (gUDPReceiveAreaPtr == NULL) {
+        err = MemError();
+        LogToDialog("Error: NewPtr failed for UDP receive buffer. Error: %d", err);
+        return err; // Return memory error
+    }
+    LogToDialog("UDP receive buffer allocated at 0x%lX.", (unsigned long)gUDPReceiveAreaPtr);
+
+    // --- Create UDP Endpoint ---
+    memset(&udpPB, 0, sizeof(UDPiopb)); // Use UDPiopb
+    udpPB.ioCRefNum = gMacTCPRefNum;
+    udpPB.csCode = udpCreate;
+
+    // Use the named fields within the 'create' union member
+    udpPB.csParam.create.rcvBuff = gUDPReceiveAreaPtr;
+    udpPB.csParam.create.rcvBuffLen = kUDPReceiveBufferSize;
+    udpPB.csParam.create.notifyProc = NULL;
+    udpPB.csParam.create.localPort = PORT_UDP; // Use specific port
+    udpPB.csParam.create.userDataPtr = NULL;
+
+    LogToDialog("Calling PBControlSync (udpCreate) for port %u with rcvBufLen=%d...", PORT_UDP, kUDPReceiveBufferSize);
+    err = PBControlSync((ParmBlkPtr)&udpPB);
+
+    if (err != noErr) {
+        LogToDialog("Error: PBControlSync(udpCreate) failed. Error: %d", err);
+        sUDPEndpoint = NULL;
+        if (gUDPReceiveAreaPtr != NULL) {
+            DisposePtr(gUDPReceiveAreaPtr);
+            gUDPReceiveAreaPtr = NULL;
+        }
+        return err;
+    }
+
+    // Retrieve the output StreamPtr
+    sUDPEndpoint = udpPB.udpStream;
+    unsigned short assignedPort = udpPB.csParam.create.localPort;
+    LogToDialog("UDP Endpoint created successfully (StreamPtr: 0x%lX) on port %u.", (unsigned long)sUDPEndpoint, assignedPort);
+    gLastBroadcastTimeTicks = 0; // Reset broadcast timer
+
+    // --- Create Completion Routine UPP --- ADDED
+    LogToDialog("Creating UDP Read Completion UPP...");
+    gUDPReadCompletionUPP = NewUDPIOCompletionProc(UDPReadCompletion);
+    if (gUDPReadCompletionUPP == NULL) {
+        LogToDialog("Error: NewUDPIOCompletionProc failed!");
+        CleanupNetworking(); // Attempt full cleanup
+        return memFullErr; // Or another appropriate error
+    }
+    LogToDialog("UDP Read Completion UPP created.");
+
+    // Issue the first asynchronous read
+    err = IssueUDPRead();
+    if (err != noErr) {
+        LogToDialog("Error: Failed to issue initial UDP read. Error: %d", err);
+        CleanupNetworking(); // Attempt full cleanup
+        return err;
+    }
+
+    return noErr;
+}
+
+// ... (SendDiscoveryBroadcast remains the same) ...
+/**
+ * @brief Sends a UDP discovery broadcast message using PBControl.
+ */
+OSErr SendDiscoveryBroadcast(void) {
+    OSErr err;
+    char buffer[BUFFER_SIZE];
+    struct wdsEntry wds[2];
+    UDPiopb udpPB; // Use UDPiopb for udpSend
+
+    if (sUDPEndpoint == NULL) {
+        return invalidStreamPtr;
+    }
+
+    err = format_message(buffer, BUFFER_SIZE, MSG_DISCOVERY, gMyUsername, gMyLocalIPStr, "");
+    if (err != 0) {
+        LogToDialog("Error: Failed to format discovery broadcast message.");
+        return paramErr;
+    }
+
+    wds[0].length = strlen(buffer);
+    wds[0].ptr = buffer;
+    wds[1].length = 0;
+    wds[1].ptr = NULL;
+
+    memset(&udpPB, 0, sizeof(UDPiopb)); // Use UDPiopb
+    udpPB.ioCRefNum = gMacTCPRefNum;
+    udpPB.csCode = udpSend;
+    udpPB.udpStream = sUDPEndpoint; // Set stream pointer directly
+
+    // Use the named fields within the 'send' union member
+    udpPB.csParam.send.remoteHost = BROADCAST_IP;
+    udpPB.csParam.send.remotePort = PORT_UDP;
+    udpPB.csParam.send.wdsPtr = (Ptr)wds;
+    udpPB.csParam.send.checkSum = true; // Boolean field
+    udpPB.csParam.send.userDataPtr = NULL;
+    // udpPB.csParam.send.sendLength = 0; // This is an output field
+
+    err = PBControlSync((ParmBlkPtr)&udpPB);
+
+    if (err != noErr) {
+        LogToDialog("Error: PBControlSync(udpSend) broadcast failed. Error: %d", err);
+        return err;
+    }
+
+    gLastBroadcastTimeTicks = TickCount();
+    return noErr;
+}
+
+
+// ... (CheckSendBroadcast remains the same) ...
+/**
+ * @brief Checks if it's time to send the next discovery broadcast.
+ */
+void CheckSendBroadcast(void) {
+    unsigned long currentTimeTicks = TickCount();
+    const unsigned long intervalTicks = (unsigned long)DISCOVERY_INTERVAL * 60;
+
+    if (sUDPEndpoint == NULL) return;
+
+    if (gLastBroadcastTimeTicks == 0 || (currentTimeTicks - gLastBroadcastTimeTicks) >= intervalTicks) {
+        SendDiscoveryBroadcast();
+    }
+}
+
+
+/**
+ * @brief Issues an asynchronous UDPRead command.
+ */
+OSErr IssueUDPRead(void) {
+    OSErr err;
+
+    if (sUDPEndpoint == NULL) {
+        return invalidStreamPtr;
+    }
+    if (gUDPReadPending) {
+        return noErr;
+    }
+    if (gUDPReceiveAreaPtr == NULL) {
+        LogToDialog("Error: Cannot issue UDPRead, receive buffer not allocated.");
+        return memFullErr;
+    }
+    // --- Use global UPP --- MODIFIED
+    if (gUDPReadCompletionUPP == NULL) {
+        LogToDialog("Error: Cannot issue UDPRead, completion UPP is NULL.");
+        return paramErr; // Indicate a setup problem
+    }
+
+    memset(&gUDPReadPB, 0, sizeof(UDPiopb));
+    gUDPReadPB.ioCompletion = gUDPReadCompletionUPP; // Use the global UPP
+    gUDPReadPB.ioCRefNum = gMacTCPRefNum;
+    gUDPReadPB.csCode = udpRead;
+    gUDPReadPB.udpStream = sUDPEndpoint;
+
+    gUDPReadPB.csParam.receive.timeOut = 0;
+    gUDPReadPB.csParam.receive.rcvBuff = gUDPReceiveAreaPtr;
+    gUDPReadPB.csParam.receive.rcvBuffLen = kUDPReceiveBufferSize;
+    gUDPReadPB.csParam.receive.userDataPtr = NULL;
+
+    err = PBControlAsync((ParmBlkPtr)&gUDPReadPB);
+
+    if (err == noErr) {
+        gUDPReadPending = true;
+    } else {
+        LogToDialog("Error: PBControlAsync(udpRead) failed to issue. Error: %d", err);
+        gUDPReadPending = false;
+        // Don't dispose the global UPP here on failure to issue
+    }
+    return err;
+}
+
+/**
+ * @brief Completion routine for asynchronous UDPRead.
+ */
+pascal void UDPReadCompletion(UDPiopb *pb) {
+    #pragma unused(pb)
+    gUDPReadPending = false;
+}
+
+/**
+ * @brief Processes the result of a completed UDPRead operation.
+ */
+void ProcessUDPReceive(void) {
+    OSErr result;
+    ip_addr remoteIP;
+    udp_port remotePort;
+    Ptr dataPtr;
+    unsigned short dataLen;
+    char sender_ip_str[INET_ADDRSTRLEN];
+    char sender_username[32];
+    char msg_type[32];
+    char content[BUFFER_SIZE];
+    OSErr err;
+    UDPiopb bfrPB;
+
+    if (gUDPReadPending) {
+        return;
+    }
+
+    result = gUDPReadPB.ioResult;
+
+    if (result == noErr) {
+        remoteIP = gUDPReadPB.csParam.receive.remoteHost;
+        remotePort = gUDPReadPB.csParam.receive.remotePort;
+        dataPtr = gUDPReadPB.csParam.receive.rcvBuff;
+        dataLen = gUDPReadPB.csParam.receive.rcvBuffLen;
+
+        if (dataPtr != gUDPReceiveAreaPtr) {
+             LogToDialog("Warning: Received data pointer (0x%lX) doesn't match allocated buffer (0x%lX)!", (unsigned long)dataPtr, (unsigned long)gUDPReceiveAreaPtr);
+             goto reissue_read;
+        }
+
+        if (dataLen < kUDPReceiveBufferSize) {
+            gUDPReceiveAreaPtr[dataLen] = '\0';
+        } else {
+            gUDPReceiveAreaPtr[kUDPReceiveBufferSize - 1] = '\0';
+        }
+
+        AddrToStr(remoteIP, sender_ip_str);
+
+        if (strcmp(sender_ip_str, gMyLocalIPStr) == 0) {
+             goto reissue_read;
+        }
+
+        LogToDialog("UDP Data Received (%d bytes) from %s:%d", dataLen, sender_ip_str, remotePort);
+
+        if (parse_message(gUDPReceiveAreaPtr, sender_ip_str, sender_username, msg_type, content) == 0) {
+            LogToDialog("Parsed UDP Msg: Type='%s', Sender='%s', IP='%s', Content='%s'",
+                        msg_type, sender_username, sender_ip_str, content);
+
+            if (strcmp(msg_type, MSG_DISCOVERY) == 0) {
+                LogToDialog("Received DISCOVERY from %s@%s", sender_username, sender_ip_str);
+                err = SendUDPResponse(remoteIP, remotePort);
+                if (err != noErr) {
+                    LogToDialog("Error sending UDP discovery response to %s: %d", sender_ip_str, err);
+                }
+                AddOrUpdatePeer(sender_ip_str, sender_username);
+            }
+            else if (strcmp(msg_type, MSG_DISCOVERY_RESPONSE) == 0) {
+                LogToDialog("Received DISCOVERY_RESPONSE from %s@%s", sender_username, sender_ip_str);
+                AddOrUpdatePeer(sender_ip_str, sender_username);
+            }
+            else {
+                 LogToDialog("Received unknown UDP message type: %s", msg_type);
+            }
+        } else {
+            LogToDialog("Failed to parse UDP message from %s: %s", sender_ip_str, gUDPReceiveAreaPtr);
+        }
+
+        // Return the buffer to MacTCP
+        memset(&bfrPB, 0, sizeof(UDPiopb));
+        bfrPB.ioCRefNum = gMacTCPRefNum;
+        bfrPB.csCode = udpBfrReturn;
+        bfrPB.udpStream = sUDPEndpoint;
+        bfrPB.csParam.receive.rcvBuff = dataPtr;
+        err = PBControlSync((ParmBlkPtr)&bfrPB);
+        if (err != noErr) {
+             LogToDialog("Error: PBControlSync(udpBfrReturn) failed. Error: %d", err);
+        }
+
+    } else if (result != 1) { // Ignore inProgress (1)
+        LogToDialog("UDP Read completed with error: %d. Re-issuing.", result);
+    }
+
+reissue_read:
+    // Re-issue the asynchronous read
+    if (result != connectionTerminated && result != invalidStreamPtr) {
+       IssueUDPRead();
+    } else {
+       LogToDialog("UDP Stream seems terminated (Error: %d). Not re-issuing read.", result);
+    }
+
+    // --- REMOVED DisposeRoutineDescriptor from here ---
+    // if (gUDPReadPB.ioCompletion != NULL) {
+    //     DisposeRoutineDescriptor(gUDPReadPB.ioCompletion);
+    //     gUDPReadPB.ioCompletion = NULL;
+    // }
+}
+
+// ... (SendUDPResponse remains the same) ...
+/**
+ * @brief Sends a UDP discovery response back to a specific sender.
+ */
+OSErr SendUDPResponse(ip_addr destIP, udp_port destPort) {
+    OSErr err;
+    char buffer[BUFFER_SIZE];
+    struct wdsEntry wds[2];
+    UDPiopb udpPB; // Use UDPiopb for udpSend
+
+    if (sUDPEndpoint == NULL) {
+        LogToDialog("Error: Cannot send response, UDP endpoint not initialized.");
+        return invalidStreamPtr;
+    }
+
+    err = format_message(buffer, BUFFER_SIZE, MSG_DISCOVERY_RESPONSE, gMyUsername, gMyLocalIPStr, "");
+    if (err != 0) {
+        LogToDialog("Error: Failed to format discovery response message.");
+        return paramErr;
+    }
+
+    wds[0].length = strlen(buffer);
+    wds[0].ptr = buffer;
+    wds[1].length = 0;
+    wds[1].ptr = NULL;
+
+    memset(&udpPB, 0, sizeof(UDPiopb)); // Use UDPiopb
+    udpPB.ioCRefNum = gMacTCPRefNum;
+    udpPB.csCode = udpSend;
+    udpPB.udpStream = sUDPEndpoint;
+
+    udpPB.csParam.send.remoteHost = destIP;
+    udpPB.csParam.send.remotePort = destPort;
+    udpPB.csParam.send.wdsPtr = (Ptr)wds;
+    udpPB.csParam.send.checkSum = true;
+    udpPB.csParam.send.userDataPtr = NULL;
+
+    err = PBControlSync((ParmBlkPtr)&udpPB);
+
+    if (err != noErr) {
+        LogToDialog("Error: PBControlSync(udpSend) response failed. Error: %d", err);
+        return err;
+    }
+
+    LogToDialog("Discovery response sent to %s:%d.", gMyLocalIPStr, destPort); // Log using local IP for now
+    return noErr;
+}
+
+
+// ... (Peer Management Functions remain the same) ...
+/**
+ * @brief Initializes the global peer list.
+ */
+void InitPeerList(void) {
+    LogToDialog("Initializing peer list (Max: %d)", MAX_PEERS);
+    memset(gPeerList, 0, sizeof(gPeerList)); // Zero out the entire list
+    gPeerCount = 0;
+}
+
+/**
+ * @brief Adds a new peer or updates an existing one.
+ */
+int AddOrUpdatePeer(const char *ip, const char *username) {
+    short i;
+    unsigned long nowTicks = TickCount();
+
+    // Prune inactive peers first to make space if needed
+    PruneInactivePeers();
+
+    // Check if peer already exists
+    short existingIndex = FindPeerByIP(ip);
+
+    if (existingIndex != -1) {
+        // Peer found, update last_seen and potentially username
+        gPeerList[existingIndex].last_seen_ticks = nowTicks;
+        if (username && username[0] != '\0' && strcmp(gPeerList[existingIndex].username, username) != 0) {
+             LogToDialog("Updating username for peer %s to %s", ip, username);
+             strncpy(gPeerList[existingIndex].username, username, 31);
+             gPeerList[existingIndex].username[31] = '\0';
+             // TODO: Update UI list if implemented
+        }
+        // LogToDialog("Updated peer %s@%s", gPeerList[existingIndex].username, ip);
+        return 0; // Indicate update
+    }
+
+    // Peer not found, try to add to an inactive slot
+    for (i = 0; i < MAX_PEERS; i++) {
+        if (!gPeerList[i].active) {
+            strncpy(gPeerList[i].ip, ip, INET_ADDRSTRLEN - 1);
+            gPeerList[i].ip[INET_ADDRSTRLEN - 1] = '\0';
+            strncpy(gPeerList[i].username, username ? username : "???", 31);
+            gPeerList[i].username[31] = '\0';
+            gPeerList[i].last_seen_ticks = nowTicks;
+            gPeerList[i].active = 1;
+            gPeerCount++; // Increment active count
+            LogToDialog("Added new peer %d: %s@%s", gPeerCount, gPeerList[i].username, ip);
+            // TODO: Update UI list if implemented
+            return 1; // Indicate new peer added
+        }
+    }
+
+    // If loop finishes, list is full
+    LogToDialog("Peer list full. Cannot add peer %s@%s.", username ? username : "???", ip);
+    return -1; // Indicate list full
+}
+
+/**
+ * @brief Finds a peer by IP address.
+ * @return Index of the peer if found and active, otherwise -1.
+ */
+short FindPeerByIP(const char *ip) {
+    short i;
+    for (i = 0; i < MAX_PEERS; i++) {
+        if (gPeerList[i].active && strcmp(gPeerList[i].ip, ip) == 0) {
+            return i;
+        }
+    }
+    return -1; // Not found
+}
+
+/**
+ * @brief Marks peers as inactive if they haven't been seen recently.
+ */
+void PruneInactivePeers(void) {
+    unsigned long nowTicks = TickCount();
+    const unsigned long timeoutTicks = (unsigned long)PEER_TIMEOUT * 60;
+    short i;
+    Boolean changed = false;
+
+    for (i = 0; i < MAX_PEERS; i++) {
+        if (gPeerList[i].active) {
+            if ((nowTicks - gPeerList[i].last_seen_ticks) >= timeoutTicks) {
+                LogToDialog("Peer %s@%s timed out.", gPeerList[i].username, gPeerList[i].ip);
+                gPeerList[i].active = 0; // Mark as inactive
+                gPeerCount--; // Decrement active count
+                changed = true;
+            }
+        }
+    }
+    if (changed) {
+        // TODO: Update UI list if implemented
+    }
 }

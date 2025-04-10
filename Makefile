@@ -2,7 +2,8 @@
 
 # Compiler and flags
 CC = gcc
-CFLAGS = -g -Wall -Wextra # -g for debugging, -Wall/-Wextra for warnings
+# Add -D__POSIX__ here
+CFLAGS = -g -Wall -Wextra -D__POSIX__ # -g for debugging, -Wall/-Wextra for warnings
 LDFLAGS = -lpthread       # Link with the pthreads library
 
 # Directories
@@ -42,12 +43,14 @@ $(TARGET): $(OBJS) | $(BUILD_DIR)
 # Depends on the .c file and any .h file in posix or shared directories
 # Creates the object file in $(OBJ_DIR)
 $(OBJ_DIR)/%.o: $(POSIX_DIR)/%.c $(wildcard $(POSIX_DIR)/*.h) $(wildcard $(SHARED_DIR)/*.h) | $(OBJ_DIR)
+	@echo Compiling $<
 	$(CC) $(CFLAGS) $(INCLUDE_PATHS) -c $< -o $@
 
 # Rule to compile shared source files into object files
 # Depends on the .c file and any .h file in the shared directory
 # Creates the object file in $(OBJ_DIR)
 $(OBJ_DIR)/shared_%.o: $(SHARED_DIR)/%.c $(wildcard $(SHARED_DIR)/*.h) | $(OBJ_DIR)
+	@echo Compiling $<
 	$(CC) $(CFLAGS) $(INCLUDE_PATHS) -c $< -o $@
 
 # Rule to create the build and object directories if they don't exist
