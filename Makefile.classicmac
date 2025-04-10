@@ -58,7 +58,8 @@ endif
 # -Ishared: Include path for shared code
 # -I"$(CINCLUDES)": Explicitly add the standard Mac OS headers path
 # -I"$(UNIVERSAL_CINCLUDES)": Add path to universal headers # ADDED
-CFLAGS_MAC = -g -ffunction-sections -Iclassic_mac -Ishared -I"$(CINCLUDES)" -I"$(UNIVERSAL_CINCLUDES)"
+# *** ADDED -w to suppress warnings ***
+CFLAGS_MAC = -g -w -ffunction-sections -Iclassic_mac -Ishared -I"$(CINCLUDES)" -I"$(UNIVERSAL_CINCLUDES)"
 
 # Linker flags (passed via the compiler driver using -Wl,)
 # -Wl,-gc-sections: Linker garbage collection
