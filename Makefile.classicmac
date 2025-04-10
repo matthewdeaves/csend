@@ -63,8 +63,8 @@ CFLAGS_MAC = -g -ffunction-sections -Iclassic_mac -Ishared -I"$(CINCLUDES)" -I"$
 # Linker flags (passed via the compiler driver using -Wl,)
 # -Wl,-gc-sections: Linker garbage collection
 # -Wl,--mac-strip-macsbug: Strip MacsBug symbols (remove for debugging)
-# -lRetroConsole: Link the console library for printf output
-LDFLAGS_MAC = -Wl,-gc-sections -Wl,--mac-strip-macsbug -lRetroConsole
+# REMOVED: -lRetroConsole: Link the console library for printf output
+LDFLAGS_MAC = -Wl,-gc-sections -Wl,--mac-strip-macsbug
 
 # Rez flags
 # -I$(RINCLUDES): Tell Rez where to find standard resources like Retro68APPL.r
@@ -128,8 +128,9 @@ $(FINAL_TARGETS): $(INTERMEDIATE_TARGET) $(R_FILE_MAC) Makefile.classicmac | $(B
 # Depends on all object files and ensures the object directory exists.
 $(INTERMEDIATE_TARGET): $(OBJS) Makefile.classicmac | $(OBJ_DIR)
 	@echo "Linking intermediate target: $@"
-	# Use CXX_MAC (g++) for linking because RetroConsole is C++
-	$(CXX_MAC) $(OBJS) -o $@ $(LDFLAGS_MAC) # Changed from CC_MAC to CXX_MAC
+	# Use CXX_MAC (g++) for linking. Even without RetroConsole, other C++ std libs might be needed implicitly.
+	# If linking fails, try switching to CC_MAC. If it succeeds, keep CXX_MAC.
+	$(CXX_MAC) $(OBJS) -o $@ $(LDFLAGS_MAC)
 
 # Rule to compile Classic Mac C source files into object files in OBJ_DIR
 # Depends on the source file and ensures the object directory exists.
