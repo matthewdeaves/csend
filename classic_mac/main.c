@@ -1,297 +1,323 @@
-// FILE: ./classic_mac/main.c
+#include <Types.h>
+#include <Quickdraw.h> // Still needed for InitGraf
+#include <OSUtils.h>   // For OSErr, TickCount, SysBeep
+#include <Events.h>    // For Button()
+#include <Memory.h>    // For NewPtrClear, DisposePtr
+#include <Devices.h>   // For PBControlSync, PBOpenSync
+#include <stdio.h>     // For printf
+#include <string.h>    // For memset, strcpy, strcmp
 
-// --- Standard C Includes ---
-#include <stddef.h>  // For NULL definition
+// MacTCP specific includes
+#include <MacTCP.h>
 
-// --- Macintosh Toolbox Includes ---
-// Core Types and Basic Utilities
-#include <MacTypes.h>
-#include <Quickdraw.h> // For GrafPort, qd globals, Rect, Point, InitGraf, InitCursor etc.
-#include <Memory.h>    // For MaxApplZone, memory management (though less direct use here)
-#include <OSUtils.h>   // For OSErr, noErr, TickCount, SysBeep
-#include <ToolUtils.h> // For FindWindow, DragWindow, TrackGoAway etc.
+// --- DNR Includes and Definitions ---
+#define __MACTCPCOMMONTYPES__ // Prevent redefinition of common types
+#include <AddressXlation.h>
 
-// Managers used by the application
-#include <Fonts.h>     // For InitFonts
-#include <Windows.h>   // For WindowPtr, GetNewWindow, ShowWindow, SelectWindow, FindWindow, DragWindow, TrackGoAway, BeginUpdate, EndUpdate, FrontWindow, DisposeWindow
-#include <Menus.h>     // For InitMenus (even if no menus yet)
-#include <TextEdit.h>  // For TEHandle, TEInit, TEIdle, TEActivate, TEDeactivate, TEUpdate
-#include <Dialogs.h>   // For DialogPtr, InitDialogs, GetNewDialog, IsDialogEvent, DialogSelect, DrawDialog, DisposeDialog
-#include <Events.h>    // For EventRecord, WaitNextEvent, SystemClick, everyEvent, keyDown, autoKey, updateEvt, activateEvt, mouseDown, activeFlag
-#include <Devices.h>   // For ExitToShell (though maybe Processes.h is more modern, Devices works)
-#include <Processes.h> // For ExitToShell alternative
+// --- Constants ---
+#define kBroadcastIP    0xFFFFFFFFUL // 255.255.255.255 as unsigned long
+#define kTargetPort     54321       // Example UDP port for broadcast
+#define kMessage        "Hello from Simple MacTCP Broadcaster!"
+#define kDelayInterval  (10 * 60)   // 10 seconds in ticks (60 ticks per second)
+#define kMinUDPBufSize  2048        // Minimum receive buffer size for UDPCreate
 
-// --- Project-Specific Includes ---
-#include "logging.h"   // For InitLogFile, LogToDialog, CloseLogFile
-#include "network.h"   // For InitializeNetworking, CleanupNetworking, InitUDPDiscovery, CheckSendBroadcast, PruneInactivePeers, ProcessUDPReceive, CheckAndSendDeferredResponse, gUDPReadPending
-#include "dialog.h"    // For InitDialog, CleanupDialog, HandleDialogClick, ActivateDialogTE, UpdateDialogTE, gMainWindow, gMessagesTE, gInputTE
+// Define INET_ADDRSTRLEN if not provided by headers
+#ifndef INET_ADDRSTRLEN
+#define INET_ADDRSTRLEN 16
+#endif
 
-// --- Global Variables ---
-Boolean gDone = false; // Flag to control the main event loop exit
+// MacTCP Control Code for GetMyIPAddr (Defined in MacTCP.h)
+// #define ipctlGetAddr    15
+
+// --- Globals ---
+short       gMacTCPRefNum = 0;      // Ref num for the .IPP driver
+StreamPtr   gUDPStream = 0L;        // Pointer to our UDP stream (Use 0L instead of nil)
+Boolean     gDone = false;          // Flag to control the main loop (not used in console loop)
+Ptr         gUDPRecvBuffer = nil;   // Pointer to the buffer allocated for UDPCreate (nil is ok for Ptr)
+ip_addr     gMyLocalIP = 0;         // Store the local IP globally (network byte order)
+char        gMyLocalIPStr[INET_ADDRSTRLEN] = "0.0.0.0"; // Store the string version globally
 
 // --- Function Prototypes ---
-void InitializeToolbox(void);
-void MainEventLoop(void);
-void HandleEvent(EventRecord *event);
+void InitializeMinimalToolbox(void);
+OSErr OpenMacTCPDriverAndResolver(void);
+void GetAndDisplayLocalIPAddress(void);
+OSErr CreateUDPStream(void);
+void SendBroadcast(void);
+void ConsoleEventLoop(void);
+void Cleanup(void);
 
-// --- Main Application ---
+// --- Implementation ---
+
 int main(void) {
-    OSErr   networkErr;
-    Boolean dialogOk;
+    OSErr err;
 
-    // 1. Initialize Logging FIRST
-    InitLogFile();
-    LogToDialog("Starting application...");
+    InitializeMinimalToolbox();
+    printf("Minimal Toolbox Initialized.\n");
 
-    // 2. Basic Mac OS Initialization
-    // MoreMasters(); // Consider adding MoreMasters calls for handle allocation robustness
-    // MoreMasters();
-    // MoreMasters();
-    MaxApplZone(); // Maximize application heap zone
-    LogToDialog("MaxApplZone called.");
-    InitializeToolbox(); // Initialize standard managers
-    LogToDialog("Toolbox Initialized.");
-
-    // 3. Initialize Networking (TCP Driver, IP, DNR)
-    networkErr = InitializeNetworking();
-    if (networkErr != noErr) {
-        LogToDialog("Fatal: Network initialization failed (Error: %d). Exiting.", networkErr);
-        CloseLogFile(); // Close log file before exiting
-        ExitToShell();  // Exit back to Finder
-        return 1;       // Indicate failure (though ExitToShell usually doesn't return)
-    }
-
-    // 4. Initialize UDP Discovery (Create UDP Endpoint and start listening)
-    networkErr = InitUDPDiscovery();
-    if (networkErr != noErr) {
-        LogToDialog("Fatal: UDP Discovery initialization failed (Error: %d). Exiting.", networkErr);
-        CleanupNetworking(); // Clean up TCP/DNR part
-        CloseLogFile();      // Close log file
-        ExitToShell();       // Exit back to Finder
-        return 1;            // Indicate failure
-    }
-    LogToDialog("UDP Discovery Initialized.");
-
-    // 5. Initialize the Main Dialog Window and its controls
-    dialogOk = InitDialog();
-    if (!dialogOk) {
-        LogToDialog("Fatal: Dialog initialization failed. Exiting.");
-        CleanupNetworking(); // Clean up network resources
-        CloseLogFile();
-        ExitToShell();
+    err = OpenMacTCPDriverAndResolver();
+    if (err != noErr) {
+        printf("Fatal Error: Could not open MacTCP driver or Resolver: %d\n", err);
         return 1;
     }
+    printf("MacTCP Driver Opened (RefNum: %d) and Resolver Initialized.\n", gMacTCPRefNum);
 
-    // 6. Enter the Main Event Loop
-    LogToDialog("Entering main event loop...");
-    MainEventLoop();
-    LogToDialog("Exited main event loop.");
+    GetAndDisplayLocalIPAddress();
 
-    // 7. Cleanup Resources
-    CleanupDialog();
-    CleanupNetworking(); // Cleans up TCP/DNR and UDP
-    CloseLogFile();
-
-    // ExitToShell(); // Call ExitToShell at the very end if needed, though returning 0 is also fine for Retro68 apps
-    return 0; // Indicate successful completion
-}
-
-/**
- * @brief Initializes standard Macintosh Toolbox managers.
- */
-void InitializeToolbox(void) {
-    // Order generally matters, follow standard practice
-    InitGraf(&qd.thePort); // Initialize QuickDraw globals
-    InitFonts();           // Initialize Font Manager
-    InitWindows();         // Initialize Window Manager
-    InitMenus();           // Initialize Menu Manager
-    TEInit();              // Initialize TextEdit
-    InitDialogs(NULL);     // Initialize Dialog Manager (NULL = no resume proc)
-    InitCursor();          // Initialize Cursor to the standard arrow
-}
-
-
-// --- Event Handling ---
-
-/**
- * @brief The main event loop for the application.
- * @details Handles event processing, background tasks (network checks, TE idling),
- *          and checks the gDone flag to determine when to exit.
- */
-void MainEventLoop(void) {
-    EventRecord event;       // Structure to hold event information
-    Boolean     gotEvent;    // Flag indicating if WaitNextEvent returned an event
-    long        sleepTime = 10L; // Ticks to sleep if no event (approx 1/6th second)
-    RgnHandle   cursorRgn = NULL; // Region for cursor changes (optional)
-
-    // Create a cursor region (optional, for advanced cursor handling)
-    // cursorRgn = NewRgn(); // If using custom cursors based on region
-
-    while (!gDone) { // Loop until gDone is set to true
-
-        // --- Process Deferred Network Actions FIRST ---
-        // Check if a UDP response needs to be sent (set by completion routine)
-        CheckAndSendDeferredResponse();
-
-        // --- Idle Processing ---
-        // Give time to TextEdit fields if they exist
-        if (gMessagesTE != NULL) TEIdle(gMessagesTE);
-        if (gInputTE != NULL) TEIdle(gInputTE);
-        // Add other idle tasks here if needed
-
-        // --- Wait for the next event ---
-        // WaitNextEvent allows background processing and cooperative multitasking
-        // everyEvent: Mask for all event types
-        // &event: Pointer to store the event record
-        // sleepTime: Max time to wait in ticks if no event is pending
-        // cursorRgn: Region where cursor might change (NULL for default handling)
-        gotEvent = WaitNextEvent(everyEvent, &event, sleepTime, cursorRgn);
-
-        if (gotEvent) {
-            // --- Process Actual Events ---
-            // Check if the event is relevant to a dialog
-            if (IsDialogEvent(&event)) {
-                DialogPtr whichDialog; // Pointer to the dialog the event belongs to
-                short itemHit;         // Item number hit within the dialog (if any)
-
-                // DialogSelect handles most dialog events (clicks, keypresses in TE fields)
-                // Returns true if an item was clicked/interacted with
-                if (DialogSelect(&event, &whichDialog, &itemHit)) {
-                    // Check if the event was for our main window and an item was hit
-                    if (whichDialog == gMainWindow && itemHit > 0) {
-                        // Handle clicks on specific items (buttons, checkboxes)
-                        HandleDialogClick(whichDialog, itemHit);
-                    }
-                    // Note: Clicks/keys in the TE fields are handled internally by DialogSelect -> TEClick/TEKey
-                }
-            } else {
-                // If it's not a dialog event, handle it as a general window/application event
-                HandleEvent(&event);
-            }
-        } else {
-            // --- No Event Occurred: Perform Background Network Tasks ---
-
-            // Check if the pending UDP read has completed (flag set by completion routine)
-            if (!gUDPReadPending) {
-                // Process the result of the completed read (parse data, update peers, etc.)
-                // This function will also re-issue the next asynchronous UDPRead.
-                ProcessUDPReceive();
-            }
-
-            // Check if it's time to send the periodic discovery broadcast
-            CheckSendBroadcast();
-
-            // Periodically remove inactive peers from the list
-            PruneInactivePeers();
-
-            // Add other background tasks here (e.g., check TCP connections)
-        }
-    } // end while(!gDone)
-
-    // Dispose of cursor region if created
-    // if (cursorRgn != NULL) DisposeRgn(cursorRgn);
-}
-
-/**
- * @brief Handles non-dialog events (window activation, dragging, closing, updates).
- * @param event Pointer to the EventRecord containing the event details.
- */
-void HandleEvent(EventRecord *event) {
-    short     windowPart;  // Code indicating where in the window the mouse was clicked
-    WindowPtr whichWindow; // Pointer to the window where the event occurred
-
-    switch (event->what) { // Determine the type of event
-        case mouseDown: // Mouse button pressed
-            // Find out which part of which window was clicked
-            windowPart = FindWindow(event->where, &whichWindow);
-            switch (windowPart) {
-                case inMenuBar: // Click in the menu bar
-                    // TODO: Handle menu selections if menus are added
-                    LogToDialog("Menu bar clicked (not implemented).");
-                    // MenuSelect(event->where); // Example call if menus existed
-                    break;
-                case inSysWindow: // Click in a system window (e.g., a Desk Accessory)
-                    SystemClick(event, whichWindow); // Let the system handle it
-                    break;
-                case inDrag: // Click in the title bar (drag region)
-                    // Allow dragging only our main window
-                    if (whichWindow == (WindowPtr)gMainWindow) {
-                        // Drag the window, constrained to screen bounds (minus menu bar)
-                        DragWindow(whichWindow, event->where, &qd.screenBits.bounds);
-                    }
-                    break;
-                case inGoAway: // Click in the close box
-                    // Allow closing only our main window
-                    if (whichWindow == (WindowPtr)gMainWindow) {
-                        // TrackGoAway visually handles the click and returns true if closed
-                        if (TrackGoAway(whichWindow, event->where)) {
-                            LogToDialog("Close box clicked. Setting gDone = true.");
-                            gDone = true; // Set flag to exit the main loop
-                        }
-                    }
-                    break;
-                case inContent: // Click in the content region of the window
-                    // Bring our window to the front if it's not already
-                    if (whichWindow == (WindowPtr)gMainWindow) {
-                        if (whichWindow != FrontWindow()) {
-                            SelectWindow(whichWindow);
-                        } else {
-                            // Handle content clicks NOT in TE fields here if needed
-                            // Clicks in TE fields are handled by DialogSelect -> TEClick
-                        }
-                    } else {
-                        // Handle clicks in other windows' content regions if applicable
-                    }
-                    break;
-                default: // Clicks in other parts (zoom box, grow box - not handled here)
-                    break;
-            }
-            break;
-
-        case keyDown: // A key was pressed
-        case autoKey: // A key is being held down (auto-repeat)
-            // Keyboard events are generally handled by DialogSelect if a TE field
-            // in the active dialog has focus. If not, they might be handled here
-            // (e.g., for command-key equivalents if menus existed).
-            // char theChar = event->message & charCodeMask; // Example: Get the character code
-            // if ((event->modifiers & cmdKey) != 0) { // Check for Command key modifier
-            //     // Handle command keys
-            // }
-            break;
-
-        case updateEvt: // Window needs to be redrawn
-            // The event->message field contains a pointer to the window needing update
-            whichWindow = (WindowPtr)event->message;
-            // Check if it's our main window
-            if (whichWindow == (WindowPtr)gMainWindow) {
-                BeginUpdate(whichWindow); // Set up clipping region for drawing
-                // EraseRect(&whichWindow->portRect); // Optional: Erase entire window first
-                DrawDialog(whichWindow); // Redraws standard dialog items (buttons, checkboxes)
-                UpdateDialogTE();        // Redraws the content of our TextEdit fields
-                // TODO: Redraw custom user items like the peer list here
-                // Example: DrawPeerList();
-                EndUpdate(whichWindow);   // Restore clipping region
-            }
-            // Handle updates for other windows if necessary
-            break;
-
-        case activateEvt: // A window is becoming active or inactive
-            // The event->message field contains a pointer to the window
-            whichWindow = (WindowPtr)event->message;
-            // Check if it's our main window
-            if (whichWindow == (WindowPtr)gMainWindow) {
-                // The activeFlag bit in event->modifiers indicates activation (set) or deactivation (clear)
-                ActivateDialogTE((event->modifiers & activeFlag) != 0);
-            }
-            // Handle activation/deactivation for other windows if necessary
-            break;
-
-        // Handle application-defined events if needed later (e.g., from completion routines)
-        // case app4Evt: // Often used for network completion or background tasks
-        //     HandleApp4Event(); // Example custom handler
-        //     break;
-
-        default: // Ignore other event types
-            break;
+    err = CreateUDPStream();
+    if (err != noErr) {
+        printf("Fatal Error: Could not create UDP stream: %d\n", err);
+        Cleanup();
+        return 1;
     }
+    printf("UDP Stream Created (StreamPtr: %lu).\n", gUDPStream);
+
+    printf("Starting broadcast loop (every %d seconds). Click mouse or press key to quit.\n", kDelayInterval / 60);
+
+    SendBroadcast();
+    ConsoleEventLoop();
+    Cleanup();
+    printf("Application finished.\n");
+    return 0;
+}
+
+/**
+ * @brief Initializes minimal Macintosh Toolbox managers for console app.
+ */
+void InitializeMinimalToolbox(void) {
+    InitGraf(&qd.thePort);
+    InitCursor();
+    FlushEvents(everyEvent, 0);
+}
+
+/**
+ * @brief Opens the MacTCP driver (.IPP) and initializes the DNR.
+ */
+OSErr OpenMacTCPDriverAndResolver(void) {
+    OSErr err;
+    ParamBlockRec pb;
+
+    pb.ioParam.ioNamePtr = (StringPtr)"\p.IPP";
+    pb.ioParam.ioPermssn = fsCurPerm;
+    printf("Attempting PBOpenSync for .IPP driver...\n");
+    err = PBOpenSync(&pb);
+    if (err != noErr) {
+        printf("Error: PBOpenSync failed. Error: %d\n", err);
+        gMacTCPRefNum = 0;
+        return err;
+    }
+    gMacTCPRefNum = pb.ioParam.ioRefNum;
+    printf("PBOpenSync succeeded (RefNum: %d).\n", gMacTCPRefNum);
+
+    printf("Attempting OpenResolver...\n");
+    err = OpenResolver(NULL);
+    if (err != noErr) {
+        printf("Error: OpenResolver failed. Error: %d\n", err);
+        return err;
+    }
+    printf("OpenResolver succeeded.\n");
+
+    return noErr;
+}
+
+/**
+ * @brief Gets the local IP address using ipctlGetAddr and converts it to string using AddrToStr.
+ */
+void GetAndDisplayLocalIPAddress(void) {
+    IPParamBlock pb;
+    OSErr err;
+
+    if (gMacTCPRefNum == 0) {
+        printf("  Error: MacTCP driver not open, cannot get IP address.\n");
+        return;
+    }
+
+    memset(&pb, 0, sizeof(IPParamBlock));
+    pb.ioCompletion = nil;
+    pb.ioCRefNum = gMacTCPRefNum;
+    pb.csCode = ipctlGetAddr;
+
+    printf("Getting local IP address (binary)...\n");
+    err = PBControlSync((ParmBlkPtr)&pb);
+
+    if (err == noErr) {
+        // *** REVERT TO THE WORKING CAST FROM OLD CODE ***
+        // Cast the address where csParam starts to an ip_addr pointer.
+        ip_addr* ourAddrPtr = (ip_addr*)&(pb.csParam);
+        gMyLocalIP = *ourAddrPtr; // Dereference the pointer
+
+        printf("  Successfully got binary IP: %lu\n", gMyLocalIP);
+
+        printf("  Converting binary IP to string using AddrToStr...\n");
+        err = AddrToStr(gMyLocalIP, gMyLocalIPStr);
+
+        if (err != noErr) {
+             printf("  Warning: AddrToStr failed with error %d. IP string may be invalid.\n", err);
+             strcpy(gMyLocalIPStr, "?.?.?.?");
+        } else if (gMyLocalIPStr[0] == '\0' || strcmp(gMyLocalIPStr, "0.0.0.0") == 0) {
+             printf("  Warning: AddrToStr returned empty or zero string. IP string may be invalid.\n");
+             strcpy(gMyLocalIPStr, "?.?.?.?");
+        } else {
+             printf("  AddrToStr conversion successful.\n");
+        }
+        printf("  Local IP Address: %s\n", gMyLocalIPStr);
+
+    } else {
+        printf("  Error getting local IP address (binary) using ipctlGetAddr: %d\n", err);
+        gMyLocalIP = 0;
+        strcpy(gMyLocalIPStr, "ERROR");
+    }
+}
+
+/**
+ * @brief Creates a UDP stream for sending broadcasts.
+ */
+OSErr CreateUDPStream(void) {
+    UDPiopb pb;
+    OSErr err;
+
+    gUDPRecvBuffer = NewPtrClear(kMinUDPBufSize);
+    if (gUDPRecvBuffer == nil) {
+        printf("  Error: Failed to allocate UDP receive buffer (memFullErr).\n");
+        return memFullErr;
+    }
+    printf("  Allocated %ld bytes for UDP receive buffer at %p.\n", (long)kMinUDPBufSize, gUDPRecvBuffer);
+
+    memset(&pb, 0, sizeof(UDPiopb));
+    pb.ioCompletion = nil;
+    pb.ioCRefNum = gMacTCPRefNum;
+    pb.csCode = UDPCreate;
+    pb.udpStream = 0L;
+    pb.csParam.create.rcvBuff = gUDPRecvBuffer;
+    pb.csParam.create.rcvBuffLen = kMinUDPBufSize;
+    pb.csParam.create.notifyProc = nil;
+    pb.csParam.create.localPort = 0;
+
+    err = PBControlSync((ParmBlkPtr)&pb);
+
+    if (err == noErr) {
+        gUDPStream = pb.udpStream;
+        printf("  UDPCreate successful. StreamPtr: %lu\n", gUDPStream);
+    } else {
+        printf("  UDPCreate failed with error: %d\n", err);
+        if (gUDPRecvBuffer != nil) {
+            DisposePtr(gUDPRecvBuffer);
+            gUDPRecvBuffer = nil;
+            printf("  Disposed UDP receive buffer due to UDPCreate error.\n");
+        }
+    }
+    return err;
+}
+
+/**
+ * @brief Sends a single UDP broadcast message.
+ */
+void SendBroadcast(void) {
+    UDPiopb pb;
+    wdsEntry wds[2];
+    char message[] = kMessage;
+    OSErr err;
+
+    if (gUDPStream == 0L) {
+        printf("Error: Cannot send broadcast, UDP Stream is not valid.\n");
+        return;
+    }
+
+    wds[0].length = sizeof(message) - 1;
+    wds[0].ptr = message;
+    wds[1].length = 0;
+    wds[1].ptr = nil;
+
+    memset(&pb, 0, sizeof(UDPiopb));
+    pb.ioCompletion = nil;
+    pb.ioCRefNum = gMacTCPRefNum;
+    pb.csCode = UDPWrite;
+    pb.udpStream = gUDPStream;
+    pb.csParam.send.remoteHost = kBroadcastIP;
+    pb.csParam.send.remotePort = kTargetPort;
+    pb.csParam.send.wdsPtr = (Ptr)wds;
+    pb.csParam.send.checkSum = true;
+
+    printf("Sending broadcast: \"%s\" to IP 255.255.255.255:%d...\n", message, kTargetPort);
+
+    err = PBControlSync((ParmBlkPtr)&pb);
+
+    if (err != noErr) {
+        printf("  Error sending UDP broadcast: %d\n", err);
+    } else {
+        printf("  Broadcast sent successfully.\n");
+    }
+}
+
+/**
+ * @brief Simplified event loop for console app, handles timing and quitting.
+ */
+void ConsoleEventLoop(void) {
+    long nextBroadcastTime = TickCount() + kDelayInterval;
+    EventRecord event;
+
+    while (true) {
+        if (GetNextEvent(mDownMask | keyDownMask | autoKeyMask, &event)) {
+             if (event.what == mouseDown) {
+                 printf("Mouse clicked, quitting application.\n");
+             } else {
+                 printf("Key pressed, quitting application.\n");
+             }
+             break;
+        }
+
+        if (TickCount() >= nextBroadcastTime) {
+            SendBroadcast();
+            nextBroadcastTime = TickCount() + kDelayInterval;
+        }
+
+        WaitNextEvent(0, &event, 1, NULL); // Yield CPU time
+    }
+}
+
+/**
+ * @brief Releases MacTCP and DNR resources.
+ */
+void Cleanup(void) {
+    UDPiopb pb;
+    OSErr err;
+
+    // Release UDP Stream
+    if (gUDPStream != 0L) {
+        printf("Releasing UDP Stream (StreamPtr: %lu)...\n", gUDPStream);
+        memset(&pb, 0, sizeof(UDPiopb));
+        pb.ioCompletion = nil;
+        pb.ioCRefNum = gMacTCPRefNum;
+        pb.csCode = UDPRelease;
+        pb.udpStream = gUDPStream;
+        pb.csParam.create.rcvBuff = gUDPRecvBuffer;
+        pb.csParam.create.rcvBuffLen = kMinUDPBufSize;
+
+        err = PBControlSync((ParmBlkPtr)&pb);
+        if (err != noErr) {
+            printf("  Warning: Error releasing UDP stream: %d.\n", err);
+        } else {
+            printf("  UDP Stream released successfully.\n");
+            gUDPStream = 0L;
+        }
+    }
+
+    // Dispose UDP Receive Buffer
+    if (gUDPRecvBuffer != nil) {
+         printf("Disposing UDP receive buffer at %p.\n", gUDPRecvBuffer);
+         DisposePtr(gUDPRecvBuffer);
+         gUDPRecvBuffer = nil;
+    }
+
+    // Close DNR
+    printf("Attempting CloseResolver...\n");
+    err = CloseResolver();
+    if (err != noErr) {
+        printf("  Warning: CloseResolver failed with error %d.\n", err);
+    } else {
+        printf("  CloseResolver succeeded.\n");
+    }
+
+    // MacTCP Driver
+    printf("MacTCP driver (.IPP) remains open (standard practice).\n");
+    gMacTCPRefNum = 0;
 }
