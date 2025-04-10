@@ -81,12 +81,14 @@ OBJ_DIR = $(BUILD_BASE_DIR)/obj/classic_mac
 
 # --- Source Files ---
 
-MAC_C_FILES = $(wildcard $(MAC_DIR)/*.c)
+# *** UPDATED: List all C files in classic_mac ***
+MAC_C_FILES = $(MAC_DIR)/main.c $(MAC_DIR)/dialog.c $(MAC_DIR)/network.c $(MAC_DIR)/logging.c $(MAC_DIR)/DNR.c
 SHARED_C_FILES = $(wildcard $(SHARED_DIR)/*.c)
 SOURCES_ALL = $(MAC_C_FILES) $(SHARED_C_FILES)
 
 # --- Object Files ---
 
+# *** UPDATED: Generate object file names based on MAC_C_FILES ***
 MAC_OBJS = $(patsubst $(MAC_DIR)/%.c, $(OBJ_DIR)/%.o, $(MAC_C_FILES))
 SHARED_OBJS = $(patsubst $(SHARED_DIR)/%.c, $(OBJ_DIR)/shared_%.o, $(SHARED_C_FILES))
 OBJS = $(MAC_OBJS) $(SHARED_OBJS)

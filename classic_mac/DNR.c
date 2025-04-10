@@ -223,7 +223,7 @@ char *fileName;
 	if (rc != noErr) {
 		/* problem with open resolver, flush it */
 		HUnlock(codeHndl);
-		DisposHandle(codeHndl);
+		DisposeHandle(codeHndl);
 		dnr = nil;
 	}
 	return(rc);
@@ -268,7 +268,7 @@ OSErr CloseResolver()
 
 	/* release the DNR resource package */
 	HUnlock(codeHndl);
-	DisposHandle(codeHndl);
+	DisposeHandle(codeHndl);
 	dnr = nil;
 	return(noErr);
 }
