@@ -21,40 +21,6 @@
 // --- Data Structures ---
 
 /**
- * @brief Structure representing a known peer in the network.
- * @details Holds information about another peer discovered or connected to.
- */
-typedef struct {
-    /**
-     * @brief The IPv4 address of the peer as a string.
-     * @details Stored in presentation format (e.g., "192.168.1.10").
-     *          The size `INET_ADDRSTRLEN` is sufficient to hold any IPv4 address string plus null terminator.
-     *          Requires including <netinet/in.h> or <arpa/inet.h>.
-     */
-    char ip[INET_ADDRSTRLEN];
-
-    /**
-     * @brief The username chosen by the peer.
-     * @details Limited to 31 characters plus the null terminator.
-     */
-    char username[32];
-
-    /**
-     * @brief The timestamp (seconds since epoch) when the peer was last heard from.
-     * @details Updated when a message (discovery response, TCP message) is received from the peer.
-     *          Used to detect timed-out peers. Requires including <time.h>.
-     */
-    time_t last_seen;
-
-    /**
-     * @brief Flag indicating if this peer entry is currently considered active.
-     * @details 0 means inactive (either timed out, explicitly left, or the slot is unused).
-     *          1 means active and recently heard from.
-     */
-    int active;
-} peer_t;
-
-/**
  * @brief Structure holding the overall state of the running application instance.
  * @details Contains all the essential information shared across different threads
  *          and modules of the application, such as network sockets, peer list,
