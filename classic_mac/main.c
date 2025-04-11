@@ -19,7 +19,8 @@
 
 // --- Project Includes ---
 #include "logging.h"   // Logging functions (InitLogFile, CloseLogFile, LogToDialog)
-#include "network.h"   // Networking functions (InitializeNetworking, CleanupNetworking, InitUDPBroadcastEndpoint, CheckSendBroadcast)
+#include "network.h"   // Networking functions (InitializeNetworking, CleanupNetworking)
+#include "discovery.h" // UDP Discovery functions (InitUDPBroadcastEndpoint, CheckSendBroadcast)
 #include "dialog.h"    // Dialog functions (InitDialog, CleanupDialog, HandleDialogClick, etc.)
 
 // --- Global Variables ---
@@ -54,12 +55,13 @@ int main(void) {
         ExitToShell();
         return 1; // Indicate failure
     }
+    // At this point, gMacTCPRefNum should be valid if InitializeNetworking succeeded
 
-    // 4. Initialize UDP Broadcast Endpoint
-    networkErr = InitUDPBroadcastEndpoint();
+    // 4. Initialize UDP Broadcast Endpoint (using the ref num from network init)
+    networkErr = InitUDPBroadcastEndpoint(gMacTCPRefNum);
     if (networkErr != noErr) {
         LogToDialog("Fatal: UDP Broadcast initialization failed (Error: %d). Exiting.", networkErr);
-        CleanupNetworking(); // Clean up TCP/DNR part
+        CleanupNetworking(); // Clean up TCP/DNR part (will also attempt UDP cleanup)
         CloseLogFile();      // Close log file
         ExitToShell();
         return 1; // Indicate failure
@@ -74,6 +76,7 @@ int main(void) {
         ExitToShell();
         return 1;
     }
+    // Now gMyUsername should be set (default or loaded)
 
     // 6. Enter the Main Event Loop
     LogToDialog("Entering main event loop...");
@@ -135,14 +138,15 @@ void MainEventLoop(void) {
             }
         } else {
             // --- Idle Time ---
-            CheckSendBroadcast(); // Check if it's time to send a broadcast
+            // Pass necessary info to CheckSendBroadcast
+            CheckSendBroadcast(gMacTCPRefNum, gMyUsername, gMyLocalIPStr);
         }
     } // end while(!gDone)
 }
 
 /**
  * @brief Handles non-dialog events (mouse clicks, window updates, activation).
- * (No changes needed in this function from your previous version)
+ * (No changes needed in this function)
  */
 void HandleEvent(EventRecord *event) {
     short     windowPart;

@@ -83,7 +83,7 @@ OBJ_DIR = $(BUILD_BASE_DIR)/obj/classic_mac
 # --- Source Files ---
 
 # *** UPDATED: List all C files in classic_mac ***
-MAC_C_FILES = $(MAC_DIR)/main.c $(MAC_DIR)/dialog.c $(MAC_DIR)/network.c $(MAC_DIR)/logging.c $(MAC_DIR)/DNR.c
+MAC_C_FILES = $(wildcard $(MAC_DIR)/*.c)
 SHARED_C_FILES = $(wildcard $(SHARED_DIR)/*.c)
 SOURCES_ALL = $(MAC_C_FILES) $(SHARED_C_FILES)
 
