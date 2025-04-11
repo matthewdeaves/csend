@@ -36,7 +36,7 @@ void CloseLogFile(void) {
 /**
  * @brief Logs a formatted message to the log file and potentially the dialog window.
  */
-void LogToDialog(const char *format, ...) {
+void log_message(const char *format, ...) {
     char buffer[512]; // Buffer for the formatted message
     va_list args;
 

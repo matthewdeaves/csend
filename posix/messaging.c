@@ -4,7 +4,7 @@
 // Include headers for other project modules used
 #include "network.h"     // For set_socket_timeout()
 #include "../shared/protocol.h"   // For format_message(), parse_message(), MSG_* constants
-#include "utils.h"       // For log_message()
+#include "logging.h"       // For log_message()
 // Note: peer.h is already included via messaging.h
 
 // --- System Headers ---

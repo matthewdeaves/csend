@@ -6,7 +6,7 @@
 #include "messaging.h"      // For init_listener() and listener_thread()
 #include "ui_terminal.h"    // For user_input_thread()
 #include "signal_handler.h" // For handle_signal() function used with signal handling
-#include "utils.h"          // For log_message() utility function
+#include "logging.h"          // For log_message() utility function
 
 // --- Standard Library Includes ---
 #include <string.h>     // For memory manipulation (memset) and string operations (strncpy, strcmp)

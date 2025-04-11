@@ -1,6 +1,6 @@
 // FILE: ./classic_mac/network.c
 #include "network.h"
-#include "logging.h"   // For LogToDialog
+#include "logging.h"   // For log_message
 #include "discovery.h" // Include discovery.h to call CleanupUDPBroadcastEndpoint
 
 #include <Devices.h>   // For PBControlSync, PBOpenSync, CntrlParam, ParmBlkPtr
@@ -23,66 +23,66 @@ OSErr InitializeNetworking(void) {
     ParamBlockRec pb;
     CntrlParam cntrlPB; // Use generic CntrlParam for ipctlGetAddr
 
-    LogToDialog("Initializing Networking...");
+    log_message("Initializing Networking...");
 
     // --- Open MacTCP Driver ---
     pb.ioParam.ioNamePtr = (StringPtr)kTCPDriverName;
     pb.ioParam.ioPermssn = fsCurPerm;
-    LogToDialog("Attempting PBOpenSync for .IPP driver...");
+    log_message("Attempting PBOpenSync for .IPP driver...");
     err = PBOpenSync(&pb);
     if (err != noErr) {
-        LogToDialog("Error: PBOpenSync failed. Error: %d", err);
+        log_message("Error: PBOpenSync failed. Error: %d", err);
         gMacTCPRefNum = 0;
         return err;
     }
     gMacTCPRefNum = pb.ioParam.ioRefNum;
-    LogToDialog("PBOpenSync succeeded (RefNum: %d).", gMacTCPRefNum);
+    log_message("PBOpenSync succeeded (RefNum: %d).", gMacTCPRefNum);
 
     // --- Get Local IP Address ---
     memset(&cntrlPB, 0, sizeof(CntrlParam));
     cntrlPB.ioCRefNum = gMacTCPRefNum;
     cntrlPB.csCode = ipctlGetAddr;
-    LogToDialog("Attempting PBControlSync for ipctlGetAddr...");
+    log_message("Attempting PBControlSync for ipctlGetAddr...");
     err = PBControlSync((ParmBlkPtr)&cntrlPB);
     if (err != noErr) {
-        LogToDialog("Error: PBControlSync(ipctlGetAddr) failed. Error: %d", err);
+        log_message("Error: PBControlSync(ipctlGetAddr) failed. Error: %d", err);
         // Don't close driver here, let caller handle cleanup
         gMacTCPRefNum = 0; // Reset ref num on error
         return err;
     }
-    LogToDialog("PBControlSync(ipctlGetAddr) succeeded.");
+    log_message("PBControlSync(ipctlGetAddr) succeeded.");
     // Correctly access the IP address from the parameter block
     gMyLocalIP = *((ip_addr *)(&cntrlPB.csParam[0])); // csParam[0] holds the IP address
 
     // --- Initialize DNR FIRST ---
-    LogToDialog("Attempting OpenResolver...");
+    log_message("Attempting OpenResolver...");
     err = OpenResolver(NULL);
     if (err != noErr) {
-        LogToDialog("Error: OpenResolver failed. Error: %d", err);
+        log_message("Error: OpenResolver failed. Error: %d", err);
         // Don't close driver here, let caller handle cleanup
         gMacTCPRefNum = 0; // Reset ref num on error
         return err;
     } else {
-        LogToDialog("OpenResolver succeeded.");
+        log_message("OpenResolver succeeded.");
     }
 
     // --- Convert Local IP to String AFTER DNR is open ---
-    LogToDialog("Attempting AddrToStr for IP: %lu...", gMyLocalIP);
+    log_message("Attempting AddrToStr for IP: %lu...", gMyLocalIP);
     err = AddrToStr(gMyLocalIP, gMyLocalIPStr);
     if (err != noErr) {
-         LogToDialog("Warning: AddrToStr returned error %d. Result string: '%s'", err, gMyLocalIPStr);
+         log_message("Warning: AddrToStr returned error %d. Result string: '%s'", err, gMyLocalIPStr);
          // Use a reasonable default if conversion fails badly
          if (strcmp(gMyLocalIPStr, "0.0.0.0") == 0 || gMyLocalIPStr[0] == '\0' || gMyLocalIP == 0) {
-             LogToDialog("Error: AddrToStr failed to get a valid IP string. Using fallback 127.0.0.1.");
+             log_message("Error: AddrToStr failed to get a valid IP string. Using fallback 127.0.0.1.");
              strcpy(gMyLocalIPStr, "127.0.0.1"); // Fallback if needed
              // Optionally return an error here if a valid IP is critical?
              // return err;
          }
     } else {
-        LogToDialog("AddrToStr finished. Local IP: '%s'", gMyLocalIPStr);
+        log_message("AddrToStr finished. Local IP: '%s'", gMyLocalIPStr);
     }
 
-    LogToDialog("Networking initialization complete.");
+    log_message("Networking initialization complete.");
     return noErr;
 }
 
@@ -95,30 +95,30 @@ OSErr InitializeNetworking(void) {
 void CleanupNetworking(void) {
     OSErr err;
 
-    LogToDialog("Cleaning up Networking...");
+    log_message("Cleaning up Networking...");
 
     // --- Clean up UDP Endpoint FIRST ---
     // Call the dedicated cleanup function from discovery.c
     CleanupUDPBroadcastEndpoint(gMacTCPRefNum);
 
     // --- Close DNR ---
-    LogToDialog("Attempting CloseResolver...");
+    log_message("Attempting CloseResolver...");
     err = CloseResolver();
     if (err != noErr) {
-        LogToDialog("Warning: CloseResolver failed. Error: %d", err);
+        log_message("Warning: CloseResolver failed. Error: %d", err);
     } else {
-        LogToDialog("CloseResolver succeeded.");
+        log_message("CloseResolver succeeded.");
     }
 
     // --- Close MacTCP Driver ---
     // DO NOT CALL PBCloseSync for the MacTCP driver (.IPP)
     // It's a shared resource. Just reset our reference number.
     if (gMacTCPRefNum != 0) {
-         LogToDialog("MacTCP driver (RefNum: %d) remains open by design.", gMacTCPRefNum);
+         log_message("MacTCP driver (RefNum: %d) remains open by design.", gMacTCPRefNum);
         gMacTCPRefNum = 0; // Reset our global reference number variable
     } else {
-        LogToDialog("MacTCP driver was not open.");
+        log_message("MacTCP driver was not open.");
     }
 
-    LogToDialog("Networking cleanup complete.");
+    log_message("Networking cleanup complete.");
 }

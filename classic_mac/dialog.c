@@ -1,6 +1,6 @@
 // FILE: ./classic_mac/dialog.c
 #include "dialog.h"
-#include "logging.h"   // For LogToDialog
+#include "logging.h"   // For log_message
 #include "network.h"   // For gMyLocalIPStr
 #include "protocol.h"  // For MSG_TEXT, format_message
 #include "common_defs.h" // For BUFFER_SIZE
@@ -28,71 +28,71 @@ Boolean InitDialog(void) {
     Boolean        messagesOk = false;
     Boolean        inputOk = false;
 
-    LogToDialog("Loading dialog resource ID %d...", kBaseResID);
+    log_message("Loading dialog resource ID %d...", kBaseResID);
     gMainWindow = GetNewDialog(kBaseResID, NULL, (WindowPtr)-1L);
     if (gMainWindow == NULL) {
-        LogToDialog("Fatal: GetNewDialog failed (Error: %d).", ResError());
+        log_message("Fatal: GetNewDialog failed (Error: %d).", ResError());
         return false; // Critical failure
     }
-    LogToDialog("Dialog loaded successfully (gMainWindow: 0x%lX).", (unsigned long)gMainWindow);
+    log_message("Dialog loaded successfully (gMainWindow: 0x%lX).", (unsigned long)gMainWindow);
 
-    LogToDialog("Showing window...");
+    log_message("Showing window...");
     ShowWindow(gMainWindow);
     SelectWindow(gMainWindow);
-    LogToDialog("Setting port...");
+    log_message("Setting port...");
     SetPort((GrafPtr)gMainWindow);
-    LogToDialog("Port set.");
+    log_message("Port set.");
 
     // --- Initialize Dialog Controls ---
 
     // Messages TE (Item 2 - UserItem)
-    LogToDialog("Getting item %d info (Messages UserItem)...", kMessagesTextEdit);
+    log_message("Getting item %d info (Messages UserItem)...", kMessagesTextEdit);
     GetDialogItem(gMainWindow, kMessagesTextEdit, &itemType, &itemHandle, &destRectMessages);
     if (itemType == userItem) {
-        LogToDialog("Item %d is UserItem. Rect: (%d,%d,%d,%d)", kMessagesTextEdit,
+        log_message("Item %d is UserItem. Rect: (%d,%d,%d,%d)", kMessagesTextEdit,
                     destRectMessages.top, destRectMessages.left, destRectMessages.bottom, destRectMessages.right);
         viewRectMessages = destRectMessages; // Start with view = dest
         // InsetRect(&viewRectMessages, 1, 1); // Optional inset for border
 
-        LogToDialog("Calling TENew for Messages TE...");
+        log_message("Calling TENew for Messages TE...");
         gMessagesTE = TENew(&destRectMessages, &viewRectMessages);
         if (gMessagesTE == NULL) {
-            LogToDialog("CRITICAL ERROR: TENew failed for Messages TE!");
+            log_message("CRITICAL ERROR: TENew failed for Messages TE!");
             messagesOk = false;
         } else {
-            LogToDialog("TENew succeeded for Messages TE. Handle: 0x%lX", (unsigned long)gMessagesTE);
+            log_message("TENew succeeded for Messages TE. Handle: 0x%lX", (unsigned long)gMessagesTE);
             TEAutoView(true, gMessagesTE); // Enable auto-scrolling
-            LogToDialog("TEAutoView finished for Messages TE.");
+            log_message("TEAutoView finished for Messages TE.");
             messagesOk = true;
         }
     } else {
-        LogToDialog("ERROR: Item %d is NOT a UserItem (Type: %d)! Expected UserItem for TENew.", kMessagesTextEdit, itemType);
+        log_message("ERROR: Item %d is NOT a UserItem (Type: %d)! Expected UserItem for TENew.", kMessagesTextEdit, itemType);
         gMessagesTE = NULL;
         messagesOk = false;
     }
 
     // Input TE (Item 3 - UserItem)
-    LogToDialog("Getting item %d info (Input UserItem)...", kInputTextEdit);
+    log_message("Getting item %d info (Input UserItem)...", kInputTextEdit);
     GetDialogItem(gMainWindow, kInputTextEdit, &itemType, &itemHandle, &destRectInput);
     if (itemType == userItem) {
-        LogToDialog("Item %d is UserItem. Rect: (%d,%d,%d,%d)", kInputTextEdit,
+        log_message("Item %d is UserItem. Rect: (%d,%d,%d,%d)", kInputTextEdit,
                     destRectInput.top, destRectInput.left, destRectInput.bottom, destRectInput.right);
         viewRectInput = destRectInput; // Start with view = dest
         // InsetRect(&viewRectInput, 1, 1); // Optional inset for border
 
-        LogToDialog("Calling TENew for Input TE...");
+        log_message("Calling TENew for Input TE...");
         gInputTE = TENew(&destRectInput, &viewRectInput);
         if (gInputTE == NULL) {
-            LogToDialog("CRITICAL ERROR: TENew failed for Input TE!");
+            log_message("CRITICAL ERROR: TENew failed for Input TE!");
             inputOk = false;
         } else {
-            LogToDialog("TENew succeeded for Input TE. Handle: 0x%lX", (unsigned long)gInputTE);
+            log_message("TENew succeeded for Input TE. Handle: 0x%lX", (unsigned long)gInputTE);
             TEAutoView(true, gInputTE); // Enable auto-scrolling (though less common for input)
-            LogToDialog("TEAutoView finished for Input TE.");
+            log_message("TEAutoView finished for Input TE.");
             inputOk = true;
         }
     } else {
-        LogToDialog("ERROR: Item %d is NOT a UserItem (Type: %d)! Expected UserItem for TENew.", kInputTextEdit, itemType);
+        log_message("ERROR: Item %d is NOT a UserItem (Type: %d)! Expected UserItem for TENew.", kInputTextEdit, itemType);
         gInputTE = NULL;
         inputOk = false;
     }
@@ -100,20 +100,20 @@ Boolean InitDialog(void) {
     // Set flag indicating TE fields are now initialized (or attempted)
     // Only set true if BOTH TEs were successfully created.
     gDialogTEInitialized = (messagesOk && inputOk);
-    LogToDialog("Dialog TE fields initialization complete (Success: %s). Enabling dialog logging.", gDialogTEInitialized ? "YES" : "NO");
+    log_message("Dialog TE fields initialization complete (Success: %s). Enabling dialog logging.", gDialogTEInitialized ? "YES" : "NO");
 
     if (!gDialogTEInitialized) {
-        LogToDialog("Error: One or both TextEdit fields failed to initialize.");
+        log_message("Error: One or both TextEdit fields failed to initialize.");
         // Cleanup partially created dialog? Or let main handle it?
         // For now, return false and let main handle cleanup.
         return false;
     }
 
     // --- Set initial focus AFTER successful TE init ---
-    LogToDialog("Setting focus to input field (item %d)...", kInputTextEdit);
+    log_message("Setting focus to input field (item %d)...", kInputTextEdit);
     TEActivate(gInputTE); // Explicitly activate the input TE
     // SelectDialogItemText(gMainWindow, kInputTextEdit, 0, 0); // Alternative focus method
-    LogToDialog("Input TE activated.");
+    log_message("Input TE activated.");
 
     return true; // Initialization successful
 }
@@ -122,29 +122,29 @@ Boolean InitDialog(void) {
  * @brief Cleans up dialog resources.
  */
 void CleanupDialog(void) {
-    LogToDialog("Cleaning up Dialog...");
+    log_message("Cleaning up Dialog...");
 
     // Dispose TE Handles if they were created
     if (gMessagesTE != NULL) {
-        LogToDialog("Disposing Messages TE...");
+        log_message("Disposing Messages TE...");
         TEDispose(gMessagesTE);
         gMessagesTE = NULL;
     }
     if (gInputTE != NULL) {
-        LogToDialog("Disposing Input TE...");
+        log_message("Disposing Input TE...");
         TEDispose(gInputTE);
         gInputTE = NULL;
     }
 
     // Dispose the main dialog window if it was created
     if (gMainWindow != NULL) {
-        LogToDialog("Disposing dialog window...");
+        log_message("Disposing dialog window...");
         DisposeDialog(gMainWindow);
         gMainWindow = NULL;
     }
 
     gDialogTEInitialized = false; // Reset flag
-    LogToDialog("Dialog cleanup complete.");
+    log_message("Dialog cleanup complete.");
 }
 
 /**
@@ -162,7 +162,7 @@ void HandleDialogClick(DialogPtr dialog, short itemHit) {
 
     switch (itemHit) {
         case kSendButton:
-            LogToDialog("Send button clicked.");
+            log_message("Send button clicked.");
             DoSendAction(dialog);
             break;
 
@@ -174,16 +174,16 @@ void HandleDialogClick(DialogPtr dialog, short itemHit) {
                 currentValue = GetControlValue(checkboxHandle);
                 // Toggle the value
                 SetControlValue(checkboxHandle, !currentValue);
-                LogToDialog("Broadcast checkbox toggled to: %s", !currentValue ? "ON" : "OFF");
+                log_message("Broadcast checkbox toggled to: %s", !currentValue ? "ON" : "OFF");
             } else {
-                LogToDialog("Warning: Item %d clicked, but not a checkbox!", kBroadcastCheckbox);
+                log_message("Warning: Item %d clicked, but not a checkbox!", kBroadcastCheckbox);
             }
             break;
 
         default:
             // Clicks in userItems (now TE fields) are handled by DialogSelect/TEClick.
             // Clicks in the peer list userItem will need custom handling later.
-            // LogToDialog("HandleDialogClick: Click on unhandled item %d", itemHit);
+            // log_message("HandleDialogClick: Click on unhandled item %d", itemHit);
             break;
     }
 }
@@ -204,7 +204,7 @@ void DoSendAction(DialogPtr dialog) {
 
     // 1. Get text from the input EditText (Item #3)
     if (gInputTE == NULL) {
-        LogToDialog("Error: Input TextEdit not initialized. Cannot send.");
+        log_message("Error: Input TextEdit not initialized. Cannot send.");
         SysBeep(10);
         return;
     }
@@ -218,7 +218,7 @@ void DoSendAction(DialogPtr dialog) {
         BlockMoveData(*((*gInputTE)->hText), inputCStr, textLen);
         inputCStr[textLen] = '\0'; // Null-terminate the C string
     } else {
-        LogToDialog("Error: Cannot get text from Input TE (NULL handle/hText).");
+        log_message("Error: Cannot get text from Input TE (NULL handle/hText).");
         HSetState((Handle)gInputTE, teState); // Restore state on error
         SysBeep(10);
         return;
@@ -227,7 +227,7 @@ void DoSendAction(DialogPtr dialog) {
 
     // Check if input is empty
     if (strlen(inputCStr) == 0) {
-        LogToDialog("Send Action: Input field is empty.");
+        log_message("Send Action: Input field is empty.");
         SysBeep(5);
         return;
     }
@@ -237,9 +237,9 @@ void DoSendAction(DialogPtr dialog) {
     if (itemType == (ctrlItem + chkCtrl)) {
         checkboxHandle = (ControlHandle)itemHandle;
         isBroadcast = (GetControlValue(checkboxHandle) == 1);
-        LogToDialog("Broadcast checkbox state: %s", isBroadcast ? "Checked" : "Unchecked");
+        log_message("Broadcast checkbox state: %s", isBroadcast ? "Checked" : "Unchecked");
     } else {
-        LogToDialog("Warning: Broadcast item %d is not a checkbox! Assuming not broadcast.", kBroadcastCheckbox);
+        log_message("Warning: Broadcast item %d is not a checkbox! Assuming not broadcast.", kBroadcastCheckbox);
         isBroadcast = false;
     }
 
@@ -250,10 +250,10 @@ void DoSendAction(DialogPtr dialog) {
     if (formatResult == 0) {
         // --- TODO: Send the message ---
         if (isBroadcast) {
-            LogToDialog("Broadcasting: %s (Not implemented)", inputCStr);
+            log_message("Broadcasting: %s (Not implemented)", inputCStr);
             // Call UDP broadcast function here later
         } else {
-            LogToDialog("Sending to selected peer: %s (Not implemented)", inputCStr);
+            log_message("Sending to selected peer: %s (Not implemented)", inputCStr);
             // Call TCP send function here later (need selected peer IP)
         }
 
@@ -264,7 +264,7 @@ void DoSendAction(DialogPtr dialog) {
         AppendToMessagesTE("\r");       // Append newline for TE display
 
     } else {
-        LogToDialog("Error: Failed to format message for sending (format_message returned %d).", formatResult);
+        log_message("Error: Failed to format message for sending (format_message returned %d).", formatResult);
         SysBeep(20);
     }
 
@@ -277,14 +277,14 @@ void DoSendAction(DialogPtr dialog) {
             TECalText(gInputTE);        // Recalculate line breaks etc.
         }
         HSetState((Handle)gInputTE, teState); // Restore state
-        LogToDialog("Input field cleared.");
+        log_message("Input field cleared.");
     }
 
     // 5. Set focus back to input field (DialogSelect might handle this, but explicit doesn't hurt)
     if (gInputTE != NULL) {
        TEActivate(gInputTE); // Ensure it's active for typing
        // SelectDialogItemText(gMainWindow, kInputTextEdit, 0, 0); // Alternative
-       LogToDialog("Input field activated.");
+       log_message("Input field activated.");
     }
 }
 
@@ -294,7 +294,7 @@ void DoSendAction(DialogPtr dialog) {
 void AppendToMessagesTE(const char *text) {
     // Check if the TE handle is valid before proceeding
     if (gMessagesTE == NULL) {
-        // This shouldn't happen if gDialogTEInitialized is checked by caller (LogToDialog)
+        // This shouldn't happen if gDialogTEInitialized is checked by caller (log_message)
         // but add a safety check here anyway.
         if (gLogFile != NULL) { fprintf(gLogFile, "ERROR in AppendToMessagesTE: gMessagesTE is NULL!\n"); fflush(gLogFile); }
         return;
@@ -326,7 +326,7 @@ void ActivateDialogTE(Boolean activating) {
     // No need to check gDialogTEInitialized here, as this is called from HandleEvent
     // which only runs after initialization.
 
-    // LogToDialog("ActivateDialogTE: %s", activating ? "Activating" : "Deactivating");
+    // log_message("ActivateDialogTE: %s", activating ? "Activating" : "Deactivating");
 
     // Activate/Deactivate the messages TE field
     if (gMessagesTE != NULL) {
@@ -361,7 +361,7 @@ void UpdateDialogTE(void) {
     // No need to check gDialogTEInitialized here, as this is called from HandleEvent
     // which only runs after initialization.
 
-    // LogToDialog("UpdateDialogTE called.");
+    // log_message("UpdateDialogTE called.");
 
     // Update the messages TE field
     if (gMessagesTE != NULL) {

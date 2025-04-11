@@ -11,13 +11,13 @@
 // 1. Minimizes Dependencies: Files that only need to *know about* the `handle_signal`
 //    function (e.g., peer.c where it's registered with `sigaction`) don't need to
 //    pull in all the headers required by the *implementation* of `handle_signal`
-//    (like peer.h or utils.h, which are needed in signal_handler.c). This speeds
+//    (like peer.h or logging.h, which are needed in signal_handler.c). This speeds
 //    up compilation and reduces coupling between modules.
 // 2. Clarity: It clearly shows that only the function's signature (its name,
 //    return type, and parameter types) is needed by users of this header.
 
 // The implementation file (signal_handler.c) is responsible for including the
-// necessary headers (like <signal.h>, "peer.h", "utils.h") to define and use
+// necessary headers (like <signal.h>, "peer.h", "logging.h") to define and use
 // types like `sig_atomic_t`, `app_state_t`, `g_state`, and `log_message`.
 
 

@@ -1,6 +1,6 @@
 // FILE: ./classic_mac/discovery.c
 #include "discovery.h"
-#include "logging.h"   // For LogToDialog
+#include "logging.h"   // For log_message
 #include "protocol.h"  // For format_message, MSG_DISCOVERY
 
 #include <Devices.h>   // For PBControlSync, TickCount, CntrlParam, ParmBlkPtr
@@ -22,20 +22,20 @@ OSErr InitUDPBroadcastEndpoint(short macTCPRefNum) {
     UDPiopb pb; // Use the specific UDP parameter block structure
     const unsigned short specificPort = 0; // Request dynamic port assignment
 
-    LogToDialog("Initializing UDP Broadcast Endpoint...");
+    log_message("Initializing UDP Broadcast Endpoint...");
 
     if (macTCPRefNum == 0) {
-         LogToDialog("Error (InitUDP): Invalid MacTCP RefNum: %d", macTCPRefNum);
+         log_message("Error (InitUDP): Invalid MacTCP RefNum: %d", macTCPRefNum);
          return paramErr; // Or another appropriate error
     }
 
     // Allocate buffer needed by UDPCreate, even if we don't plan to receive
     gUDPRecvBuffer = NewPtrClear(kMinUDPBufSize);
     if (gUDPRecvBuffer == NULL) {
-        LogToDialog("Error (InitUDP): Failed to allocate UDP receive buffer (memFullErr).");
+        log_message("Error (InitUDP): Failed to allocate UDP receive buffer (memFullErr).");
         return memFullErr;
     }
-    LogToDialog("Allocated %ld bytes for UDP receive buffer at 0x%lX.", (long)kMinUDPBufSize, (unsigned long)gUDPRecvBuffer);
+    log_message("Allocated %ld bytes for UDP receive buffer at 0x%lX.", (long)kMinUDPBufSize, (unsigned long)gUDPRecvBuffer);
 
     // --- Prepare UDPiopb for UDPCreate ---
     memset(&pb, 0, sizeof(UDPiopb)); // Zero out the parameter block
@@ -50,11 +50,11 @@ OSErr InitUDPBroadcastEndpoint(short macTCPRefNum) {
     pb.csParam.create.notifyProc = nil;         // No notification routine needed
     pb.csParam.create.localPort = specificPort;  // Request dynamic port (0)
 
-    LogToDialog("Calling PBControlSync (udpCreate) for port %u...", specificPort);
+    log_message("Calling PBControlSync (udpCreate) for port %u...", specificPort);
     err = PBControlSync((ParmBlkPtr)&pb); // Cast UDPiopb to generic ParmBlkPtr
 
     if (err != noErr) {
-        LogToDialog("Error (InitUDP): PBControlSync(udpCreate) failed. Error: %d", err);
+        log_message("Error (InitUDP): PBControlSync(udpCreate) failed. Error: %d", err);
         if (gUDPRecvBuffer != NULL) {
             DisposePtr(gUDPRecvBuffer); // Clean up buffer if create failed
             gUDPRecvBuffer = NULL;
@@ -67,7 +67,7 @@ OSErr InitUDPBroadcastEndpoint(short macTCPRefNum) {
     gUDPStream = pb.udpStream;
     // Retrieve the *actual* port assigned by MacTCP from the localPort field
     unsigned short assignedPort = pb.csParam.create.localPort;
-    LogToDialog("UDP Endpoint created successfully (StreamPtr: 0x%lX) on assigned port %u.", (unsigned long)gUDPStream, assignedPort);
+    log_message("UDP Endpoint created successfully (StreamPtr: 0x%lX) on assigned port %u.", (unsigned long)gUDPStream, assignedPort);
     gLastBroadcastTimeTicks = 0; // Reset broadcast timer
     return noErr;
 }
@@ -82,22 +82,22 @@ OSErr SendDiscoveryBroadcast(short macTCPRefNum, const char *myUsername, const c
     UDPiopb pb; // Use the specific UDP parameter block structure
 
     if (gUDPStream == NULL) {
-        LogToDialog("Error (SendUDP): Cannot send broadcast, UDP endpoint not initialized.");
+        log_message("Error (SendUDP): Cannot send broadcast, UDP endpoint not initialized.");
         return invalidStreamPtr; // Or another appropriate error
     }
      if (macTCPRefNum == 0) {
-         LogToDialog("Error (SendUDP): Invalid MacTCP RefNum: %d", macTCPRefNum);
+         log_message("Error (SendUDP): Invalid MacTCP RefNum: %d", macTCPRefNum);
          return paramErr;
      }
      if (myUsername == NULL || myLocalIPStr == NULL) {
-         LogToDialog("Error (SendUDP): Missing username or IP string.");
+         log_message("Error (SendUDP): Missing username or IP string.");
          return paramErr;
      }
 
     // Format the message using the shared protocol function
     err = format_message(buffer, BUFFER_SIZE, MSG_DISCOVERY, myUsername, myLocalIPStr, "");
     if (err != 0) {
-        LogToDialog("Error (SendUDP): Failed to format discovery broadcast message.");
+        log_message("Error (SendUDP): Failed to format discovery broadcast message.");
         return paramErr; // Or another suitable error code
     }
 
@@ -121,15 +121,15 @@ OSErr SendDiscoveryBroadcast(short macTCPRefNum, const char *myUsername, const c
     pb.csParam.send.checkSum = true;             // Calculate and send checksum
 
     // Call PBControlSync
-    // LogToDialog("Sending broadcast: %s", buffer); // Debug log
+    // log_message("Sending broadcast: %s", buffer); // Debug log
     err = PBControlSync((ParmBlkPtr)&pb); // Cast UDPiopb to generic ParmBlkPtr
 
     if (err != noErr) {
-        LogToDialog("Error (SendUDP): PBControlSync(udpWrite) failed. Error: %d", err);
+        log_message("Error (SendUDP): PBControlSync(udpWrite) failed. Error: %d", err);
         return err;
     }
 
-    // LogToDialog("Discovery broadcast sent."); // Optional success log
+    // log_message("Discovery broadcast sent."); // Optional success log
     gLastBroadcastTimeTicks = TickCount(); // Update last broadcast time
     return noErr;
 }
@@ -152,7 +152,7 @@ void CheckSendBroadcast(short macTCPRefNum, const char *myUsername, const char *
 
     // Send immediately if never sent before, or if interval has passed
     if (gLastBroadcastTimeTicks == 0 || (currentTimeTicks - gLastBroadcastTimeTicks) >= intervalTicks) {
-        // LogToDialog("CheckSendBroadcast: Time to send."); // Debug log
+        // log_message("CheckSendBroadcast: Time to send."); // Debug log
         SendDiscoveryBroadcast(macTCPRefNum, myUsername, myLocalIPStr); // Ignore return value for simple periodic broadcast
     }
 }
@@ -164,14 +164,14 @@ void CleanupUDPBroadcastEndpoint(short macTCPRefNum) {
     UDPiopb pb; // Use the specific UDP parameter block structure
     OSErr err;
 
-    LogToDialog("Cleaning up UDP Broadcast Endpoint...");
+    log_message("Cleaning up UDP Broadcast Endpoint...");
 
     // --- Release UDP Endpoint ---
     if (gUDPStream != NULL) {
         if (macTCPRefNum == 0) {
-             LogToDialog("Warning (CleanupUDP): Invalid MacTCP RefNum (%d), cannot release UDP stream.", macTCPRefNum);
+             log_message("Warning (CleanupUDP): Invalid MacTCP RefNum (%d), cannot release UDP stream.", macTCPRefNum);
         } else {
-            LogToDialog("Attempting PBControlSync (udpRelease) for endpoint 0x%lX...", (unsigned long)gUDPStream);
+            log_message("Attempting PBControlSync (udpRelease) for endpoint 0x%lX...", (unsigned long)gUDPStream);
             memset(&pb, 0, sizeof(UDPiopb)); // Zero out the parameter block
             pb.ioCompletion = nil;           // No completion routine for sync call
             pb.ioCRefNum = macTCPRefNum;     // Use passed-in Driver reference number
@@ -184,25 +184,25 @@ void CleanupUDPBroadcastEndpoint(short macTCPRefNum) {
 
             err = PBControlSync((ParmBlkPtr)&pb); // Cast UDPiopb to generic ParmBlkPtr
             if (err != noErr) {
-                LogToDialog("Warning (CleanupUDP): PBControlSync(udpRelease) failed. Error: %d", err);
+                log_message("Warning (CleanupUDP): PBControlSync(udpRelease) failed. Error: %d", err);
                 // Continue cleanup even if release fails
             } else {
-                LogToDialog("PBControlSync(udpRelease) succeeded.");
+                log_message("PBControlSync(udpRelease) succeeded.");
             }
         }
         gUDPStream = NULL; // Mark as released (or intended to be released)
     } else {
-        LogToDialog("UDP Endpoint was not open, skipping release.");
+        log_message("UDP Endpoint was not open, skipping release.");
     }
 
     // --- Dispose UDP Receive Buffer ---
     // Always try to dispose the buffer if the pointer is not NULL,
     // as the memory was allocated separately.
     if (gUDPRecvBuffer != NULL) {
-         LogToDialog("Disposing UDP receive buffer at 0x%lX.", (unsigned long)gUDPRecvBuffer);
+         log_message("Disposing UDP receive buffer at 0x%lX.", (unsigned long)gUDPRecvBuffer);
          DisposePtr(gUDPRecvBuffer);
          gUDPRecvBuffer = NULL;
     }
 
-    LogToDialog("UDP Broadcast Endpoint cleanup finished.");
+    log_message("UDP Broadcast Endpoint cleanup finished.");
 }

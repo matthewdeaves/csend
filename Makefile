@@ -16,13 +16,17 @@ OBJ_DIR = $(BUILD_BASE_DIR)/obj/posix
 INCLUDE_PATHS = -I$(POSIX_DIR) -I$(SHARED_DIR)
 
 # Source files
+# POSIX_C_FILES now includes logging.c
 POSIX_C_FILES = $(wildcard $(POSIX_DIR)/*.c)
+# SHARED_C_FILES no longer includes utils.c (it's removed)
 SHARED_C_FILES = $(wildcard $(SHARED_DIR)/*.c)
 
 # Object files (place in OBJ_DIR)
 # Use simpler names now they are in a dedicated directory
+# POSIX_OBJS now includes logging.o
 POSIX_OBJS = $(patsubst $(POSIX_DIR)/%.c, $(OBJ_DIR)/%.o, $(POSIX_C_FILES))
 # Keep shared prefix to avoid potential name clashes if posix/ had same filenames
+# SHARED_OBJS no longer includes shared_utils.o
 SHARED_OBJS = $(patsubst $(SHARED_DIR)/%.c, $(OBJ_DIR)/shared_%.o, $(SHARED_C_FILES))
 OBJS = $(POSIX_OBJS) $(SHARED_OBJS)
 

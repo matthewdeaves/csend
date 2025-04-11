@@ -28,7 +28,7 @@ Detailed information on the versions of the project can be found [here](TAGS.md)
 *   **Graceful Shutdown:** Handles `SIGINT` (Ctrl+C) and `SIGTERM` signals for clean termination, notifying other peers (`posix/signal_handler.c`, `posix/signal_handler.h`).
 *   **Network Utilities:** Includes helpers for getting the local IP address and setting socket timeouts (`posix/network.c`, `posix/network.h`).
 *   **Simple Protocol:** Uses a basic text-based protocol (`TYPE|SENDER@IP|CONTENT`) for communication (`shared/protocol.c`, `shared/protocol.h`).
-*   **Logging:** Basic timestamped logging to stdout (`posix/utils.c`, `posix/utils.h`).
+*   **Logging:** Basic timestamped logging to stdout (`posix/logging.c`, `posix/logging.h`).
 *   **Docker Support:** Includes `Dockerfile`, `docker-compose.yml`, and a helper script (`docker.sh`) to easily build and run multiple peer instances of the POSIX version in containers.
 
 ## Features (Classic Mac Version)
