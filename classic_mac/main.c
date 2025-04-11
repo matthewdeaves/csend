@@ -19,7 +19,7 @@
 
 // --- Project Includes ---
 #include "logging.h"   // Logging functions (InitLogFile, CloseLogFile, LogToDialog)
-#include "network.h"   // Networking functions (InitializeNetworking, CleanupNetworking, InitUDPDiscovery, CheckSendBroadcast)
+#include "network.h"   // Networking functions (InitializeNetworking, CleanupNetworking, InitUDPBroadcastEndpoint, CheckSendBroadcast)
 #include "dialog.h"    // Dialog functions (InitDialog, CleanupDialog, HandleDialogClick, etc.)
 
 // --- Global Variables ---
@@ -55,39 +55,34 @@ int main(void) {
         return 1; // Indicate failure
     }
 
-    // *** TEMPORARILY COMMENT OUT UDP INIT ***
-    /*
-    networkErr = InitUDPDiscovery();
+    // 4. Initialize UDP Broadcast Endpoint
+    networkErr = InitUDPBroadcastEndpoint();
     if (networkErr != noErr) {
-        LogToDialog("Fatal: UDP Discovery initialization failed (Error: %d). Exiting.", networkErr);
-        // CleanupNetworking(); // Clean up TCP/DNR part
-        // CloseLogFile();      // Close log file
-        ExitToShell(); // Call ExitToShell directly
+        LogToDialog("Fatal: UDP Broadcast initialization failed (Error: %d). Exiting.", networkErr);
+        CleanupNetworking(); // Clean up TCP/DNR part
+        CloseLogFile();      // Close log file
+        ExitToShell();
         return 1; // Indicate failure
     }
-    */
-    LogToDialog("Skipping UDP Discovery initialization for testing.");
-    // *** END TEMPORARY CHANGE ***
 
-
-    // 4. Initialize the Main Dialog Window and its controls
+    // 5. Initialize the Main Dialog Window and its controls
     dialogOk = InitDialog();
     if (!dialogOk) {
         LogToDialog("Fatal: Dialog initialization failed. Exiting.");
-        CleanupNetworking(); // Clean up network resources (TCP/DNR only now)
+        CleanupNetworking(); // Clean up network resources (TCP/DNR and UDP)
         CloseLogFile();
         ExitToShell();
         return 1;
     }
 
-    // 5. Enter the Main Event Loop
+    // 6. Enter the Main Event Loop
     LogToDialog("Entering main event loop...");
     MainEventLoop();
     LogToDialog("Exited main event loop.");
 
-    // 6. Cleanup Resources
+    // 7. Cleanup Resources
     CleanupDialog();
-    CleanupNetworking(); // Cleans up TCP/DNR (and UDP if it were initialized)
+    CleanupNetworking(); // Cleans up TCP/DNR and UDP
     CloseLogFile();
 
     return 0;
@@ -140,13 +135,14 @@ void MainEventLoop(void) {
             }
         } else {
             // --- Idle Time ---
-            // CheckSendBroadcast(); // Don't call this if UDP isn't initialized
+            CheckSendBroadcast(); // Check if it's time to send a broadcast
         }
     } // end while(!gDone)
 }
 
 /**
  * @brief Handles non-dialog events (mouse clicks, window updates, activation).
+ * (No changes needed in this function from your previous version)
  */
 void HandleEvent(EventRecord *event) {
     short     windowPart;
@@ -157,7 +153,7 @@ void HandleEvent(EventRecord *event) {
             windowPart = FindWindow(event->where, &whichWindow);
             switch (windowPart) {
                 case inMenuBar:
-                    LogToDialog("Menu bar clicked (not implemented).");
+                    // LogToDialog("Menu bar clicked (not implemented)."); // Less noisy
                     break;
                 case inSysWindow:
                     SystemClick(event, whichWindow);
