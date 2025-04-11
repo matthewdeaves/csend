@@ -12,6 +12,8 @@ separator_line="//===================================="
 include_makefile=false
 include_docker=false
 include_tree=true # Default: include tree output
+strip_comments=false # Default: don't strip comments
+gcc_available=false # Flag to check if gcc is present (needed for stripping)
 
 # Display help message
 show_help() {
@@ -26,13 +28,14 @@ show_help() {
     echo "  -P, --platform PLATFORM    Specify platform: posix, classic, all (default: all)"
     echo "  -n, --no-headers           Don't include filename headers"
     echo "  -m, --no-separators        Don't include separator lines between files"
-    echo "  -M, --include-makefile     Append root Makefile and Makefile.classicmac content at the end" # Updated help text
+    echo "  -M, --include-makefile     Append root Makefile and Makefile.classicmac content at the end"
     echo "  -D, --include-docker       Append root Dockerfile, docker-compose.yml and docker.sh content at the end"
     echo "  -T, --no-tree              Don't include 'tree .' output at the beginning"
+    echo "  -S, --strip-comments       Remove C/C++ comments (//, /* */) from .c and .h files (requires gcc)"
     echo "  -h, --help                 Display this help message"
     echo
     echo "Examples:"
-    echo "  $0 -o posix_for_ai.txt -P posix -M"
+    echo "  $0 -o posix_for_ai.txt -P posix -M -S"
     echo "  $0 --platform classic --no-separators --no-tree"
     echo "  $0 -o project_snapshot.txt # Defaults to --platform all and includes tree"
 }
@@ -74,6 +77,10 @@ while [[ $# -gt 0 ]]; do
             include_tree=false
             shift
             ;;
+        -S|--strip-comments) # New option
+            strip_comments=true
+            shift
+            ;;
         -h|--help)
             show_help
             exit 0
@@ -86,10 +93,23 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Check for gcc if stripping is requested
+if [ "$strip_comments" = true ]; then
+    if command -v gcc &> /dev/null; then
+        gcc_available=true
+        echo "Info: Comment stripping enabled for .c/.h files (using gcc)."
+    else
+        echo "Error: --strip-comments requires 'gcc' but it was not found."
+        echo "Please install gcc or run without --strip-comments."
+        exit 1
+    fi
+fi
+
+
 # Create or clear the output file
 > "$output_file"
 
-# Function to append a file with optional header/separator
+# Function to append a file with optional header/separator/comment stripping
 # Takes full path as $1, uses it to generate relative path for header
 append_file_content() {
     local file_to_append="$1"
@@ -97,11 +117,12 @@ append_file_content() {
     local use_headers="$3"
     local use_separator="$4"
     local sep_line="$5"
-    # Use # for Makefiles/Dockerfiles/Shell, // for C/C++/Rez as a guess
+    # Access global: strip_comments, gcc_available
+
     local header_prefix="//"
     local file_basename=$(basename "$file_to_append")
 
-    # Guess comment style based on extension
+    # Guess comment style based on extension for header
     if [[ "$file_basename" == *Makefile* || "$file_basename" == *Dockerfile* || "$file_basename" == *docker-compose.yml* || "$file_basename" == *.sh ]]; then
         header_prefix="#"
     elif [[ "$file_basename" == *.r ]]; then
@@ -112,28 +133,41 @@ append_file_content() {
     if [ -f "$file_to_append" ]; then
         echo "Appending $file_to_append..."
         if [ "$use_headers" = true ]; then
-            # Add leading newline before separator only if file is not empty
             if [ -s "$output_target" ]; then
                  echo -e "\n$sep_line" >> "$output_target"
             else
-                 echo "$sep_line" >> "$output_target" # No leading newline for the very first header
+                 echo "$sep_line" >> "$output_target"
             fi
-            # Display path relative to script execution dir (which should be project root)
             echo "$header_prefix FILE: ./$file_to_append" >> "$output_target"
             echo -e "$sep_line\n" >> "$output_target"
         elif [ "$use_separator" = true ]; then
-             # Add a smaller separator if headers are off but separators are on
-             # Add leading newline before separator only if file is not empty
              if [ -s "$output_target" ]; then
                  echo -e "\n--- $file_to_append ---\n" >> "$output_target"
              else
-                 echo -e "--- $file_to_append ---\n" >> "$output_target" # No leading newline for the very first separator
+                 echo -e "--- $file_to_append ---\n" >> "$output_target"
              fi
         fi
 
-        cat "$file_to_append" >> "$output_target"
+        # Check if stripping is enabled globally, gcc is available, and file is .c or .h
+        if [ "$strip_comments" = true ] && [ "$gcc_available" = true ] && [[ "$file_to_append" == *.c || "$file_to_append" == *.h ]]; then
+            echo "Stripping comments from $file_to_append..."
+            # Use gcc preprocessor to remove comments, keeping defines, avoiding includes
+            # -fpreprocessed: Treat input as already preprocessed (helps avoid expanding system includes)
+            # -dD: Keep macro definitions (#define) but don't expand them
+            # -E: Run preprocessor only
+            # Redirect stderr to /dev/null to hide potential gcc warnings unless it fails
+            if ! gcc -fpreprocessed -dD -E "$file_to_append" >> "$output_target" 2>/dev/null; then
+                local gcc_exit_code=$?
+                echo "Warning: Failed to strip comments from $file_to_append using gcc (exit code $gcc_exit_code). Appending original file."
+                # Fallback to cat if gcc fails
+                cat "$file_to_append" >> "$output_target"
+            fi
+        else
+            # Append normally for other files or if stripping is off/gcc unavailable
+            cat "$file_to_append" >> "$output_target"
+        fi
+
         # Add extra newline for spacing after content, only if separators are enabled AND headers are off
-        # (Headers already add a trailing newline)
         if [ "$use_separator" = true ] && [ "$use_headers" = false ]; then
              echo "" >> "$output_target"
         fi
@@ -163,6 +197,7 @@ process_hc_directory() {
     # Process header files first, sorted alphabetically
     while IFS= read -r file; do
         if [ -f "$file" ]; then
+            # Pass arguments to append_file_content (it accesses globals for stripping)
             append_file_content "$file" "$output_target" "$use_headers" "$use_separator" "$sep_line"
              ((processed++))
         fi
@@ -171,6 +206,7 @@ process_hc_directory() {
     # Process source files, sorted alphabetically
     while IFS= read -r file; do
         if [ -f "$file" ]; then
+            # Pass arguments to append_file_content (it accesses globals for stripping)
             append_file_content "$file" "$output_target" "$use_headers" "$use_separator" "$sep_line"
             ((processed++))
         fi
@@ -185,10 +221,12 @@ process_hc_directory() {
 echo "Starting code merge..."
 echo "Output file: $output_file"
 echo "Platform(s): $platform"
+if [ "$strip_comments" = true ]; then echo "Stripping comments from .c/.h: Yes (requires gcc)"; fi # Added status
 
 # 0. Add Tree Output if requested
 tree_output_added=false
 if [ "$include_tree" = true ]; then
+    # ... (tree logic remains the same) ...
     if command -v tree &> /dev/null; then
         echo "Adding project structure (tree .)..."
         {
@@ -196,7 +234,6 @@ if [ "$include_tree" = true ]; then
             echo "# Project Structure (tree .)"
             echo "#===================================="
 
-            # If tree command fails or produces no output, create a simple directory listing
             if ! tree_output=$(tree -I 'build|obj' . 2>/dev/null) || [ -z "$tree_output" ]; then
                 echo "# Tree command failed or produced no output. Using simple directory listing:"
                 echo "# Main directories:"
@@ -205,7 +242,6 @@ if [ "$include_tree" = true ]; then
                 echo "# Files in root:"
                 find . -type f -maxdepth 1 -not -path "*/\.*" | sort
             else
-                # Output the tree command result
                 echo "$tree_output"
             fi
 
@@ -236,26 +272,26 @@ processed_posix=0
 processed_classic_hc=0 # C and H files for classic
 processed_classic_r=0  # .r files for classic
 
-# 1. Process Shared Files (Always included unless platform is invalid)
+# 1. Process Shared Files
 process_hc_directory "shared" "$output_file" "$include_headers" "$add_separator" "$separator_line"
 processed_shared=$?
 total_processed_count=$((total_processed_count + processed_shared))
 
-# 2. Process POSIX Files (if selected)
+# 2. Process POSIX Files
 if [[ "$platform" == "posix" || "$platform" == "all" ]]; then
     process_hc_directory "posix" "$output_file" "$include_headers" "$add_separator" "$separator_line"
     processed_posix=$?
     total_processed_count=$((total_processed_count + processed_posix))
 fi
 
-# 3. Process Classic Mac Files (if selected)
+# 3. Process Classic Mac Files
 if [[ "$platform" == "classic" || "$platform" == "all" ]]; then
     # Process .h and .c files
     process_hc_directory "classic_mac" "$output_file" "$include_headers" "$add_separator" "$separator_line"
     processed_classic_hc=$?
     total_processed_count=$((total_processed_count + processed_classic_hc))
 
-    # Process .r files specifically for classic_mac
+    # Process .r files specifically for classic_mac (never strip comments)
     echo "Processing R files in directory: classic_mac"
     while IFS= read -r file; do
         if [ -f "$file" ]; then
@@ -267,7 +303,7 @@ if [[ "$platform" == "classic" || "$platform" == "all" ]]; then
 
 fi
 
-# 4. Append Makefiles if requested
+# 4. Append Makefiles if requested (never strip comments)
 makefiles_found_count=0
 if [ "$include_makefile" = true ]; then
     if append_file_content "Makefile" "$output_file" "$include_headers" "$add_separator" "#===================================="; then
@@ -278,7 +314,7 @@ if [ "$include_makefile" = true ]; then
     fi
 fi
 
-# 5. Append Docker files if requested (looks in root directory)
+# 5. Append Docker files if requested (never strip comments)
 docker_found=false
 if [ "$include_docker" = true ]; then
     docker_count=0
@@ -292,10 +328,11 @@ echo "------------------------------------"
 echo "Code merge complete."
 echo "Output written to: $output_file"
 if [ "$include_tree" = true ]; then echo "Included tree structure: $tree_output_added"; fi
+if [ "$strip_comments" = true ]; then echo "Comment stripping attempted for .c/.h files: Yes"; fi
 echo "Total source/resource files processed: $total_processed_count"
 echo "  Shared C/H: $processed_shared"
 echo "  POSIX C/H: $processed_posix"
 echo "  Classic C/H: $processed_classic_hc"
 echo "  Classic R: $processed_classic_r"
-if [ "$include_makefile" = true ]; then echo "Included Makefile(s): $makefiles_found_count"; fi # Updated summary message
+if [ "$include_makefile" = true ]; then echo "Included Makefile(s): $makefiles_found_count"; fi
 if [ "$include_docker" = true ]; then echo "Included Docker files: $docker_found"; fi
