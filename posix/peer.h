@@ -117,6 +117,13 @@ void cleanup_app_state(app_state_t *state);
  */
 int add_peer(app_state_t *state, const char *ip, const char *username);
 
+/**
+ * @brief Prunes timed-out peers (POSIX thread-safe wrapper).
+ * @details Locks the mutex, calls peer_shared_prune_timed_out, unlocks mutex.
+ * @return Number of peers pruned.
+ */
+int prune_peers(app_state_t *state);
+
 
 // --- Global State ---
 

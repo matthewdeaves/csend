@@ -52,8 +52,8 @@ typedef struct {
      * @brief Timestamp indicating when the peer was last heard from.
      * @details Platform-dependent interpretation:
      *          - POSIX: Stores time_t (seconds since epoch), cast to unsigned long.
-     *          - Classic Mac: Stores TickCount() (system ticks, approx 1/60th sec).
-     *          Timeout comparison logic must account for this difference.
+     *          Timeout comparison logic MUST account for this difference using
+     *          conditional compilation (#ifdef __MACOS__).
      */
     unsigned long last_seen;
 

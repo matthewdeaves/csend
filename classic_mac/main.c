@@ -22,6 +22,7 @@
 #include "network.h"   // Networking functions (InitializeNetworking, CleanupNetworking)
 #include "discovery.h" // UDP Discovery functions (InitUDPBroadcastEndpoint, CheckSendBroadcast)
 #include "dialog.h"    // Dialog functions (InitDialog, CleanupDialog, HandleDialogClick, etc.)
+#include "peer_mac.h"
 
 // --- Global Variables ---
 Boolean gDone = false; // Controls the main event loop termination
@@ -66,6 +67,10 @@ int main(void) {
         ExitToShell();
         return 1; // Indicate failure
     }
+
+    // Initialize the peer list AFTER network is up
+    InitPeerList();
+    log_message("Peer list initialized.");
 
     // 5. Initialize the Main Dialog Window and its controls
     dialogOk = InitDialog();
@@ -140,6 +145,7 @@ void MainEventLoop(void) {
             // --- Idle Time ---
             // Pass necessary info to CheckSendBroadcast
             CheckSendBroadcast(gMacTCPRefNum, gMyUsername, gMyLocalIPStr);
+            PruneTimedOutPeers();
         }
     } // end while(!gDone)
 }
