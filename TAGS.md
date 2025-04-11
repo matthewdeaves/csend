@@ -6,6 +6,64 @@ I'll be tagging various points of evolution of this code base with a write up of
 
 ---
 
+## [v0.0.10](https://github.com/matthewdeaves/csend/tree/v0.0.10)
+
+1.  **Major Refactoring: Shared Peer Management Logic:**
+    *   **v0.0.9:** Peer management logic (like defining `peer_t`, adding/updating peers, checking timeouts) was implemented within the platform-specific `posix/peer.c` and absent in `classic_mac`.
+    *   **v0.0.10:** Introduces `shared/peer_shared.c` and `shared/peer_shared.h`. This centralizes the core, platform-independent logic for managing the peer list:
+        *   The `peer_t` structure is now defined in `shared/common_defs.h`.
+        *   Functions like `peer_shared_init_list`, `peer_shared_find_by_ip`, `peer_shared_find_empty_slot`, `peer_shared_update_entry`, `peer_shared_add_or_update`, and `peer_shared_prune_timed_out` handle the fundamental operations on a `peer_t` array.
+        *   Platform-specific time handling (`TickCount` vs `time`) is managed within `peer_shared.c` using `#ifdef __MACOS__`.
+    *   **Benefit:** This significantly reduces code duplication, ensures consistent peer handling logic across platforms, and makes future modifications easier.
+
+2.  **Platform-Specific Peer Wrappers:**
+    *   **v0.0.10:**
+        *   **POSIX (`posix/peer.c`):** This file was refactored to become a *wrapper* around the shared logic. It still manages the `app_state_t` (which contains the `peers` array and the `peers_mutex`), but functions like `add_peer` and `prune_peers` now primarily handle locking/unlocking the mutex and then call the corresponding `peer_shared_...` functions.
+        *   **Classic Mac (`classic_mac/peer_mac.c`, `classic_mac/peer_mac.h`):** These *new* files provide the Classic Mac interface to the shared peer logic. They define a global `gPeerList` array and implement functions (`InitPeerList`, `AddOrUpdatePeer`, `PruneTimedOutPeers`) that directly call the `peer_shared_...` functions on this global list. A new function `GetPeerByIndex` was added specifically for the Classic Mac UI to retrieve peer data based on its visible index in the list.
+    *   **Benefit:** Maintains a clear separation between the core peer logic (shared) and how each platform integrates with it (global list vs. state struct with mutex).
+
+3.  **Logging Refactoring:**
+    *   **v0.0.9:** Logging was handled by `shared/utils.c` and `shared/utils.h`, likely printing only to `stdout` (suitable for POSIX but not Classic Mac GUI).
+    *   **v0.0.10:**
+        *   `shared/utils.c/h` were removed.
+        *   Logging functionality was moved into platform-specific implementations:
+            *   `posix/logging.c/h`: Provides `log_message` which prints timestamped messages to `stdout`.
+            *   `classic_mac/logging.c/h`: Provides `log_message` (renamed from `LogToDialog`) which writes to a file (`csend_log.txt`) and, if the dialog is initialized, also appends the message to the dialog's message area (`gMessagesTE`).
+    *   **Benefit:** Allows each platform to log messages in the most appropriate way (console for POSIX, file/dialog for Classic Mac) while maintaining a consistent function name (`log_message`).
+
+4.  **Classic Mac UDP Discovery Implementation:**
+    *   **v0.0.9:** UDP discovery logic was likely absent or incomplete in the Classic Mac build. The `classic_mac/network.c` handled general TCP/IP setup but not UDP broadcasts specifically.
+    *   **v0.0.10:**
+        *   Introduced `classic_mac/discovery.c` and `classic_mac/discovery.h`.
+        *   These files implement UDP broadcast functionality specifically for Classic Mac using MacTCP `PBControl` calls (`udpCreate`, `udpWrite`, `udpRelease`).
+        *   `InitUDPBroadcastEndpoint` sets up the UDP stream.
+        *   `SendDiscoveryBroadcast` formats and sends the discovery message.
+        *   `CheckSendBroadcast` handles the periodic sending based on `DISCOVERY_INTERVAL` and `TickCount`.
+        *   `CleanupUDPBroadcastEndpoint` releases the UDP stream.
+        *   The UDP-related logic was removed from `classic_mac/network.c`.
+    *   **Benefit:** Implements the core discovery sending mechanism for the Classic Mac platform, separating it cleanly from general TCP/IP setup.
+
+5.  **Classic Mac Integration Updates:**
+    *   **`classic_mac/main.c`:** Updated to initialize the new peer list (`InitPeerList`), initialize the UDP endpoint (`InitUDPBroadcastEndpoint`), and call `CheckSendBroadcast` and `PruneTimedOutPeers` during the idle part of the event loop.
+    *   **`classic_mac/dialog.c`:** `DoSendAction` was updated to integrate with the new peer management. It now includes logic (using the new `GetPeerByIndex`) to identify the target peer IP when sending a non-broadcast message (though the actual network send call is still a TODO). It also uses the global `gMyUsername` and `gMyLocalIPStr`. The logging function name was updated from `LogToDialog` to `log_message`.
+
+6.  **Build System Updates (Makefiles):**
+    *   **`Makefile` (POSIX):** Updated to reflect the change from `shared/utils.c` to `posix/logging.c`. Object file lists and dependencies were adjusted accordingly.
+    *   **`Makefile.classicmac`:** Significantly updated to:
+        *   Include the new Classic Mac source files (`discovery.c`, `peer_mac.c`) and the new shared file (`peer_shared.c`) in the compilation and linking steps.
+        *   Remove the old shared utility object (`shared_utils.o`).
+        *   Correctly specify include paths (`-Iclassic_mac`, `-Ishared`, `-I"$(CINCLUDES)"`, `-I"$(UNIVERSAL_CINCLUDES)"`).
+        *   Add dynamic detection and checking for Retro68 include paths (`RIncludes`, `CIncludes`, `Universal/CIncludes`) relative to the compiler location, making the build more robust.
+        *   Use the C++ linker driver (`CXX_MAC`) which is often necessary with Retro68 even for C projects.
+        *   Remove the `-lRetroConsole` linker flag as the GUI app doesn't use the console output library.
+
+v0.0.10 represents a significant step forward in code organization and feature implementation. The core peer management logic is now shared, reducing redundancy and improving consistency. Logging is handled appropriately for each platform. UDP discovery sending is now implemented for Classic Mac. The build system is more robust, especially for the Classic Mac target. The next features to build for the classic Mac build are:
+
+1. On quit send a `MSG_QUIT` message to peers so they will remove the peer from their peer list
+2. Support for receiving `MSG_DISCOVERY_RESPONSE` message and adding a peer to the peer list
+
+---
+
 ## [v0.0.9](https://github.com/matthewdeaves/csend/tree/v0.0.9)
 
 Further work on code sharing between POSIX and ANSI C builds through strategic refactoring to plain C, enabling better cross-platform compatibility while maintaining platform-specific optimizations where needed.
