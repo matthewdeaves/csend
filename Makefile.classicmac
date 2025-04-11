@@ -54,22 +54,14 @@ endif
 # --- Compiler, Linker, Rez Flags ---
 
 # Compiler flags
-# -Iclassic_mac: Ensure compiler finds headers in the classic_mac directory
-# -Ishared: Include path for shared code
-# -I"$(CINCLUDES)": Explicitly add the standard Mac OS headers path
-# -I"$(UNIVERSAL_CINCLUDES)": Add path to universal headers # ADDED
-# *** ADDED -w to suppress warnings ***
-CFLAGS_MAC = -g -w -ffunction-sections -Iclassic_mac -Ishared -I"$(CINCLUDES)" -I"$(UNIVERSAL_CINCLUDES)"
+# Ensure paths are quoted. The -I flags themselves handle spaces if the shell passes them correctly.
+CFLAGS_MAC = -g -w -ffunction-sections -D__MACOS__ -Iclassic_mac -Ishared -I"$(CINCLUDES)" -I"$(UNIVERSAL_CINCLUDES)"
 
 # Linker flags (passed via the compiler driver using -Wl,)
-# -Wl,-gc-sections: Linker garbage collection
-# -Wl,--mac-strip-macsbug: Strip MacsBug symbols (remove for debugging)
-# REMOVED: -lRetroConsole: Link the console library for printf output
 LDFLAGS_MAC = -Wl,-gc-sections -Wl,--mac-strip-macsbug
 
 # Rez flags
-# -I$(RINCLUDES): Tell Rez where to find standard resources like Retro68APPL.r
-REZFLAGS = -I"$(RINCLUDES)" # Quote the path in case it contains spaces
+REZFLAGS = -I"$(RINCLUDES)" # Quote the path
 
 # --- Source and Build Directories ---
 
@@ -82,14 +74,16 @@ OBJ_DIR = $(BUILD_BASE_DIR)/obj/classic_mac
 
 # --- Source Files ---
 
-# *** UPDATED: List all C files in classic_mac ***
-MAC_C_FILES = $(MAC_DIR)/main.c $(MAC_DIR)/dialog.c $(MAC_DIR)/network.c $(MAC_DIR)/logging.c $(MAC_DIR)/DNR.c
+MAC_C_FILES = $(wildcard $(MAC_DIR)/*.c)
 SHARED_C_FILES = $(wildcard $(SHARED_DIR)/*.c)
-SOURCES_ALL = $(MAC_C_FILES) $(SHARED_C_FILES)
+# Note: Wildcard doesn't pick up DNR.c if it starts with uppercase 'D' on case-sensitive systems.
+# Explicitly add files if wildcard might miss them or if order matters significantly.
+# For simplicity, assuming wildcard works for now. If DNR.o is missing later, add it explicitly.
+# MAC_C_FILES = $(MAC_DIR)/dialog.c $(MAC_DIR)/discovery.c $(MAC_DIR)/DNR.c $(MAC_DIR)/logging.c $(MAC_DIR)/main.c $(MAC_DIR)/network.c $(MAC_DIR)/peer_mac.c
+# SHARED_C_FILES = $(SHARED_DIR)/peer_shared.c $(SHARED_DIR)/protocol.c
 
 # --- Object Files ---
 
-# *** UPDATED: Generate object file names based on MAC_C_FILES ***
 MAC_OBJS = $(patsubst $(MAC_DIR)/%.c, $(OBJ_DIR)/%.o, $(MAC_C_FILES))
 SHARED_OBJS = $(patsubst $(SHARED_DIR)/%.c, $(OBJ_DIR)/shared_%.o, $(SHARED_C_FILES))
 OBJS = $(MAC_OBJS) $(SHARED_OBJS)
@@ -111,39 +105,40 @@ FINAL_TARGETS = $(TARGET_MAC_APPL) $(TARGET_MAC_BIN) $(TARGET_MAC_DSK)
 all: $(FINAL_TARGETS)
 
 # Rule to create the final outputs using Rez
-# Depends on the intermediate code binary, the TEXTUAL resource definition file (.r),
-# and ensures the build directory exists.
 $(FINAL_TARGETS): $(INTERMEDIATE_TARGET) $(R_FILE_MAC) Makefile.classicmac | $(BUILD_DIR)
+	@echo "--- Rez Stage ---"
 	@echo "Using RIncludes from: $(RINCLUDES)"
 	@echo "Using CIncludes from: $(CINCLUDES)"
-	@echo "Using Universal CIncludes from: $(UNIVERSAL_CINCLUDES)" # ADDED Echo
-	@echo "Running Rez to create final targets in $(BUILD_DIR)..."
-	# Combine intermediate code, compiled .r resources, and standard APPL template
+	@echo "Using Universal CIncludes from: $(UNIVERSAL_CINCLUDES)"
+	@echo "Running Rez..."
 	$(REZ) $(REZFLAGS) \
 		--copy "$(INTERMEDIATE_TARGET)" \
 		"$(RINCLUDES)/Retro68APPL.r" \
-		$(R_FILE_MAC) \
+		"$(R_FILE_MAC)" \
 		-t "APPL" -c "CSND" \
-		-o "$(TARGET_MAC_BIN)" --cc "$(TARGET_MAC_APPL)" --cc "$(TARGET_MAC_DSK)" # Quote output paths
+		-o "$(TARGET_MAC_BIN)" --cc "$(TARGET_MAC_APPL)" --cc "$(TARGET_MAC_DSK)"
 	@echo "Classic Mac build complete. Outputs in $(BUILD_DIR)"
 
 # Rule to link the intermediate code binary from object files
-# Depends on all object files and ensures the object directory exists.
 $(INTERMEDIATE_TARGET): $(OBJS) Makefile.classicmac | $(OBJ_DIR)
-	@echo "Linking intermediate target: $@"
-	# Use CXX_MAC (g++) for linking. Even without RetroConsole, other C++ std libs might be needed implicitly.
-	# If linking fails, try switching to CC_MAC. If it succeeds, keep CXX_MAC.
+	@echo "--- Link Stage ---"
+	@echo "Linking objects: $(OBJS)"
+	@echo "Output: $@"
+	# Use CXX_MAC (g++) for linking. It handles C++ runtime bits if needed.
 	$(CXX_MAC) $(OBJS) -o $@ $(LDFLAGS_MAC)
 
 # Rule to compile Classic Mac C source files into object files in OBJ_DIR
-# Depends on the source file and ensures the object directory exists.
 $(OBJ_DIR)/%.o: $(MAC_DIR)/%.c Makefile.classicmac | $(OBJ_DIR)
-	@echo "Compiling $< -> $@"
+	@echo "--- Compile Stage ---"
+	@echo "Compiling Mac $< -> $@"
+	# Ensure the variable is expanded correctly
 	$(CC_MAC) $(CFLAGS_MAC) -c $< -o $@
 
 # Rule to compile shared C source files into object files in OBJ_DIR
 $(OBJ_DIR)/shared_%.o: $(SHARED_DIR)/%.c Makefile.classicmac | $(OBJ_DIR)
-	@echo "Compiling $< -> $@"
+	@echo "--- Compile Stage ---"
+	@echo "Compiling Shared $< -> $@"
+	# Ensure the variable is expanded correctly
 	$(CC_MAC) $(CFLAGS_MAC) -c $< -o $@
 
 # Rule to create the build and object directories if they don't exist

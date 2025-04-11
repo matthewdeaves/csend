@@ -5,8 +5,8 @@
 // 1. The definition of the `app_state_t` structure (specifically the `running` member).
 // 2. The declaration of the global pointer `g_state` (`extern app_state_t *g_state;`).
 #include "peer.h"
-// Include utils.h for the `log_message` function to print a message when a signal is caught.
-#include "utils.h"
+// Include logging.h for the `log_message` function to print a message when a signal is caught.
+#include "logging.h"
 
 /**
  * @brief Signal handler function registered to catch termination signals (SIGINT, SIGTERM).

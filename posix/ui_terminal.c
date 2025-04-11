@@ -13,7 +13,7 @@
 
 // Include necessary headers from other modules.
 #include "network.h"     // Needed for send_message() to send messages over TCP.
-#include "utils.h"       // Needed for log_message() for displaying status/error messages.
+#include "logging.h"       // Needed for log_message() for displaying status/error messages.
 #include "../shared/protocol.h"   // Needed for message type constants like MSG_TEXT and MSG_QUIT.
 #include "messaging.h"   // Needed for send_message()
 

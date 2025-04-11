@@ -1,5 +1,6 @@
+// FILE: ./posix/logging.c
 // Include the header file for this module, which declares the log_message function.
-#include "utils.h"
+#include "logging.h" // Changed from "logging.h"
 
 // --- Standard Library Includes ---
 // Provides standard input/output functions, specifically:

@@ -18,9 +18,11 @@
 #include <stdlib.h>    // For exit()
 
 // --- Project Includes ---
-#include "logging.h"   // Logging functions (InitLogFile, CloseLogFile, LogToDialog)
-#include "network.h"   // Networking functions (InitializeNetworking, CleanupNetworking, InitUDPDiscovery, CheckSendBroadcast)
+#include "logging.h"   // Logging functions (InitLogFile, CloseLogFile, log_message)
+#include "network.h"   // Networking functions (InitializeNetworking, CleanupNetworking)
+#include "discovery.h" // UDP Discovery functions (InitUDPBroadcastEndpoint, CheckSendBroadcast)
 #include "dialog.h"    // Dialog functions (InitDialog, CleanupDialog, HandleDialogClick, etc.)
+#include "peer_mac.h"
 
 // --- Global Variables ---
 Boolean gDone = false; // Controls the main event loop termination
@@ -38,56 +40,57 @@ int main(void) {
 
     // 1. Initialize Logging FIRST
     InitLogFile();
-    LogToDialog("Starting application...");
+    log_message("Starting application...");
 
     // 2. Basic Mac OS Initialization
     MaxApplZone();
-    LogToDialog("MaxApplZone called.");
+    log_message("MaxApplZone called.");
     InitializeToolbox();
-    LogToDialog("Toolbox Initialized.");
+    log_message("Toolbox Initialized.");
 
     // 3. Initialize Networking (TCP Driver, IP, DNR)
     networkErr = InitializeNetworking();
     if (networkErr != noErr) {
-        LogToDialog("Fatal: Network initialization failed (Error: %d). Exiting.", networkErr);
+        log_message("Fatal: Network initialization failed (Error: %d). Exiting.", networkErr);
         CloseLogFile(); // Close log file before exiting
         ExitToShell();
         return 1; // Indicate failure
     }
+    // At this point, gMacTCPRefNum should be valid if InitializeNetworking succeeded
 
-    // *** TEMPORARILY COMMENT OUT UDP INIT ***
-    /*
-    networkErr = InitUDPDiscovery();
+    // 4. Initialize UDP Broadcast Endpoint (using the ref num from network init)
+    networkErr = InitUDPBroadcastEndpoint(gMacTCPRefNum);
     if (networkErr != noErr) {
-        LogToDialog("Fatal: UDP Discovery initialization failed (Error: %d). Exiting.", networkErr);
-        // CleanupNetworking(); // Clean up TCP/DNR part
-        // CloseLogFile();      // Close log file
-        ExitToShell(); // Call ExitToShell directly
+        log_message("Fatal: UDP Broadcast initialization failed (Error: %d). Exiting.", networkErr);
+        CleanupNetworking(); // Clean up TCP/DNR part (will also attempt UDP cleanup)
+        CloseLogFile();      // Close log file
+        ExitToShell();
         return 1; // Indicate failure
     }
-    */
-    LogToDialog("Skipping UDP Discovery initialization for testing.");
-    // *** END TEMPORARY CHANGE ***
 
+    // Initialize the peer list AFTER network is up
+    InitPeerList();
+    log_message("Peer list initialized.");
 
-    // 4. Initialize the Main Dialog Window and its controls
+    // 5. Initialize the Main Dialog Window and its controls
     dialogOk = InitDialog();
     if (!dialogOk) {
-        LogToDialog("Fatal: Dialog initialization failed. Exiting.");
-        CleanupNetworking(); // Clean up network resources (TCP/DNR only now)
+        log_message("Fatal: Dialog initialization failed. Exiting.");
+        CleanupNetworking(); // Clean up network resources (TCP/DNR and UDP)
         CloseLogFile();
         ExitToShell();
         return 1;
     }
+    // Now gMyUsername should be set (default or loaded)
 
-    // 5. Enter the Main Event Loop
-    LogToDialog("Entering main event loop...");
+    // 6. Enter the Main Event Loop
+    log_message("Entering main event loop...");
     MainEventLoop();
-    LogToDialog("Exited main event loop.");
+    log_message("Exited main event loop.");
 
-    // 6. Cleanup Resources
+    // 7. Cleanup Resources
     CleanupDialog();
-    CleanupNetworking(); // Cleans up TCP/DNR (and UDP if it were initialized)
+    CleanupNetworking(); // Cleans up TCP/DNR and UDP
     CloseLogFile();
 
     return 0;
@@ -140,13 +143,16 @@ void MainEventLoop(void) {
             }
         } else {
             // --- Idle Time ---
-            // CheckSendBroadcast(); // Don't call this if UDP isn't initialized
+            // Pass necessary info to CheckSendBroadcast
+            CheckSendBroadcast(gMacTCPRefNum, gMyUsername, gMyLocalIPStr);
+            PruneTimedOutPeers();
         }
     } // end while(!gDone)
 }
 
 /**
  * @brief Handles non-dialog events (mouse clicks, window updates, activation).
+ * (No changes needed in this function)
  */
 void HandleEvent(EventRecord *event) {
     short     windowPart;
@@ -157,7 +163,7 @@ void HandleEvent(EventRecord *event) {
             windowPart = FindWindow(event->where, &whichWindow);
             switch (windowPart) {
                 case inMenuBar:
-                    LogToDialog("Menu bar clicked (not implemented).");
+                    // log_message("Menu bar clicked (not implemented)."); // Less noisy
                     break;
                 case inSysWindow:
                     SystemClick(event, whichWindow);
@@ -170,7 +176,7 @@ void HandleEvent(EventRecord *event) {
                 case inGoAway:
                     if (whichWindow == (WindowPtr)gMainWindow) {
                         if (TrackGoAway(whichWindow, event->where)) {
-                            LogToDialog("Close box clicked. Setting gDone = true.");
+                            log_message("Close box clicked. Setting gDone = true.");
                             gDone = true;
                         }
                     }

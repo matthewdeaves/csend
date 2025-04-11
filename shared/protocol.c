@@ -5,7 +5,7 @@
 
 // Include the utils header for the log_message() function, used for logging
 // warnings and errors within the protocol formatting and parsing logic.
-#include "utils.h"
+#include "logging.h"
 
 // Standard C library for input/output functions, specifically snprintf for safe string formatting.
 #include <stdio.h>

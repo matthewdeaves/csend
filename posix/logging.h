@@ -1,16 +1,17 @@
+// FILE: ./posix/logging.h
 // Include guard: Prevents the header file from being included multiple times
 // within a single compilation unit (.c file). This avoids errors caused by
 // redefining functions or types if the header were included via multiple paths.
-#ifndef UTILS_H // If the symbol UTILS_H is not defined...
-#define UTILS_H // ...then define UTILS_H.
+#ifndef LOGGING_H // If the symbol LOGGING_H is not defined...
+#define LOGGING_H // ...then define LOGGING_H.
 
 // --- Includes ---
 // No standard library headers (like <stdio.h>, <stdarg.h>, <time.h>) are included here.
 // This header file only needs to declare the *signature* of the log_message function.
-// The actual *implementation* in utils.c includes the necessary headers to define
+// The actual *implementation* in logging.c includes the necessary headers to define
 // the function's body (using printf, va_list, time functions, etc.).
 // Keeping includes out of header files where possible reduces compilation dependencies
-// and build times, as files including utils.h won't unnecessarily pull in stdio.h, etc.
+// and build times, as files including logging.h won't unnecessarily pull in stdio.h, etc.
 
 // --- Function Declaration ---
 
@@ -35,8 +36,8 @@
  *               used in the `format` string. These arguments will be formatted and inserted
  *               into the output string where the specifiers appear.
  *
- * @note The implementation resides in `utils.c`.
+ * @note The implementation resides in `logging.c`.
  */
 void log_message(const char *format, ...);
 
-#endif // End of the include guard UTILS_H
+#endif // End of the include guard LOGGING_H

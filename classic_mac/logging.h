@@ -34,6 +34,6 @@ void CloseLogFile(void);
  * @param format A printf-style format string.
  * @param ... Variable arguments corresponding to the format string.
  */
-void LogToDialog(const char *format, ...);
+void log_message(const char *format, ...);
 
 #endif // LOGGING_H

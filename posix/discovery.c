@@ -3,7 +3,7 @@
 #include "discovery.h"
 
 // Include utility functions, specifically for logging messages.
-#include "utils.h"
+#include "logging.h"
 // Include protocol functions for formatting and parsing discovery messages.
 #include "../shared/protocol.h"
 // Include network utility functions like getting the local IP and setting socket timeouts.
