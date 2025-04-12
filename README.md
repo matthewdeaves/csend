@@ -8,6 +8,8 @@ The Classic Mac version is under development. It initializes networking (MacTCP 
 
 Detailed information on the versions of the project can be found [here](TAGS.md). I'm building this out in a way to help others learn and follow along with tags to document the major stages of development from simple client/server apps through to a combined and then shared set C source for different platforms.
 
+You can watch a [demo video on YouTube](https://www.youtube.com/watch?v=_9iXCBZ_FjE).
+
 ## Project Structure
 
 *   `posix/`: Source code specific to the POSIX (Linux, macOS) version.
