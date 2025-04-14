@@ -1,35 +1,38 @@
 // FILE: ./classic_mac/discovery.c
 #include "discovery.h"
 #include "logging.h"   // For log_message
-#include "protocol.h"  // For format_message, MSG_DISCOVERY
+#include "protocol.h"  // For format_message, parse_message, MSG_DISCOVERY, MSG_DISCOVERY_RESPONSE
+#include "peer_mac.h"  // For AddOrUpdatePeer
+#include "network.h"   // For AddrToStr
 
 #include <Devices.h>   // For PBControlSync, TickCount, CntrlParam, ParmBlkPtr
-#include <Errors.h>    // Include for error codes like memFullErr, invalidStreamPtr etc.
-#include <string.h>    // For memset, strlen
+#include <Errors.h>    // Include for error codes (memFullErr, invalidStreamPtr, reqAborted, commandTimeout)
+#include <string.h>    // For memset, strlen, strcmp, strncpy
+#include <stdio.h>     // For sprintf (used in fallback AddrToStr), fprintf, fputc, fflush
 #include <stdlib.h>    // For NULL
 #include <Memory.h>    // For NewPtrClear, DisposePtr
 
 // --- Global Variable Definitions ---
-StreamPtr gUDPStream = NULL; // Pointer to our UDP stream for broadcasting (initialize to NULL)
+StreamPtr gUDPStream = NULL; // Pointer to our UDP stream for discovery (initialize to NULL)
 Ptr     gUDPRecvBuffer = NULL; // Pointer to the buffer allocated for UDPCreate (initialize to NULL)
 unsigned long gLastBroadcastTimeTicks = 0; // Time in Ticks
 
 /**
- * @brief Initializes the UDP endpoint for discovery broadcasts using PBControl.
+ * @brief Initializes the UDP endpoint for discovery broadcasts and receives using PBControl.
  */
-OSErr InitUDPBroadcastEndpoint(short macTCPRefNum) {
+OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum) {
     OSErr err;
     UDPiopb pb; // Use the specific UDP parameter block structure
-    const unsigned short specificPort = 0; // Request dynamic port assignment
+    const unsigned short specificPort = PORT_UDP; // Listen on the standard discovery port
 
-    log_message("Initializing UDP Broadcast Endpoint...");
+    log_message("Initializing UDP Discovery Endpoint...");
 
     if (macTCPRefNum == 0) {
          log_message("Error (InitUDP): Invalid MacTCP RefNum: %d", macTCPRefNum);
          return paramErr; // Or another appropriate error
     }
 
-    // Allocate buffer needed by UDPCreate, even if we don't plan to receive
+    // Allocate buffer needed by UDPCreate for receiving data
     gUDPRecvBuffer = NewPtrClear(kMinUDPBufSize);
     if (gUDPRecvBuffer == NULL) {
         log_message("Error (InitUDP): Failed to allocate UDP receive buffer (memFullErr).");
@@ -48,7 +51,7 @@ OSErr InitUDPBroadcastEndpoint(short macTCPRefNum) {
     pb.csParam.create.rcvBuff = gUDPRecvBuffer; // Pointer to allocated buffer
     pb.csParam.create.rcvBuffLen = kMinUDPBufSize; // Size of the buffer
     pb.csParam.create.notifyProc = nil;         // No notification routine needed
-    pb.csParam.create.localPort = specificPort;  // Request dynamic port (0)
+    pb.csParam.create.localPort = specificPort;  // Listen on the specific discovery port
 
     log_message("Calling PBControlSync (udpCreate) for port %u...", specificPort);
     err = PBControlSync((ParmBlkPtr)&pb); // Cast UDPiopb to generic ParmBlkPtr
@@ -121,7 +124,6 @@ OSErr SendDiscoveryBroadcast(short macTCPRefNum, const char *myUsername, const c
     pb.csParam.send.checkSum = true;             // Calculate and send checksum
 
     // Call PBControlSync
-    // log_message("Sending broadcast: %s", buffer); // Debug log
     err = PBControlSync((ParmBlkPtr)&pb); // Cast UDPiopb to generic ParmBlkPtr
 
     if (err != noErr) {
@@ -129,7 +131,6 @@ OSErr SendDiscoveryBroadcast(short macTCPRefNum, const char *myUsername, const c
         return err;
     }
 
-    // log_message("Discovery broadcast sent."); // Optional success log
     gLastBroadcastTimeTicks = TickCount(); // Update last broadcast time
     return noErr;
 }
@@ -152,19 +153,138 @@ void CheckSendBroadcast(short macTCPRefNum, const char *myUsername, const char *
 
     // Send immediately if never sent before, or if interval has passed
     if (gLastBroadcastTimeTicks == 0 || (currentTimeTicks - gLastBroadcastTimeTicks) >= intervalTicks) {
-        // log_message("CheckSendBroadcast: Time to send."); // Debug log
         SendDiscoveryBroadcast(macTCPRefNum, myUsername, myLocalIPStr); // Ignore return value for simple periodic broadcast
     }
 }
 
 /**
- * @brief Cleans up the UDP broadcast endpoint resources.
+ * @brief Checks for and processes incoming UDP packets (e.g., discovery responses).
+ *        Uses PBControlSync with a short timeout for non-blocking checks.
  */
-void CleanupUDPBroadcastEndpoint(short macTCPRefNum) {
+void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP) {
+    OSErr   err;
+    UDPiopb pb;
+    char    senderIPStrFromHeader[INET_ADDRSTRLEN]; // Renamed: IP from UDP header
+    char    senderIPStrFromPayload[INET_ADDRSTRLEN]; // New: Buffer for parse_message output
+    char    senderUsername[32];
+    char    msgType[32];
+    char    content[BUFFER_SIZE];
+
+    // Check if UDP is initialized
+    if (gUDPStream == NULL || macTCPRefNum == 0 || gUDPRecvBuffer == NULL) {
+        return; // Cannot receive if not initialized
+    }
+
+    // --- Prepare UDPiopb for UDPRead ---
+    memset(&pb, 0, sizeof(UDPiopb));
+    pb.ioCompletion = nil;
+    pb.ioCRefNum = macTCPRefNum;
+    pb.csCode = udpRead;             // Correct code (21)
+    pb.udpStream = gUDPStream;
+
+    // These are treated as OUTPUT by UDPRead (csCode 21)
+    pb.csParam.receive.rcvBuff = gUDPRecvBuffer;
+    pb.csParam.receive.rcvBuffLen = kMinUDPBufSize;
+    pb.csParam.receive.timeOut = 1; // Short timeout for non-blocking check
+    pb.csParam.receive.secondTimeStamp = 0;
+    pb.csParam.receive.remoteHost = 0;
+    pb.csParam.receive.remotePort = 0;
+
+    // --- Call PBControlSync to attempt reading ---
+    err = PBControlSync((ParmBlkPtr)&pb);
+
+    // --- Handle Results ---
+    if (err == noErr) {
+        // --- Packet Received ---
+        ip_addr senderIP = pb.csParam.receive.remoteHost;
+        unsigned short bytesReceived = pb.csParam.receive.rcvBuffLen;
+
+        // Ignore messages from self
+        if (senderIP == myLocalIP) {
+            return;
+        }
+
+        // Ensure received data is null-terminated for string processing
+        // This is crucial before calling parse_message or logging raw data
+        if (bytesReceived < kMinUDPBufSize) {
+            gUDPRecvBuffer[bytesReceived] = '\0';
+        } else {
+            gUDPRecvBuffer[kMinUDPBufSize - 1] = '\0'; // Null-terminate truncated data
+            log_message("Warning: Received UDP packet possibly truncated (%u bytes).", bytesReceived);
+        }
+
+        // Convert sender IP (from header) to string using DNR
+        err = AddrToStr(senderIP, senderIPStrFromHeader); // Use renamed buffer
+        if (err != noErr) {
+            log_message("Warning: AddrToStr failed for sender IP %lu (Error: %d). Using raw IP.", senderIP, err);
+            sprintf(senderIPStrFromHeader, "%lu.%lu.%lu.%lu",
+                    (senderIP >> 24) & 0xFF, (senderIP >> 16) & 0xFF,
+                    (senderIP >> 8) & 0xFF, senderIP & 0xFF);
+        }
+
+        // Parse the message content
+        // Pass the NEW buffer for the payload IP output
+        if (parse_message(gUDPRecvBuffer, senderIPStrFromPayload, senderUsername, msgType, content) == 0) {
+            // Check if it's a discovery response
+            if (strcmp(msgType, MSG_DISCOVERY_RESPONSE) == 0) {
+                // Use the reliable IP from the header for adding/updating peer
+                log_message("Received DISCOVERY_RESPONSE from %s@%s", senderUsername, senderIPStrFromHeader);
+                int addResult = AddOrUpdatePeer(senderIPStrFromHeader, senderUsername);
+                if (addResult < 0) {
+                     log_message("Peer list full, could not add %s@%s", senderUsername, senderIPStrFromHeader);
+                }
+            }
+            // Handle incoming MSG_DISCOVERY requests if needed
+            else if (strcmp(msgType, MSG_DISCOVERY) == 0) {
+                 log_message("Received DISCOVERY from %s@%s", senderUsername, senderIPStrFromHeader);
+                 // TODO: Implement sending a DISCOVERY_RESPONSE back to the sender
+                 // Need a SendUDPResponse function targeting pb.csParam.receive.remoteHost/Port
+            }
+            // else { log_message("Received UDP Msg Type: %s from %s", msgType, senderIPStrFromHeader); }
+
+        } else {
+            // ---> SAFER LOGGING FOR PARSE FAILURE (MODIFIED) <---
+            // Log the failure safely to GUI/main log
+            log_message("Parse error for UDP msg from %s (%u bytes).",
+                        senderIPStrFromHeader, bytesReceived);
+
+            // Log the raw buffer *only* to the file for debugging, printing hex
+            if (gLogFile != NULL) {
+                fprintf(gLogFile, "    Raw Data (%u bytes): [", bytesReceived);
+                // Print hex representation for safety, limit loop to buffer size
+                for (unsigned short i = 0; i < bytesReceived && i < kMinUDPBufSize; ++i) {
+                     // Print printable chars directly, others as hex
+                     unsigned char c = (unsigned char)gUDPRecvBuffer[i];
+                     if (c >= 32 && c <= 126) { // Standard printable ASCII range
+                         fputc(c, gLogFile);
+                     } else {
+                         fprintf(gLogFile, "\\x%02X", c); // Print non-printable as hex
+                     }
+                }
+                fprintf(gLogFile, "]\n");
+                fflush(gLogFile); // Ensure it's written to disk
+            }
+            // ---> END SAFER LOGGING <---
+        }
+
+    } else if (err == commandTimeout || err == -23018 /* unofficial readTimeout? */) {
+        // Timeout occurred - this is normal, no packet waiting
+        // No action needed, don't log this common case.
+    } else {
+        // Some other unexpected error occurred during read attempt
+        log_message("Error (UDP Receive): PBControlSync(udpRead) failed. Error: %d", err);
+    }
+}
+
+
+/**
+ * @brief Cleans up the UDP discovery endpoint resources.
+ */
+void CleanupUDPDiscoveryEndpoint(short macTCPRefNum) {
     UDPiopb pb; // Use the specific UDP parameter block structure
     OSErr err;
 
-    log_message("Cleaning up UDP Broadcast Endpoint...");
+    log_message("Cleaning up UDP Discovery Endpoint...");
 
     // --- Release UDP Endpoint ---
     if (gUDPStream != NULL) {
@@ -172,37 +292,34 @@ void CleanupUDPBroadcastEndpoint(short macTCPRefNum) {
              log_message("Warning (CleanupUDP): Invalid MacTCP RefNum (%d), cannot release UDP stream.", macTCPRefNum);
         } else {
             log_message("Attempting PBControlSync (udpRelease) for endpoint 0x%lX...", (unsigned long)gUDPStream);
-            memset(&pb, 0, sizeof(UDPiopb)); // Zero out the parameter block
-            pb.ioCompletion = nil;           // No completion routine for sync call
-            pb.ioCRefNum = macTCPRefNum;     // Use passed-in Driver reference number
-            pb.csCode = udpRelease;          // Command code for releasing UDP stream
-            pb.udpStream = gUDPStream;       // Input: The stream to release
+            memset(&pb, 0, sizeof(UDPiopb));
+            pb.ioCompletion = nil;
+            pb.ioCRefNum = macTCPRefNum;
+            pb.csCode = udpRelease;
+            pb.udpStream = gUDPStream;
 
             // Set the parameters required by UDPRelease
-            pb.csParam.create.rcvBuff = gUDPRecvBuffer; // Pass back original buffer pointer
-            pb.csParam.create.rcvBuffLen = kMinUDPBufSize; // Pass back original buffer size
+            pb.csParam.create.rcvBuff = gUDPRecvBuffer;
+            pb.csParam.create.rcvBuffLen = kMinUDPBufSize;
 
-            err = PBControlSync((ParmBlkPtr)&pb); // Cast UDPiopb to generic ParmBlkPtr
+            err = PBControlSync((ParmBlkPtr)&pb);
             if (err != noErr) {
                 log_message("Warning (CleanupUDP): PBControlSync(udpRelease) failed. Error: %d", err);
-                // Continue cleanup even if release fails
             } else {
                 log_message("PBControlSync(udpRelease) succeeded.");
             }
         }
-        gUDPStream = NULL; // Mark as released (or intended to be released)
+        gUDPStream = NULL; // Mark as released
     } else {
         log_message("UDP Endpoint was not open, skipping release.");
     }
 
     // --- Dispose UDP Receive Buffer ---
-    // Always try to dispose the buffer if the pointer is not NULL,
-    // as the memory was allocated separately.
     if (gUDPRecvBuffer != NULL) {
          log_message("Disposing UDP receive buffer at 0x%lX.", (unsigned long)gUDPRecvBuffer);
          DisposePtr(gUDPRecvBuffer);
          gUDPRecvBuffer = NULL;
     }
 
-    log_message("UDP Broadcast Endpoint cleanup finished.");
+    log_message("UDP Discovery Endpoint cleanup finished.");
 }

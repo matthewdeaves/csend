@@ -5,7 +5,8 @@
 #include <MacTypes.h>
 #include <MacTCP.h> // For StreamPtr, UDPiopb, wdsEntry etc.
 
-#include "common_defs.h" // For PORT_UDP, DISCOVERY_INTERVAL, BUFFER_SIZE
+#include "common_defs.h" // For PORT_UDP, DISCOVERY_INTERVAL, BUFFER_SIZE, INET_ADDRSTRLEN
+#include "peer_mac.h"    // For AddOrUpdatePeer
 
 // --- Constants ---
 #define BROADCAST_IP 0xFFFFFFFFUL // Standard broadcast address (255.255.255.255)
@@ -16,23 +17,25 @@
 // but defining them here makes discovery.c self-contained regarding its specific needs.
 // Consider creating a central MacTCP constants header if more modules use them.
 #define udpCreate       20
+#define udpRead         21
+#define udpBfrReturn    22
 #define udpWrite        23
 #define udpRelease      24
 
 // --- Global Variables (External Declarations) ---
 // These are defined in discovery.c but needed by other modules (like main.c)
-extern StreamPtr gUDPStream; // Pointer to our UDP stream for broadcasting
+extern StreamPtr gUDPStream; // Pointer to our UDP stream for discovery
 extern Ptr     gUDPRecvBuffer; // Pointer to the buffer allocated for UDPCreate
 extern unsigned long gLastBroadcastTimeTicks; // Time of last broadcast in Ticks
 
 // --- Function Prototypes ---
 
 /**
- * @brief Initializes the UDP endpoint for discovery broadcasts using PBControl.
+ * @brief Initializes the UDP endpoint for discovery broadcasts and receives using PBControl.
  * @param macTCPRefNum The driver reference number obtained from PBOpen.
  * @return OSErr noErr on success, or an error code on failure.
  */
-OSErr InitUDPBroadcastEndpoint(short macTCPRefNum);
+OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum); // Renamed for clarity
 
 /**
  * @brief Sends a UDP discovery broadcast message using PBControl.
@@ -52,10 +55,18 @@ OSErr SendDiscoveryBroadcast(short macTCPRefNum, const char *myUsername, const c
 void CheckSendBroadcast(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr);
 
 /**
- * @brief Cleans up the UDP broadcast endpoint resources.
+ * @brief Checks for and processes incoming UDP packets (e.g., discovery responses).
+ *        Uses PBControlSync with a short timeout for non-blocking checks.
+ * @param macTCPRefNum The driver reference number.
+ * @param myLocalIP The local IP address (numeric) to ignore self-messages.
+ */
+void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP); // Added function prototype
+
+/**
+ * @brief Cleans up the UDP discovery endpoint resources.
  * @param macTCPRefNum The driver reference number.
  */
-void CleanupUDPBroadcastEndpoint(short macTCPRefNum);
+void CleanupUDPDiscoveryEndpoint(short macTCPRefNum); // Renamed for clarity
 
 
 #endif // DISCOVERY_H

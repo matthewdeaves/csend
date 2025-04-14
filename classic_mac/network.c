@@ -1,7 +1,7 @@
 // FILE: ./classic_mac/network.c
 #include "network.h"
 #include "logging.h"   // For log_message
-#include "discovery.h" // Include discovery.h to call CleanupUDPBroadcastEndpoint
+#include "discovery.h" // Include discovery.h to call CleanupUDPDiscoveryEndpoint // <-- Updated comment
 
 #include <Devices.h>   // For PBControlSync, PBOpenSync, CntrlParam, ParmBlkPtr
 #include <Errors.h>    // For error codes
@@ -99,7 +99,8 @@ void CleanupNetworking(void) {
 
     // --- Clean up UDP Endpoint FIRST ---
     // Call the dedicated cleanup function from discovery.c
-    CleanupUDPBroadcastEndpoint(gMacTCPRefNum);
+    // Use the RENAMED function here:
+    CleanupUDPDiscoveryEndpoint(gMacTCPRefNum);
 
     // --- Close DNR ---
     log_message("Attempting CloseResolver...");
