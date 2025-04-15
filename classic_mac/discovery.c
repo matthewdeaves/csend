@@ -56,6 +56,11 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum) {
     log_message("Calling PBControlSync (udpCreate) for port %u...", specificPort);
     err = PBControlSync((ParmBlkPtr)&pb); // Cast UDPiopb to generic ParmBlkPtr
 
+    log_message("DEBUG: udpCreate returned pb.udpStream=0x%lX, pb.csParam.create.rcvBuff=0x%lX",
+        (unsigned long)pb.udpStream,
+        (unsigned long)pb.csParam.create.rcvBuff);
+    gUDPStream = pb.udpStream; // Assign AFTER logging
+
     if (err != noErr) {
         log_message("Error (InitUDP): PBControlSync(udpCreate) failed. Error: %d", err);
         if (gUDPRecvBuffer != NULL) {
