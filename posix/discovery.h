@@ -1,3 +1,4 @@
+// FILE: ./posix/discovery.h
 // Include guard: Prevents the header file from being included multiple times
 // in the same compilation unit, which would cause redefinition errors.
 #ifndef DISCOVERY_H // If DISCOVERY_H is not defined...
@@ -64,7 +65,8 @@ int broadcast_discovery(app_state_t *state);
  *          information (username, IP) and updates the application's peer list via `add_peer`.
  *          If it's a `MSG_DISCOVERY`, it also sends a `MSG_DISCOVERY_RESPONSE` back to the sender.
  * @param state Pointer to the application state structure (for accessing peer list, username, UDP socket).
- * @param buffer A pointer to the character buffer containing the raw data received from the UDP socket.
+ * @param buffer A pointer to the constant character buffer containing the raw data received from the UDP socket.
+ * @param bytes_read The actual number of bytes received in the buffer. <-- Added parameter
  * @param sender_ip A character buffer (provided by the caller) where the function can optionally
  *                  store the parsed IP address string of the sender. Note: The implementation in
  *                  `discovery.c` primarily relies on the IP obtained from `inet_ntop` in the calling thread.
@@ -77,7 +79,7 @@ int broadcast_discovery(app_state_t *state);
  * @return -1 If the message could not be parsed, was not a relevant discovery message type,
  *            or if adding the peer failed (e.g., list full).
  */
-int handle_discovery_message(app_state_t *state, const char *buffer,
+int handle_discovery_message(app_state_t *state, const char *buffer, int bytes_read, // <-- Added bytes_read
                             char *sender_ip, socklen_t addr_len,
                             struct sockaddr_in *sender_addr);
 

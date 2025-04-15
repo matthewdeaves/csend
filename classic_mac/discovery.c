@@ -1,7 +1,7 @@
 // FILE: ./classic_mac/discovery.c
 #include "discovery.h"
 #include "logging.h"   // For log_message
-#include "protocol.h"  // For format_message, parse_message, MSG_DISCOVERY, MSG_DISCOVERY_RESPONSE
+#include "protocol.h"  // For format_message, parse_message, MSG_DISCOVERY, MSG_DISCOVERY_RESPONSE, MSG_MAGIC_NUMBER
 #include "peer_mac.h"  // For AddOrUpdatePeer
 #include "network.h"   // For AddrToStr
 
@@ -83,6 +83,7 @@ OSErr SendDiscoveryBroadcast(short macTCPRefNum, const char *myUsername, const c
     char buffer[BUFFER_SIZE];
     struct wdsEntry wds[2]; // Need 2 entries for the terminating zero entry
     UDPiopb pb; // Use the specific UDP parameter block structure
+    int formatted_len; // To store the length returned by format_message
 
     if (gUDPStream == NULL) {
         log_message("Error (SendUDP): Cannot send broadcast, UDP endpoint not initialized.");
@@ -97,15 +98,17 @@ OSErr SendDiscoveryBroadcast(short macTCPRefNum, const char *myUsername, const c
          return paramErr;
      }
 
-    // Format the message using the shared protocol function
-    err = format_message(buffer, BUFFER_SIZE, MSG_DISCOVERY, myUsername, myLocalIPStr, "");
-    if (err != 0) {
+    // Format the message using the shared protocol function (includes magic number)
+    formatted_len = format_message(buffer, BUFFER_SIZE, MSG_DISCOVERY, myUsername, myLocalIPStr, "");
+    if (formatted_len <= 0) { // format_message returns 0 on error, >0 on success
         log_message("Error (SendUDP): Failed to format discovery broadcast message.");
         return paramErr; // Or another suitable error code
     }
 
     // Prepare the Write Data Structure (WDS)
-    wds[0].length = strlen(buffer);
+    // The length for WDS is the actual data length, EXCLUDING the null terminator.
+    // format_message returns total bytes including null term, so subtract 1.
+    wds[0].length = formatted_len - 1;
     wds[0].ptr = buffer;
     wds[1].length = 0; // Terminating entry
     wds[1].ptr = nil;
@@ -169,6 +172,7 @@ void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP) {
     char    senderUsername[32];
     char    msgType[32];
     char    content[BUFFER_SIZE];
+    unsigned short bytesReceived; // Store actual bytes received
 
     // Check if UDP is initialized
     if (gUDPStream == NULL || macTCPRefNum == 0 || gUDPRecvBuffer == NULL) {
@@ -183,8 +187,9 @@ void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP) {
     pb.udpStream = gUDPStream;
 
     // These are treated as OUTPUT by UDPRead (csCode 21)
+    // MacTCP will write into gUDPRecvBuffer up to kMinUDPBufSize bytes
     pb.csParam.receive.rcvBuff = gUDPRecvBuffer;
-    pb.csParam.receive.rcvBuffLen = kMinUDPBufSize;
+    pb.csParam.receive.rcvBuffLen = kMinUDPBufSize; // Max length MacTCP can write
     pb.csParam.receive.timeOut = 1; // Short timeout for non-blocking check
     pb.csParam.receive.secondTimeStamp = 0;
     pb.csParam.receive.remoteHost = 0;
@@ -197,20 +202,12 @@ void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP) {
     if (err == noErr) {
         // --- Packet Received ---
         ip_addr senderIP = pb.csParam.receive.remoteHost;
-        unsigned short bytesReceived = pb.csParam.receive.rcvBuffLen;
+        // Get the ACTUAL number of bytes received from the output parameter
+        bytesReceived = pb.csParam.receive.rcvBuffLen;
 
         // Ignore messages from self
         if (senderIP == myLocalIP) {
             return;
-        }
-
-        // Ensure received data is null-terminated for string processing
-        // This is crucial before calling parse_message or logging raw data
-        if (bytesReceived < kMinUDPBufSize) {
-            gUDPRecvBuffer[bytesReceived] = '\0';
-        } else {
-            gUDPRecvBuffer[kMinUDPBufSize - 1] = '\0'; // Null-terminate truncated data
-            log_message("Warning: Received UDP packet possibly truncated (%u bytes).", bytesReceived);
         }
 
         // Convert sender IP (from header) to string using DNR
@@ -222,9 +219,9 @@ void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP) {
                     (senderIP >> 8) & 0xFF, senderIP & 0xFF);
         }
 
-        // Parse the message content
-        // Pass the NEW buffer for the payload IP output
-        if (parse_message(gUDPRecvBuffer, senderIPStrFromPayload, senderUsername, msgType, content) == 0) {
+        // Parse the message content, passing the actual received length
+        // parse_message now checks the magic number first
+        if (parse_message(gUDPRecvBuffer, bytesReceived, senderIPStrFromPayload, senderUsername, msgType, content) == 0) {
             // Check if it's a discovery response
             if (strcmp(msgType, MSG_DISCOVERY_RESPONSE) == 0) {
                 // Use the reliable IP from the header for adding/updating peer
@@ -239,13 +236,14 @@ void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP) {
                  log_message("Received DISCOVERY from %s@%s", senderUsername, senderIPStrFromHeader);
                  // TODO: Implement sending a DISCOVERY_RESPONSE back to the sender
                  // Need a SendUDPResponse function targeting pb.csParam.receive.remoteHost/Port
+                 // Example: SendUDPResponse(macTCPRefNum, pb.csParam.receive.remoteHost, pb.csParam.receive.remotePort, gMyUsername, gMyLocalIPStr);
             }
             // else { log_message("Received UDP Msg Type: %s from %s", msgType, senderIPStrFromHeader); }
 
         } else {
-            // ---> SAFER LOGGING FOR PARSE FAILURE (MODIFIED) <---
+            // Parse failed - could be invalid magic number or bad format after magic number
             // Log the failure safely to GUI/main log
-            log_message("Parse error for UDP msg from %s (%u bytes).",
+            log_message("Discarding invalid/unknown UDP msg from %s (%u bytes).",
                         senderIPStrFromHeader, bytesReceived);
 
             // Log the raw buffer *only* to the file for debugging, printing hex
@@ -253,23 +251,20 @@ void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP) {
                 fprintf(gLogFile, "    Raw Data (%u bytes): [", bytesReceived);
                 // Print hex representation for safety, limit loop to buffer size
                 for (unsigned short i = 0; i < bytesReceived && i < kMinUDPBufSize; ++i) {
-                     // Print printable chars directly, others as hex
                      unsigned char c = (unsigned char)gUDPRecvBuffer[i];
-                     if (c >= 32 && c <= 126) { // Standard printable ASCII range
+                     if (c >= 32 && c <= 126) {
                          fputc(c, gLogFile);
                      } else {
-                         fprintf(gLogFile, "\\x%02X", c); // Print non-printable as hex
+                         fprintf(gLogFile, "\\x%02X", c);
                      }
                 }
                 fprintf(gLogFile, "]\n");
-                fflush(gLogFile); // Ensure it's written to disk
+                fflush(gLogFile);
             }
-            // ---> END SAFER LOGGING <---
         }
 
     } else if (err == commandTimeout || err == -23018 /* unofficial readTimeout? */) {
         // Timeout occurred - this is normal, no packet waiting
-        // No action needed, don't log this common case.
     } else {
         // Some other unexpected error occurred during read attempt
         log_message("Error (UDP Receive): PBControlSync(udpRead) failed. Error: %d", err);
