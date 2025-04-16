@@ -2,8 +2,8 @@
 #ifndef DISCOVERY_H
 #define DISCOVERY_H
 
-#include <MacTypes.h>
 #include <MacTCP.h> // For StreamPtr, UDPiopb, wdsEntry etc.
+#include <MacTypes.h>
 
 #include "common_defs.h" // For PORT_UDP, DISCOVERY_INTERVAL, BUFFER_SIZE, INET_ADDRSTRLEN
 #include "peer_mac.h"    // For AddOrUpdatePeer

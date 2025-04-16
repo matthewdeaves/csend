@@ -55,7 +55,8 @@ endif
 
 # Compiler flags
 # Ensure paths are quoted. The -I flags themselves handle spaces if the shell passes them correctly.
-CFLAGS_MAC = -g -w -ffunction-sections -D__MACOS__ -Iclassic_mac -Ishared -I"$(CINCLUDES)" -I"$(UNIVERSAL_CINCLUDES)"
+# VERSION 3: Added -fpack-struct
+CFLAGS_MAC = -g -Wall -fpack-struct -ffunction-sections -D__MACOS__ -Iclassic_mac -Ishared -I"$(CINCLUDES)" -I"$(UNIVERSAL_CINCLUDES)"
 
 # Linker flags (passed via the compiler driver using -Wl,)
 LDFLAGS_MAC = -Wl,-gc-sections -Wl,--mac-strip-macsbug

@@ -2,8 +2,9 @@
 #ifndef NETWORK_H
 #define NETWORK_H
 
+#include <MacTCP.h>
 #include <MacTypes.h>
-#include <MacTCP.h>          // Include this first. It defines the necessary types.
+
 
 #define __MACTCPCOMMONTYPES__ // Prevent AddressXlation.h from including conflicting types
 #include <AddressXlation.h>  // Needs types defined in MacTCP.h
