@@ -73,17 +73,19 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum) {
     }
 
     // --- Retrieve the output StreamPtr from the correct field ---
-    // This is where the core problem likely lies if the log shows the wrong value here.
     gUDPStream = pb.udpStream;
 
-    // Check if the returned stream pointer seems invalid (e.g., NULL or matches buffer)
-    if (gUDPStream == NULL || gUDPStream == (StreamPtr)gUDPRecvBuffer) {
-         log_message("CRITICAL WARNING (InitUDP): udpCreate returned potentially invalid StreamPtr (0x%lX). UDP may fail.", (unsigned long)gUDPStream);
-         // Consider returning an error here? Or proceed cautiously?
-         // For now, let's proceed but the warning is important.
-         // return internalErr; // Example of returning an error
+    // Check if the returned stream pointer is NULL, even though noErr was returned.
+    // This *shouldn't* happen, but it's a safety check.
+    if (gUDPStream == NULL) {
+         log_message("CRITICAL WARNING (InitUDP): udpCreate returned noErr but StreamPtr is NULL. UDP may fail.");
+         // Clean up buffer as the stream is unusable
+         if (gUDPRecvBuffer != NULL) {
+             DisposePtr(gUDPRecvBuffer);
+             gUDPRecvBuffer = NULL;
+         }
+         return ioErr; // Indicate an internal inconsistency (general I/O error)
     }
-
 
     // Retrieve the *actual* port assigned by MacTCP from the localPort field
     unsigned short assignedPort = pb.csParam.create.localPort;
@@ -102,9 +104,9 @@ OSErr SendDiscoveryBroadcast(short macTCPRefNum, const char *myUsername, const c
     UDPiopb pb; // Use the specific UDP parameter block structure
     int formatted_len; // To store the length returned by format_message
 
-    // Check for the invalid stream pointer *before* attempting to use it
-    if (gUDPStream == NULL || gUDPStream == (StreamPtr)gUDPRecvBuffer) {
-        log_message("Error (SendUDP): Cannot send broadcast, UDP stream pointer is invalid (0x%lX).", (unsigned long)gUDPStream);
+    // Check if the stream pointer is NULL before attempting to use it
+    if (gUDPStream == NULL) {
+        log_message("Error (SendUDP): Cannot send broadcast, UDP stream pointer is NULL.");
         return invalidStreamPtr; // Or another appropriate error
     }
      if (macTCPRefNum == 0) {
@@ -166,8 +168,7 @@ void CheckSendBroadcast(short macTCPRefNum, const char *myUsername, const char *
     const unsigned long intervalTicks = (unsigned long)DISCOVERY_INTERVAL * 60;
 
     // Only check if the endpoint appears initialized (stream pointer not NULL)
-    // Add check for potentially invalid stream pointer as well
-    if (gUDPStream == NULL || gUDPStream == (StreamPtr)gUDPRecvBuffer || macTCPRefNum == 0) return;
+    if (gUDPStream == NULL || macTCPRefNum == 0) return;
 
     // Check for timer wraparound (unlikely but possible)
     if (currentTimeTicks < gLastBroadcastTimeTicks) {
@@ -199,8 +200,8 @@ void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP) {
     char    content[BUFFER_SIZE];
     unsigned short bytesReceived = 0; // Initialize to 0
 
-    // Check if UDP is initialized and stream pointer seems valid
-    if (gUDPStream == NULL || gUDPStream == (StreamPtr)gUDPRecvBuffer || macTCPRefNum == 0 || gUDPRecvBuffer == NULL) {
+    // Check if UDP is initialized and stream pointer is valid
+    if (gUDPStream == NULL || macTCPRefNum == 0 || gUDPRecvBuffer == NULL) {
         return; // Cannot receive if not initialized or stream invalid
     }
 
@@ -209,7 +210,7 @@ void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP) {
     pbRead.ioCompletion = nil;
     pbRead.ioCRefNum = macTCPRefNum;
     pbRead.csCode = udpRead;             // Correct code (21)
-    pbRead.udpStream = gUDPStream;       // Use the potentially invalid stream pointer
+    pbRead.udpStream = gUDPStream;       // Use the valid stream pointer
 
     // These are treated as OUTPUT by UDPRead (csCode 21)
     pbRead.csParam.receive.rcvBuff = gUDPRecvBuffer;    // Buffer MacTCP writes into
@@ -290,7 +291,7 @@ void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP) {
             bfrReturnPB.ioCompletion = nil;
             bfrReturnPB.ioCRefNum = macTCPRefNum;
             bfrReturnPB.csCode = udpBfrReturn; // Correct code (22)
-            bfrReturnPB.udpStream = gUDPStream; // Use the (potentially invalid) stream ptr
+            bfrReturnPB.udpStream = gUDPStream; // Use the valid stream ptr
 
             // UDPBfrReturn uses the 'rcvBuff' field within the 'receive' union member
             // to identify the buffer segment being returned. Point it to the start
@@ -329,8 +330,8 @@ void CleanupUDPDiscoveryEndpoint(short macTCPRefNum) {
     log_message("Cleaning up UDP Discovery Endpoint...");
 
     // --- Release UDP Endpoint ---
-    // Check if stream pointer looks valid before attempting release
-    if (gUDPStream != NULL && gUDPStream != (StreamPtr)gUDPRecvBuffer) {
+    // Check if stream pointer is valid before attempting release
+    if (gUDPStream != NULL) {
         if (macTCPRefNum == 0) {
              log_message("Warning (CleanupUDP): Invalid MacTCP RefNum (%d), cannot release UDP stream.", macTCPRefNum);
         } else {
@@ -343,20 +344,23 @@ void CleanupUDPDiscoveryEndpoint(short macTCPRefNum) {
 
             // Set the parameters required by UDPRelease
             // These identify the buffer associated with the stream being released.
-            pb.csParam.create.rcvBuff = gUDPRecvBuffer;
-            pb.csParam.create.rcvBuffLen = kMinUDPBufSize; // Provide the original size
+            // Ensure gUDPRecvBuffer is still valid here!
+            if (gUDPRecvBuffer != NULL) {
+                pb.csParam.create.rcvBuff = gUDPRecvBuffer;
+                pb.csParam.create.rcvBuffLen = kMinUDPBufSize; // Provide the original size
 
-            err = PBControlSync((ParmBlkPtr)&pb);
-            if (err != noErr) {
-                log_message("Warning (CleanupUDP): PBControlSync(udpRelease) failed with stream 0x%lX. Error: %d", (unsigned long)gUDPStream, err);
+                err = PBControlSync((ParmBlkPtr)&pb);
+                if (err != noErr) {
+                    log_message("Warning (CleanupUDP): PBControlSync(udpRelease) failed with stream 0x%lX. Error: %d", (unsigned long)gUDPStream, err);
+                } else {
+                    log_message("PBControlSync(udpRelease) succeeded.");
+                }
             } else {
-                log_message("PBControlSync(udpRelease) succeeded.");
+                 log_message("Warning (CleanupUDP): Cannot call udpRelease because receive buffer pointer is NULL.");
             }
         }
-    } else if (gUDPStream == (StreamPtr)gUDPRecvBuffer) {
-         log_message("Skipping udpRelease because stream pointer appears invalid (0x%lX).", (unsigned long)gUDPStream);
     } else {
-        log_message("UDP Endpoint was not open, skipping release.");
+        log_message("UDP Endpoint was not open or already invalid, skipping release.");
     }
     gUDPStream = NULL; // Mark as released or invalid regardless
 
