@@ -6,6 +6,54 @@ I'll be tagging various points of evolution of this code base with a write up of
 
 ---
 
+## [v0.0.11](https://github.com/matthewdeaves/csend/tree/v0.0.11)
+
+This version focuses on debugging the UDP discovery mechanism on the Classic Mac target using MacTCP and the Retro68 toolchain. Significant progress was made in understanding a core structure alignment issue, although a critical problem remains and is [documented here](/bugs.md). The shared message protocol implementation was also refined with basic validation. The most likely course of action I'll take next is to compile the classic Mac version using the MPW on Mac OS 7.5.3.
+
+**Key Changes & Findings:**
+
+1.  **Classic Mac UDP Debugging & Alignment:**
+    *   **Compiler Flags:** Added GCC flag `-fpack-struct` to address issues where `PBControlSync` calls to MacTCP, specifically `udpCreate`, were not correctly returning the `StreamPtr`.
+    *   **`-fpack-struct`:** Adding this flag to the Classic Mac build (`Makefile.classicmac`) resolved the initial issue where `udpCreate` returned `0L` in `pb.udpStream`. The call now returns `noErr` and `pb.udpStream` receives a non-zero value.
+    *   **Incorrect `StreamPtr`:** Debugging revealed that the non-zero value returned in `pb.udpStream` by `udpCreate` (when compiled with Retro68 + `-fpack-struct`) is actually the memory address of the user-provided receive buffer (`gUDPRecvBuffer`), *not* the expected opaque pointer to MacTCP's internal stream control block.
+    *   **`udpRead` Success:** With the non-zero (though incorrect) stream identifier, `udpRead` calls now successfully receive incoming UDP packets.
+    *   **`udpBfrReturn` Failure Persists:**
+        *   **Critical Issue:** Despite `udpRead` succeeding, the necessary follow-up call to `udpBfrReturn` (to return the buffer segment to MacTCP) **consistently fails** with error `-23013` (`invalidBufPtr`).
+        *   **Reason:** This occurs because the `StreamPtr` value passed to `udpBfrReturn` (which is the buffer address obtained from `udpCreate`) is not the correct internal identifier MacTCP needs to manage its buffer queue for that stream. MacTCP essentially reports that the buffer doesn't belong to the stream identified by that specific pointer value.
+    *   **`udpRelease` Success:** The `udpRelease` call during cleanup *does* succeed when passed the buffer address as the `udpStream`. This might be because `udpRelease` also takes the buffer pointer and length as explicit parameters within the `csParam.create` part of the union, allowing it to identify the resources to free even with the incorrect stream pointer.
+    *   **Application Logic Updated:** The checking logic in `classic_mac/discovery.c` around the value of `gUDPStream` after `udpCreate` and before `udpRelease` was updated to reflect the current understanding (i.e., expecting the buffer address is incorrect, but non-NULL is required for release).
+
+2.  **Message Protocol Implementation Refinement:**
+    *   The shared protocol functions (`shared/protocol.c`) were updated.
+    *   **Magic Number:** Introduced `MSG_MAGIC_NUMBER` (`0x43534443UL` / `CSDC`) at the beginning of formatted messages (`format_message`). The `parse_message` function now checks for this magic number as a basic validation step before attempting to parse the rest of the message, helping to quickly discard unrelated UDP packets. CSDC was chosen for 'CSendChat'.
+    *   Used safer string handling (`snprintf`, `strncpy`, `strtok_r`) and more robust parsing logic for the `MAGIC|TYPE|SENDER@IP|CONTENT` format. [0]
+    *   Added error checking and logging within `format_message` and `parse_message` for better diagnostics.
+
+**Current State:**
+
+*   **POSIX:** Mostly unchanged from v0.0.10, fully functional regarding peer discovery and basic TCP messaging, incorporating the magic number protocol change.
+*   **Classic Mac:**
+    *   Builds successfully with `-fpack-struct`.
+    *   TCP listener setup: Works.
+    *   UDP endpoint creation (`udpCreate`): Returns `noErr` but provides an incorrect `StreamPtr` (buffer address).
+    *   UDP discovery broadcast sending (`udpWrite`): Works (sends messages with magic number).
+    *   UDP packet reception (`udpRead`): Works (packets arrive).
+    *   UDP message parsing (`parse_message`): Works, including magic number check.
+    *   **UDP buffer return (`udpBfrReturn`): FAILS (-23013).** This is the critical blocker, preventing reliable UDP reception as buffers cannot be returned to MacTCP.
+    *   UDP endpoint release (`udpRelease`): Works.
+    *   Peer list management (shared logic): Integrated and functional based on available data.
+    *   Receiving/Processing `MSG_DISCOVERY_RESPONSE`: **Blocked** by the `udpBfrReturn` issue.
+    *   Sending `MSG_QUIT`: **Not implemented.**
+
+**Next Steps:**
+
+1.  **Resolve `udpBfrReturn` Failure (-23013):** This remains the highest priority for the Classic Mac target. Potential avenues include further investigation into structure alignment, exploring alternative MacTCP UDP APIs, or attempting a build with MPW C for comparison. See [**Bugs.md**](./bugs.md) for details.
+2.  **Implement v0.0.12 TODOs (Classic Mac):** Once UDP receive/return is stable:
+    *   Implement the processing of received `MSG_DISCOVERY_RESPONSE` messages to populate the peer list using `AddOrUpdatePeer`.
+    *   Implement sending `MSG_QUIT` messages on application termination.
+
+---
+
 ## [v0.0.10](https://github.com/matthewdeaves/csend/tree/v0.0.10)
 
 1.  **Major Refactoring: Shared Peer Management Logic:**

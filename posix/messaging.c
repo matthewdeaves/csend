@@ -1,3 +1,4 @@
+// FILE: ./posix/messaging.c
 // Include the header file for this module
 #include "messaging.h"
 
@@ -112,6 +113,7 @@ int send_message(const char *ip, const char *message, const char *msg_type, cons
     char buffer[BUFFER_SIZE];
     // Buffer for local IP
     char local_ip[INET_ADDRSTRLEN];
+    int formatted_len; // Store length returned by format_message
 
     // Create a new TCP socket for this outgoing connection.
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -156,7 +158,8 @@ int send_message(const char *ip, const char *message, const char *msg_type, cons
 
     // Format the message payload using the application protocol.
     // This includes the type, sender (username@local_ip), local_ip and content.
-    if (format_message(buffer, BUFFER_SIZE, msg_type, sender_username, local_ip, message) < 0) {
+    formatted_len = format_message(buffer, BUFFER_SIZE, msg_type, sender_username, local_ip, message);
+    if (formatted_len <= 0) { // format_message returns 0 on error, >0 on success
         log_message("Error: Failed to format outgoing message (buffer too small?).");
         close(sock);
         return -1;
@@ -167,7 +170,7 @@ int send_message(const char *ip, const char *message, const char *msg_type, cons
     // send() attempts to send the specified number of bytes.
     // 0: Flags (usually 0 for standard send).
     // Returns the number of bytes sent, or -1 on error.
-    if (send(sock, buffer, strlen(buffer), 0) < 0) {
+    if (send(sock, buffer, formatted_len - 1, 0) < 0) { // Send actual data length
         perror("TCP send failed");
         close(sock); // Close the socket on send failure.
         return -1;
@@ -213,10 +216,13 @@ void *listener_thread(void *arg) {
     char sender_username[32];
     char msg_type[32];
     char content[BUFFER_SIZE];
+    char sender_ip_from_payload[INET_ADDRSTRLEN]; // Buffer for IP extracted by parse_message
     // File descriptor set used with select() to monitor the listening socket.
     fd_set readfds;
     // Timeout structure for select().
     struct timeval timeout;
+    // Variable to store the number of bytes read
+    ssize_t bytes_read;
 
     log_message("Listener thread started");
 
@@ -285,18 +291,20 @@ void *listener_thread(void *arg) {
         // Returns the number of bytes read, 0 if the client closed the connection, -1 on error.
         // Note: This assumes the entire message arrives in one chunk. For robust TCP,
         // you might need a loop to handle partial reads or messages larger than BUFFER_SIZE.
-        ssize_t bytes_read = read(client_sock, buffer, BUFFER_SIZE - 1); // Read BUFFER_SIZE-1 to ensure null termination possible
+        bytes_read = read(client_sock, buffer, BUFFER_SIZE - 1); // Read BUFFER_SIZE-1 to ensure null termination possible
 
         if (bytes_read > 0) {
             // Null-terminate the received data to treat it as a string.
-            buffer[bytes_read] = '\0';
+            // buffer[bytes_read] = '\0'; // Not strictly needed if parse_message handles length
 
             // Parse the received message using the application protocol.
-            if (parse_message(buffer, sender_ip, sender_username, msg_type, content) == 0) {
+            // Pass the actual number of bytes read.
+            // Use sender_ip_from_payload as the output buffer for the IP within the message.
+            if (parse_message(buffer, bytes_read, sender_ip_from_payload, sender_username, msg_type, content) == 0) {
                 // Successfully parsed.
 
                 // Add or update the peer in the application's list.
-                // Use the IP address obtained from the connection (inet_ntop result).
+                // Use the IP address obtained from the connection (inet_ntop result - sender_ip).
                 int add_result = add_peer(state, sender_ip, sender_username);
                 if (add_result > 0) {
                     // Log if it was a newly discovered peer.
@@ -332,8 +340,8 @@ void *listener_thread(void *arg) {
                 // Other message types could be handled here if added later.
 
             } else {
-                // Message parsing failed. Log the raw buffer content for debugging.
-                log_message("Failed to parse TCP message from %s: %s", sender_ip, buffer);
+                // Message parsing failed (e.g., bad magic number). Log the raw buffer content for debugging.
+                log_message("Failed to parse TCP message from %s (%ld bytes)", sender_ip, bytes_read);
             }
         } else if (bytes_read == 0) {
             // read() returned 0, meaning the client closed the connection gracefully.

@@ -226,21 +226,25 @@ if [ "$strip_comments" = true ]; then echo "Stripping comments from .c/.h: Yes (
 # 0. Add Tree Output if requested
 tree_output_added=false
 if [ "$include_tree" = true ]; then
-    # ... (tree logic remains the same) ...
+    # Construct the ignore pattern dynamically to include the output file name and exclude .sh files
+    ignore_pattern="build|obj|tools|misc|*.md|*.sh|$output_file"
+
     if command -v tree &> /dev/null; then
         echo "Adding project structure (tree .)..."
         {
             echo "#===================================="
             echo "# Project Structure (tree .)"
+            echo "# Excluded: build/, obj/, tools/, misc/, *.md, *.sh, $output_file"
             echo "#===================================="
 
-            if ! tree_output=$(tree -I 'build|obj' . 2>/dev/null) || [ -z "$tree_output" ]; then
+            # Use the dynamically constructed ignore pattern
+            if ! tree_output=$(tree -I "$ignore_pattern" . 2>/dev/null) || [ -z "$tree_output" ]; then
                 echo "# Tree command failed or produced no output. Using simple directory listing:"
-                echo "# Main directories:"
-                find . -type d -maxdepth 1 -not -path "*/\.*" | sort
+                echo "# Main directories (excluding build, obj, tools, misc):"
+                find . -type d -maxdepth 1 -not -path "*/\.*" -not -path "./build" -not -path "./obj" -not -path "./tools" -not -path "./misc" | sort
                 echo "# ----------------"
-                echo "# Files in root:"
-                find . -type f -maxdepth 1 -not -path "*/\.*" | sort
+                echo "# Files in root (excluding .md, .sh, $output_file):"
+                find . -type f -maxdepth 1 -not -path "*/\.*" -not -name '*.md' -not -name '*.sh' -not -name "$output_file" | sort
             else
                 echo "$tree_output"
             fi
@@ -253,15 +257,16 @@ if [ "$include_tree" = true ]; then
         {
             echo "#===================================="
             echo "# Project Structure (simple directory listing)"
+            echo "# Excluded: build/, obj/, tools/, misc/, *.md, *.sh, $output_file"
             echo "#===================================="
-            echo "# Main directories:"
-            find . -type d -maxdepth 1 -not -path "*/\.*" | sort
+            echo "# Main directories (excluding build, obj, tools, misc):"
+            find . -type d -maxdepth 1 -not -path "*/\.*" -not -path "./build" -not -path "./obj" -not -path "./tools" -not -path "./misc" | sort
             echo "# ----------------"
-            echo "# Files in root:"
-            find . -type f -maxdepth 1 -not -path "*/\.*" | sort
+            echo "# Files in root (excluding .md, .sh, $output_file):"
+            find . -type f -maxdepth 1 -not -path "*/\.*" -not -name '*.md' -not -name '*.sh' -not -name "$output_file" | sort
             echo -e "\n#====================================\n"
         } >> "$output_file"
-        tree_output_added=true
+        tree_output_added=true # Mark as added even if it's the fallback
     fi
 fi
 

@@ -1,3 +1,4 @@
+// FILE: ./posix/discovery.c
 // Include the header file for this module, which declares the functions defined here.
 // It also brings in necessary types like app_state_t, socket-related headers, etc.
 #include "discovery.h"
@@ -133,6 +134,7 @@ int broadcast_discovery(app_state_t *state) {
     char buffer[BUFFER_SIZE];
     // Buffer for local IP
     char local_ip[INET_ADDRSTRLEN];
+    int formatted_len; // Store length returned by format_message
 
     // Get the local IP address
     if (get_local_ip(local_ip, INET_ADDRSTRLEN) < 0) {
@@ -142,7 +144,8 @@ int broadcast_discovery(app_state_t *state) {
 
     // Format the discovery message using the defined protocol.
     // Includes message type (MSG_DISCOVERY), sender's username, and empty content.
-    if (format_message(buffer, BUFFER_SIZE, MSG_DISCOVERY, state->username, local_ip, "") < 0) { // Pass local_ip
+    formatted_len = format_message(buffer, BUFFER_SIZE, MSG_DISCOVERY, state->username, local_ip, ""); // Pass local_ip
+    if (formatted_len <= 0) { // format_message returns 0 on error, >0 on success
         log_message("Error: Failed to format discovery broadcast message (buffer too small?).");
         return -1;
     }
@@ -163,11 +166,11 @@ int broadcast_discovery(app_state_t *state) {
     // Send the formatted message using the UDP socket.
     // state->udp_socket: The socket descriptor obtained from init_discovery.
     // buffer: The message data to send.
-    // strlen(buffer): The length of the message data.
+    // formatted_len - 1: The length of the actual data (excluding null terminator).
     // 0: Flags (usually 0 for sendto).
     // (struct sockaddr *)&broadcast_addr: Pointer to the destination address structure.
     // sizeof(broadcast_addr): Size of the destination address structure.
-    if (sendto(state->udp_socket, buffer, strlen(buffer), 0,
+    if (sendto(state->udp_socket, buffer, formatted_len - 1, 0, // Send actual data length
               (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr)) < 0) {
         perror("Discovery broadcast sendto failed");
         return -1; // Return failure code.
@@ -188,6 +191,7 @@ int broadcast_discovery(app_state_t *state) {
  *          Messages that don't match the protocol or aren't discovery-related are ignored.
  * @param state Pointer to the application's shared state.
  * @param buffer The raw data buffer received from the socket.
+ * @param bytes_read The actual number of bytes received in the buffer. <-- Added parameter
  * @param sender_ip Buffer where the parsed sender IP address will be stored (output).
  *                  This is passed in pre-allocated.
  * @param addr_len The size of the sender's address structure (`sender_addr`).
@@ -197,22 +201,22 @@ int broadcast_discovery(app_state_t *state) {
  * @return 0 if an existing peer was updated or the message was valid but didn't result in a new peer.
  * @return -1 if the message couldn't be parsed or wasn't a relevant discovery message.
  */
-int handle_discovery_message(app_state_t *state, const char *buffer,
+int handle_discovery_message(app_state_t *state, const char *buffer, int bytes_read, // <-- Added bytes_read
                             char *sender_ip, socklen_t addr_len,
                             struct sockaddr_in *sender_addr) {
     // Buffers to store parsed message components.
     char sender_username[32]; // Max username length + null terminator
     char msg_type[32];        // Max message type length + null terminator
     char content[BUFFER_SIZE]; // Buffer for message content (though not used for discovery)
-    char local_ip[INET_ADDRSTRLEN]; // Bufer for local IP
+    char local_ip[INET_ADDRSTRLEN]; // Buffer for local IP
+    char sender_ip_from_payload[INET_ADDRSTRLEN]; // Buffer for IP extracted by parse_message
+    int response_len; // Store length of formatted response
 
     // Attempt to parse the received buffer using the protocol definition.
-    // This extracts type, sender (username@ip), and content.
-    // Note: parse_message extracts the IP from the sender field within the message payload itself.
-    // The sender_ip passed into this function is derived directly from the UDP packet source address
-    // by the caller (discovery_thread) using inet_ntop. While parse_message also extracts an IP,
-    // using the packet source IP (sender_ip parameter here) is generally more reliable for identifying the sender's network address.
-    if (parse_message(buffer, sender_ip, sender_username, msg_type, content) == 0) {
+    // Pass the actual number of bytes received (bytes_read).
+    // sender_ip_from_payload is used here as parse_message expects an output buffer for the IP.
+    // We will primarily use the sender_ip passed into this function (from the UDP header) for adding peers.
+    if (parse_message(buffer, bytes_read, sender_ip_from_payload, sender_username, msg_type, content) == 0) {
         // Check if the message type is a discovery request.
         if (strcmp(msg_type, MSG_DISCOVERY) == 0) {
             // Received a discovery request from another peer.
@@ -227,13 +231,14 @@ int handle_discovery_message(app_state_t *state, const char *buffer,
             }
 
             // Format the response message (type = MSG_DISCOVERY_RESPONSE, include our username and local IP).
-            if (format_message(response, BUFFER_SIZE, MSG_DISCOVERY_RESPONSE, state->username, local_ip, "") < 0) {
+            response_len = format_message(response, BUFFER_SIZE, MSG_DISCOVERY_RESPONSE, state->username, local_ip, "");
+            if (response_len <= 0) {
                  log_message("Error: Failed to format discovery response message (buffer too small?).");
                  // Continue to add peer even if response formatting fails
             } else {
                 // Send the response back directly to the sender's address and port.
                 // sender_addr contains the IP/port filled by recvfrom in the calling thread.
-                if (sendto(state->udp_socket, response, strlen(response), 0,
+                if (sendto(state->udp_socket, response, response_len - 1, 0, // Send actual data length
                           (struct sockaddr *)sender_addr, addr_len) < 0) {
                     perror("Discovery response sendto failed");
                     // Non-fatal error, continue processing the received discovery.
@@ -241,7 +246,7 @@ int handle_discovery_message(app_state_t *state, const char *buffer,
             }
 
             // Add or update the peer who sent the discovery message in our list.
-            // Use the sender_ip derived from the packet source address.
+            // Use the sender_ip derived from the packet source address (passed into this function).
             int add_result = add_peer(state, sender_ip, sender_username);
             if (add_result > 0) {
                 log_message("New peer discovered via DISCOVERY: %s@%s", sender_username, sender_ip);
@@ -260,7 +265,7 @@ int handle_discovery_message(app_state_t *state, const char *buffer,
             // Received a response to our previous discovery broadcast.
 
             // Add or update the peer who sent the response in our list.
-            // Use the sender_ip derived from the packet source address.
+            // Use the sender_ip derived from the packet source address (passed into this function).
             int add_result = add_peer(state, sender_ip, sender_username);
             if (add_result > 0) {
                 log_message("New peer discovered via RESPONSE: %s@%s", sender_username, sender_ip);
@@ -276,8 +281,8 @@ int handle_discovery_message(app_state_t *state, const char *buffer,
         }
         // If the message type is neither DISCOVERY nor DISCOVERY_RESPONSE, ignore it in this handler.
     } else {
-        // Parsing failed, likely not a valid message according to our protocol.
-        log_message("Received UDP packet that failed to parse: %s", buffer);
+        // Parsing failed, likely not a valid message according to our protocol (e.g., bad magic number).
+        // log_message("Received UDP packet that failed to parse from %s", sender_ip); // Can be noisy
     }
 
     // Return -1 if parsing failed or it wasn't a relevant discovery message type.
@@ -317,6 +322,8 @@ void *discovery_thread(void *arg) {
     char local_ip[INET_ADDRSTRLEN];
     // Variable to keep track of the time of the last broadcast.
     time_t last_broadcast = 0;
+    // Variable to store the number of bytes read by recvfrom
+    int bytes_read;
 
     // Attempt to get the primary non-loopback local IP address.
     if (get_local_ip(local_ip, INET_ADDRSTRLEN) < 0) {
@@ -353,12 +360,12 @@ void *discovery_thread(void *arg) {
         // 0: Flags (MSG_DONTWAIT could be used, but timeout is set instead).
         // (struct sockaddr *)&sender_addr: Pointer to store sender's address info.
         // &addr_len: Pointer to the size of the address structure (input/output).
-        int bytes_read = recvfrom(state->udp_socket, buffer, BUFFER_SIZE -1, 0, // Read BUFFER_SIZE-1 to ensure null termination possible
+        bytes_read = recvfrom(state->udp_socket, buffer, BUFFER_SIZE -1, 0, // Read BUFFER_SIZE-1 to ensure null termination possible
                                  (struct sockaddr *)&sender_addr, &addr_len);
 
-        // Ensure null termination after read, just in case
-        buffer[BUFFER_SIZE - 1] = '\0';
-
+        // Ensure null termination after read, just in case (though recvfrom doesn't guarantee it for UDP)
+        // It's safer to rely on bytes_read for the actual data length.
+        // buffer[BUFFER_SIZE - 1] = '\0'; // Optional safety net
 
         // Check if data was successfully received (bytes_read > 0).
         // recvfrom returns -1 on error (or if timeout occurs and errno is EAGAIN/EWOULDBLOCK).
@@ -378,8 +385,8 @@ void *discovery_thread(void *arg) {
             }
 
             // If the message is not from self, process it.
-            // Pass the received data, sender's IP string, address length, and address structure.
-            handle_discovery_message(state, buffer, sender_ip, addr_len, &sender_addr);
+            // Pass the received data, the actual number of bytes read, sender's IP string, address length, and address structure.
+            handle_discovery_message(state, buffer, bytes_read, sender_ip, addr_len, &sender_addr); // Pass bytes_read
 
         } else if (bytes_read < 0) {
             // An error occurred or the timeout was reached.
