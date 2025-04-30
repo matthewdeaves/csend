@@ -25,6 +25,8 @@ OSErr InitializeNetworking(void) {
 
     log_message("Initializing Networking...");
 
+    PrintUDPiopbLayout(); // Debugging
+
     // --- Open MacTCP Driver ---
     pb.ioParam.ioNamePtr = (StringPtr)kTCPDriverName;
     pb.ioParam.ioPermssn = fsCurPerm;

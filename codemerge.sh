@@ -28,7 +28,7 @@ show_help() {
     echo "  -P, --platform PLATFORM    Specify platform: posix, classic, all (default: all)"
     echo "  -n, --no-headers           Don't include filename headers"
     echo "  -m, --no-separators        Don't include separator lines between files"
-    echo "  -M, --include-makefile     Append root Makefile and Makefile.classicmac content at the end"
+    echo "  -M, --include-makefile     Append root Makefile and Makefile.retro68 content at the end"
     echo "  -D, --include-docker       Append root Dockerfile, docker-compose.yml and docker.sh content at the end"
     echo "  -T, --no-tree              Don't include 'tree .' output at the beginning"
     echo "  -S, --strip-comments       Remove C/C++ comments (//, /* */) from .c and .h files (requires gcc)"
@@ -314,7 +314,7 @@ if [ "$include_makefile" = true ]; then
     if append_file_content "Makefile" "$output_file" "$include_headers" "$add_separator" "#===================================="; then
         ((makefiles_found_count++))
     fi
-    if append_file_content "Makefile.classicmac" "$output_file" "$include_headers" "$add_separator" "#===================================="; then
+    if append_file_content "Makefile.retro68" "$output_file" "$include_headers" "$add_separator" "#===================================="; then
         ((makefiles_found_count++))
     fi
 fi

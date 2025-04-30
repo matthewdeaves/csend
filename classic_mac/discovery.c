@@ -1,5 +1,5 @@
 // FILE: ./classic_mac/discovery.c
-#include "discovery.h"
+#include "discovery.h" // Includes MyUDPiopb definition
 #include "logging.h"   // For log_message
 #include "protocol.h"  // For format_message, parse_message, MSG_DISCOVERY, MSG_DISCOVERY_RESPONSE, MSG_MAGIC_NUMBER
 #include "peer_mac.h"  // For AddOrUpdatePeer
@@ -12,6 +12,8 @@
 #include <stdlib.h>    // For NULL
 #include <Memory.h>    // For NewPtrClear, DisposePtr
 
+#include <stddef.h> // For offsetof debuging
+
 // --- Global Variable Definitions ---
 StreamPtr gUDPStream = NULL; // Pointer to our UDP stream for discovery (initialize to NULL)
 Ptr     gUDPRecvBuffer = NULL; // Pointer to the buffer allocated for UDPCreate (initialize to NULL)
@@ -22,7 +24,7 @@ unsigned long gLastBroadcastTimeTicks = 0; // Time in Ticks
  */
 OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum) {
     OSErr err;
-    UDPiopb pb; // Use the specific UDP parameter block structure
+    MyUDPiopb pb; // <--- CHANGE: Use OUR corrected UDP parameter block structure
     const unsigned short specificPort = PORT_UDP; // Listen on the standard discovery port
 
     log_message("Initializing UDP Discovery Endpoint...");
@@ -41,12 +43,12 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum) {
     }
     log_message("Allocated %ld bytes for UDP receive buffer at 0x%lX.", (long)kMinUDPBufSize, (unsigned long)gUDPRecvBuffer);
 
-    // --- Prepare UDPiopb for UDPCreate ---
-    memset(&pb, 0, sizeof(UDPiopb)); // Zero out the parameter block
-    pb.ioCompletion = nil;           // No completion routine for sync call
-    pb.ioCRefNum = macTCPRefNum;     // Use passed-in Driver reference number
-    pb.csCode = udpCreate;           // Command code for creating UDP stream
-    pb.udpStream = 0L;               // IMPORTANT: MacTCP writes the output StreamPtr here
+    // --- Prepare MyUDPiopb for UDPCreate ---
+    memset(&pb, 0, sizeof(MyUDPiopb)); // <--- CHANGE: Use corrected struct size
+    pb.ioCompletion = nil;             // No completion routine for sync call
+    pb.ioCRefNum = macTCPRefNum;       // Use passed-in Driver reference number
+    pb.csCode = udpCreate;             // Command code (uses #define from discovery.h)
+    pb.udpStream = 0L;                 // IMPORTANT: MacTCP writes the output StreamPtr here
 
     // Access parameters via the csParam.create union structure
     pb.csParam.create.rcvBuff = gUDPRecvBuffer; // Pointer to allocated buffer
@@ -56,7 +58,7 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum) {
     // pb.csParam.create.userDataPtr is not needed for nil notifyProc
 
     log_message("Calling PBControlSync (udpCreate) for port %u...", specificPort);
-    err = PBControlSync((ParmBlkPtr)&pb); // Cast UDPiopb to generic ParmBlkPtr
+    err = PBControlSync((ParmBlkPtr)&pb); // Cast MyUDPiopb to generic ParmBlkPtr (should be safe)
 
     // Log the state *after* the call
     log_message("DEBUG: After PBControlSync(udpCreate): err=%d, pb.udpStream=0x%lX, pb.csParam.create.localPort=%u",
@@ -76,7 +78,6 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum) {
     gUDPStream = pb.udpStream;
 
     // Check if the returned stream pointer is NULL, even though noErr was returned.
-    // This *shouldn't* happen, but it's a safety check.
     if (gUDPStream == NULL) {
          log_message("CRITICAL WARNING (InitUDP): udpCreate returned noErr but StreamPtr is NULL. UDP may fail.");
          // Clean up buffer as the stream is unusable
@@ -101,7 +102,7 @@ OSErr SendDiscoveryBroadcast(short macTCPRefNum, const char *myUsername, const c
     OSErr err;
     char buffer[BUFFER_SIZE];
     struct wdsEntry wds[2]; // Need 2 entries for the terminating zero entry
-    UDPiopb pb; // Use the specific UDP parameter block structure
+    MyUDPiopb pb; // <--- CHANGE: Use OUR Ccorrected UDP parameter block structure
     int formatted_len; // To store the length returned by format_message
 
     // Check if the stream pointer is NULL before attempting to use it
@@ -127,18 +128,17 @@ OSErr SendDiscoveryBroadcast(short macTCPRefNum, const char *myUsername, const c
 
     // Prepare the Write Data Structure (WDS)
     // The length for WDS is the actual data length, EXCLUDING the null terminator.
-    // format_message returns total bytes including null term, so subtract 1.
-    wds[0].length = formatted_len - 1;
+    wds[0].length = formatted_len - 1; // format_message returns total bytes incl. null term
     wds[0].ptr = buffer;
     wds[1].length = 0; // Terminating entry
     wds[1].ptr = nil;
 
-    // --- Prepare UDPiopb for UDPWrite ---
-    memset(&pb, 0, sizeof(UDPiopb)); // Zero out the parameter block
-    pb.ioCompletion = nil;           // No completion routine for sync call
-    pb.ioCRefNum = macTCPRefNum;     // Use passed-in Driver reference number
-    pb.csCode = udpWrite;            // Command code for writing UDP data
-    pb.udpStream = gUDPStream;       // Input: The stream pointer obtained from UDPCreate
+    // --- Prepare MyUDPiopb for UDPWrite ---
+    memset(&pb, 0, sizeof(MyUDPiopb)); // <--- CHANGE: Use corrected struct size
+    pb.ioCompletion = nil;             // No completion routine for sync call
+    pb.ioCRefNum = macTCPRefNum;       // Use passed-in Driver reference number
+    pb.csCode = udpWrite;              // Command code (uses #define)
+    pb.udpStream = gUDPStream;         // Input: The stream pointer obtained from UDPCreate
 
     // Access parameters via the csParam.send union structure
     pb.csParam.send.remoteHost = BROADCAST_IP;   // Destination IP (broadcast)
@@ -148,7 +148,7 @@ OSErr SendDiscoveryBroadcast(short macTCPRefNum, const char *myUsername, const c
     // pb.csParam.send.sendLength is output only for UDPWrite
 
     // Call PBControlSync
-    err = PBControlSync((ParmBlkPtr)&pb); // Cast UDPiopb to generic ParmBlkPtr
+    err = PBControlSync((ParmBlkPtr)&pb); // Cast MyUDPiopb to generic ParmBlkPtr
 
     if (err != noErr) {
         log_message("Error (SendUDP): PBControlSync(udpWrite) failed with stream 0x%lX. Error: %d", (unsigned long)gUDPStream, err);
@@ -192,7 +192,7 @@ void CheckSendBroadcast(short macTCPRefNum, const char *myUsername, const char *
  */
 void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP) {
     OSErr   err;
-    UDPiopb pbRead; // Use a distinct PB for the read operation
+    MyUDPiopb pbRead; // <--- CHANGE: Use OUR corrected structure for the read operation
     char    senderIPStrFromHeader[INET_ADDRSTRLEN];
     char    senderIPStrFromPayload[INET_ADDRSTRLEN];
     char    senderUsername[32];
@@ -205,14 +205,14 @@ void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP) {
         return; // Cannot receive if not initialized or stream invalid
     }
 
-    // --- Prepare UDPiopb for UDPRead ---
-    memset(&pbRead, 0, sizeof(UDPiopb));
+    // --- Prepare MyUDPiopb for UDPRead ---
+    memset(&pbRead, 0, sizeof(MyUDPiopb)); // <--- CHANGE: Use corrected struct size
     pbRead.ioCompletion = nil;
     pbRead.ioCRefNum = macTCPRefNum;
-    pbRead.csCode = udpRead;             // Correct code (21)
+    pbRead.csCode = udpRead;             // Command code (uses #define)
     pbRead.udpStream = gUDPStream;       // Use the valid stream pointer
 
-    // These are treated as OUTPUT by UDPRead (csCode 21)
+    // These are treated as OUTPUT by UDPRead
     pbRead.csParam.receive.rcvBuff = gUDPRecvBuffer;    // Buffer MacTCP writes into
     pbRead.csParam.receive.rcvBuffLen = kMinUDPBufSize; // Max length MacTCP can write
     pbRead.csParam.receive.timeOut = 1;                 // Short timeout (in seconds) for non-blocking check
@@ -220,10 +220,10 @@ void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP) {
     // Output fields filled by MacTCP on success:
     pbRead.csParam.receive.remoteHost = 0;
     pbRead.csParam.receive.remotePort = 0;
-    // pbRead.csParam.receive.rcvBuffLen is also output
+    // pbRead.csParam.receive.rcvBuffLen is also output (actual bytes received)
 
     // --- Call PBControlSync to attempt reading ---
-    err = PBControlSync((ParmBlkPtr)&pbRead);
+    err = PBControlSync((ParmBlkPtr)&pbRead); // Cast is safe
 
     // --- Handle Results ---
     if (err == noErr) {
@@ -284,13 +284,13 @@ void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP) {
             // --- *** CRITICAL: Return the buffer segment to MacTCP *** ---
             // This MUST be done after EVERY successful UDPRead that returns data (bytesReceived > 0),
             // even if the data was ignored (from self) or failed parsing.
-            UDPiopb bfrReturnPB; // Use a separate PB for clarity
+            MyUDPiopb bfrReturnPB; // <--- CHANGE: Use OUR corrected structure for clarity
             OSErr returnErr;
 
-            memset(&bfrReturnPB, 0, sizeof(UDPiopb));
+            memset(&bfrReturnPB, 0, sizeof(MyUDPiopb)); // <--- CHANGE: Use corrected struct size
             bfrReturnPB.ioCompletion = nil;
             bfrReturnPB.ioCRefNum = macTCPRefNum;
-            bfrReturnPB.csCode = udpBfrReturn; // Correct code (22)
+            bfrReturnPB.csCode = udpBfrReturn; // Command code (uses #define)
             bfrReturnPB.udpStream = gUDPStream; // Use the valid stream ptr
 
             // UDPBfrReturn uses the 'rcvBuff' field within the 'receive' union member
@@ -298,18 +298,18 @@ void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP) {
             // of the buffer that MacTCP just wrote into.
             bfrReturnPB.csParam.receive.rcvBuff = gUDPRecvBuffer;
 
-            returnErr = PBControlSync((ParmBlkPtr)&bfrReturnPB);
+            returnErr = PBControlSync((ParmBlkPtr)&bfrReturnPB); // Cast is safe
             if (returnErr != noErr) {
                 // Log the error, potentially including the invalid gUDPStream value
                 log_message("CRITICAL Error (UDP Receive): PBControlSync(udpBfrReturn) failed with stream 0x%lX. Error: %d. UDP receive may stop working.", (unsigned long)gUDPStream, returnErr);
-                // This is where the -23013 error was likely happening before.
-                // If gUDPStream is invalid, this call will fail.
+                // If this fails now, it's less likely to be a struct layout issue,
+                // potentially an invalid gUDPStream value from udpCreate or memory corruption.
             }
             // --- End of buffer return ---
 
         } // End if (bytesReceived > 0)
 
-    } else if (err == commandTimeout || err == -23018 /* readTimeout? */ || err == -23015 /* connectionDoesntExist? */) {
+    } else if (err == commandTimeout) { // Only check for the defined MacTCP timeout code
         // Timeout or expected condition - normal, no packet waiting. Nothing to do.
     } else {
         // Some other unexpected error occurred during read attempt
@@ -324,7 +324,7 @@ void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP) {
  * @brief Cleans up the UDP discovery endpoint resources.
  */
 void CleanupUDPDiscoveryEndpoint(short macTCPRefNum) {
-    UDPiopb pb; // Use the specific UDP parameter block structure
+    MyUDPiopb pb; // <--- CHANGE: Use OUR corrected UDP parameter block structure
     OSErr err;
 
     log_message("Cleaning up UDP Discovery Endpoint...");
@@ -336,20 +336,19 @@ void CleanupUDPDiscoveryEndpoint(short macTCPRefNum) {
              log_message("Warning (CleanupUDP): Invalid MacTCP RefNum (%d), cannot release UDP stream.", macTCPRefNum);
         } else {
             log_message("Attempting PBControlSync (udpRelease) for endpoint 0x%lX...", (unsigned long)gUDPStream);
-            memset(&pb, 0, sizeof(UDPiopb));
+            memset(&pb, 0, sizeof(MyUDPiopb)); // <--- CHANGE: Use corrected struct size
             pb.ioCompletion = nil;
             pb.ioCRefNum = macTCPRefNum;
-            pb.csCode = udpRelease;
+            pb.csCode = udpRelease; // Command code (uses #define)
             pb.udpStream = gUDPStream;
 
-            // Set the parameters required by UDPRelease
+            // Set the parameters required by UDPRelease (which uses UDPCreatePB layout)
             // These identify the buffer associated with the stream being released.
-            // Ensure gUDPRecvBuffer is still valid here!
             if (gUDPRecvBuffer != NULL) {
                 pb.csParam.create.rcvBuff = gUDPRecvBuffer;
                 pb.csParam.create.rcvBuffLen = kMinUDPBufSize; // Provide the original size
 
-                err = PBControlSync((ParmBlkPtr)&pb);
+                err = PBControlSync((ParmBlkPtr)&pb); // Cast is safe
                 if (err != noErr) {
                     log_message("Warning (CleanupUDP): PBControlSync(udpRelease) failed with stream 0x%lX. Error: %d", (unsigned long)gUDPStream, err);
                 } else {
@@ -372,4 +371,39 @@ void CleanupUDPDiscoveryEndpoint(short macTCPRefNum) {
     }
 
     log_message("UDP Discovery Endpoint cleanup finished.");
+}
+
+// Update the debug function to use the new structure type
+void PrintUDPiopbLayout() {
+    log_message("--- MyUDPiopb Layout (Corrected for Driver) ---");
+    log_message("sizeof(MyUDPiopb) = %lu", (unsigned long)sizeof(MyUDPiopb)); // <--- CHANGE
+
+    // Use MyUDPiopb for offset calculation
+    log_message("Offset ioCompletion = %lu", (unsigned long)offsetof(MyUDPiopb, ioCompletion)); // <--- CHANGE
+    log_message("Offset ioResult = %lu", (unsigned long)offsetof(MyUDPiopb, ioResult));       // <--- CHANGE
+    log_message("Offset ioCRefNum = %lu", (unsigned long)offsetof(MyUDPiopb, ioCRefNum));      // <--- CHANGE
+    log_message("Offset csCode = %lu", (unsigned long)offsetof(MyUDPiopb, csCode));           // <--- CHANGE (Should be 28 now)
+    log_message("Offset udpStream = %lu", (unsigned long)offsetof(MyUDPiopb, udpStream));      // <--- CHANGE (Should be 30 now)
+    log_message("Offset csParam = %lu", (unsigned long)offsetof(MyUDPiopb, csParam));         // <--- CHANGE (Should be 34 now)
+
+    log_message("  --- csParam.create ---");
+    log_message("  sizeof(UDPCreatePB) = %lu", (unsigned long)sizeof(struct UDPCreatePB)); // No change, uses type from MacTCP.h
+    log_message("  Offset create.rcvBuff = %lu", (unsigned long)offsetof(MyUDPiopb, csParam.create.rcvBuff));       // <--- CHANGE
+    log_message("  Offset create.rcvBuffLen = %lu", (unsigned long)offsetof(MyUDPiopb, csParam.create.rcvBuffLen));  // <--- CHANGE
+    log_message("  Offset create.notifyProc = %lu", (unsigned long)offsetof(MyUDPiopb, csParam.create.notifyProc));  // <--- CHANGE
+    log_message("  Offset create.localPort = %lu", (unsigned long)offsetof(MyUDPiopb, csParam.create.localPort));   // <--- CHANGE
+    log_message("  Offset create.userDataPtr = %lu", (unsigned long)offsetof(MyUDPiopb, csParam.create.userDataPtr)); // <--- CHANGE
+
+    log_message("  --- csParam.receive ---");
+    log_message("  sizeof(UDPReceivePB) = %lu", (unsigned long)sizeof(struct UDPReceivePB)); // No change, uses type from MacTCP.h
+    // Renamed field in official MacTCP.h struct
+    log_message("  Offset receive.timeout = %lu", (unsigned long)offsetof(MyUDPiopb, csParam.receive.timeOut));      // <--- CHANGE
+    log_message("  Offset receive.remoteHost = %lu", (unsigned long)offsetof(MyUDPiopb, csParam.receive.remoteHost));   // <--- CHANGE
+    log_message("  Offset receive.remotePort = %lu", (unsigned long)offsetof(MyUDPiopb, csParam.receive.remotePort));   // <--- CHANGE
+    log_message("  Offset receive.rcvBuff = %lu", (unsigned long)offsetof(MyUDPiopb, csParam.receive.rcvBuff));      // <--- CHANGE
+    log_message("  Offset receive.rcvBuffLen = %lu", (unsigned long)offsetof(MyUDPiopb, csParam.receive.rcvBuffLen)); // <--- CHANGE
+    log_message("  Offset receive.secondTimeStamp = %lu", (unsigned long)offsetof(MyUDPiopb, csParam.receive.secondTimeStamp)); // <--- CHANGE
+    log_message("  Offset receive.userDataPtr = %lu", (unsigned long)offsetof(MyUDPiopb, csParam.receive.userDataPtr)); // <--- CHANGE
+
+    log_message("--- End Layout ---");
 }
