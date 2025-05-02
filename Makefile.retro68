@@ -5,7 +5,7 @@
 
 # Assume Retro68 tools are in the PATH
 CC_MAC = m68k-apple-macos-gcc
-CXX_MAC = m68k-apple-macos-g++ # Added C++ compiler driver
+CXX_MAC = m68k-apple-macos-g++
 REZ = Rez
 
 # --- Dynamically Find RIncludes and CIncludes ---
@@ -40,7 +40,6 @@ ifeq ($(wildcard $(CINCLUDES)/.),) # Check for existence of the directory itself
     $(error "Retro68 CIncludes directory not found at the expected location relative to the compiler: $(CINCLUDES). Check your Retro68 installation.")
 endif
 
-# --- ADDED: Construct Universal C Includes Path ---
 # This path often contains headers not symlinked into the target-specific include dir.
 UNIVERSAL_CINCLUDES = $(TOOLCHAIN_DIR)/universal/CIncludes
 
@@ -55,8 +54,7 @@ endif
 
 # Compiler flags
 # Ensure paths are quoted. The -I flags themselves handle spaces if the shell passes them correctly.
-# VERSION 3: Added -fpack-struct
-CFLAGS_MAC = -g -w -fpack-struct -ffunction-sections -D__MACOS__ -Iclassic_mac -Ishared -I"$(CINCLUDES)" -I"$(UNIVERSAL_CINCLUDES)"
+CFLAGS_MAC = -g -w -ffunction-sections -D__MACOS__ -Iclassic_mac -Ishared -I"$(CINCLUDES)" -I"$(UNIVERSAL_CINCLUDES)"
 
 # Linker flags (passed via the compiler driver using -Wl,)
 LDFLAGS_MAC = -Wl,-gc-sections -Wl,--mac-strip-macsbug

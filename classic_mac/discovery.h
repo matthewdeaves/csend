@@ -2,29 +2,34 @@
 #ifndef DISCOVERY_H
 #define DISCOVERY_H
 
-#include <MacTCP.h> // For StreamPtr, UDPiopb, wdsEntry etc.
+// --- Base Mac OS Includes ---
 #include <MacTypes.h>
+#include <Devices.h> // For ParamBlockRec base structure
 
+// --- Include the REAL MacTCP Header ---
+// This brings in all the standard enums, basic types (including UDPiopb),
+// UPPs, nested structs etc.
+#include <MacTCP.h>
+
+// --- Keep Lowercase Defines for Compatibility ---
+// Maps the lowercase names used in discovery.c to the uppercase enums from MacTCP.h
+#define udpCreate     UDPCreate     // Defined in MacTCP.h enum
+#define udpRead       UDPRead       // Defined in MacTCP.h enum
+#define udpBfrReturn  UDPBfrReturn  // Defined in MacTCP.h enum
+#define udpWrite      UDPWrite      // Defined in MacTCP.h enum
+#define udpRelease    UDPRelease    // Defined in MacTCP.h enum
+// e.g. #define udpMaxMTU UDPMaxMTUSize // Add if needed
+
+// --- Project Includes (needed after base types) ---
 #include "common_defs.h" // For PORT_UDP, DISCOVERY_INTERVAL, BUFFER_SIZE, INET_ADDRSTRLEN
 #include "peer_mac.h"    // For AddOrUpdatePeer
 
-// --- Constants ---
+// --- Project Constants ---
 #define BROADCAST_IP 0xFFFFFFFFUL // Standard broadcast address (255.255.255.255)
 #define kMinUDPBufSize  2048        // Minimum receive buffer size for UDPCreate
 
-// --- MacTCP UDP Control Codes (Specific to Discovery) ---
-// Note: These are also defined in network.h for general use,
-// but defining them here makes discovery.c self-contained regarding its specific needs.
-// Consider creating a central MacTCP constants header if more modules use them.
-#define udpCreate       20
-#define udpRead         21
-#define udpBfrReturn    22
-#define udpWrite        23
-#define udpRelease      24
-
 // --- Global Variables (External Declarations) ---
-// These are defined in discovery.c but needed by other modules (like main.c)
-extern StreamPtr gUDPStream; // Pointer to our UDP stream for discovery
+extern StreamPtr gUDPStream; // Pointer to our UDP stream for discovery (StreamPtr from MacTCP.h)
 extern Ptr     gUDPRecvBuffer; // Pointer to the buffer allocated for UDPCreate
 extern unsigned long gLastBroadcastTimeTicks; // Time of last broadcast in Ticks
 
@@ -35,7 +40,7 @@ extern unsigned long gLastBroadcastTimeTicks; // Time of last broadcast in Ticks
  * @param macTCPRefNum The driver reference number obtained from PBOpen.
  * @return OSErr noErr on success, or an error code on failure.
  */
-OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum); // Renamed for clarity
+OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum);
 
 /**
  * @brief Sends a UDP discovery broadcast message using PBControl.
@@ -60,13 +65,13 @@ void CheckSendBroadcast(short macTCPRefNum, const char *myUsername, const char *
  * @param macTCPRefNum The driver reference number.
  * @param myLocalIP The local IP address (numeric) to ignore self-messages.
  */
-void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP); // Added function prototype
+void CheckUDPReceive(short macTCPRefNum, ip_addr myLocalIP); // ip_addr from MacTCP.h
 
 /**
  * @brief Cleans up the UDP discovery endpoint resources.
  * @param macTCPRefNum The driver reference number.
  */
-void CleanupUDPDiscoveryEndpoint(short macTCPRefNum); // Renamed for clarity
+void CleanupUDPDiscoveryEndpoint(short macTCPRefNum);
 
 
 #endif // DISCOVERY_H

@@ -2,9 +2,8 @@
 #ifndef NETWORK_H
 #define NETWORK_H
 
-#include <MacTCP.h>
 #include <MacTypes.h>
-
+#include "discovery.h" // Provides corrected MacTCP defs needed, including UDPiopb
 
 #define __MACTCPCOMMONTYPES__ // Prevent AddressXlation.h from including conflicting types
 #include <AddressXlation.h>  // Needs types defined in MacTCP.h
