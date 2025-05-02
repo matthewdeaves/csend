@@ -56,3 +56,4 @@ csend_posix
 combined_code.txt
 tools/
 misc/MPW_Interfaces
+*.bak
