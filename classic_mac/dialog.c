@@ -28,6 +28,7 @@ DialogPtr gMainWindow = NULL;
 TEHandle gMessagesTE = NULL;
 TEHandle gInputTE = NULL;
 ListHandle gPeerListHandle = NULL; // Initialize ListHandle to NULL
+ControlHandle gMessagesScrollBar = NULL; // Define global
 Boolean gDialogTEInitialized = false;
 Boolean gDialogListInitialized = false; // Initialize List state
 char gMyUsername[32] = "MacUser";
@@ -36,17 +37,57 @@ Cell gLastSelectedCell = {0, 0}; // Initialize selected cell
 // Forward declaration if needed, or move UpdatePeerDisplayList above InitDialog
 void UpdatePeerDisplayList(Boolean forceRedraw);
 
+// Action procedure for the scroll bar
+pascal void MyScrollAction(ControlHandle theControl, short partCode) {
+    if (theControl == gMessagesScrollBar && gMessagesTE != NULL && partCode != 0) {
+        short linesToScroll = 0;
+        short currentScroll, maxScroll;
+        short lineHeight = (**gMessagesTE).lineHeight;
+        short pageScroll = ((**gMessagesTE).viewRect.bottom - (**gMessagesTE).viewRect.top) / lineHeight - 1; // Page = visible lines - 1
+
+        if (pageScroll < 1) pageScroll = 1; // Ensure we scroll at least one line
+
+        currentScroll = GetControlValue(theControl);
+        maxScroll = GetControlMaximum(theControl);
+
+        // Use literal part codes from Inside Macintosh: Volume IV, page 6-41
+        switch (partCode) {
+            case 20:    linesToScroll = -1; break; // inUpButton
+            case 21:    linesToScroll = 1; break;  // inDownButton
+            case 22:    linesToScroll = -pageScroll; break; // inPageUp
+            case 23:    linesToScroll = pageScroll; break;  // inPageDown
+            // Clicks in the thumb (part code 129, inThumb) are handled by TrackControl setting the value directly.
+            default: return; // Ignore clicks in indicator/inactive parts
+        }
+
+        short newScroll = currentScroll + linesToScroll;
+
+        // Clamp newScroll value
+        if (newScroll < 0) newScroll = 0;
+        if (newScroll > maxScroll) newScroll = maxScroll;
+
+        if (newScroll != currentScroll) {
+            SetControlValue(theControl, newScroll);
+            // TEScroll scrolls by pixel difference. Positive scrolls DOWN, negative UP.
+            TEScroll(0, (currentScroll - newScroll) * lineHeight, gMessagesTE);
+        }
+    }
+}
+
+
 Boolean InitDialog(void) {
     DialogItemType itemType;
     Handle itemHandle;
     Rect destRectMessages, viewRectMessages;
     Rect destRectInput, viewRectInput;
     Rect destRectList, dataBounds; // Rects for List Manager
+    Rect scrollBarRect; // For getting scroll bar handle
     Point cellSize; // Cell size for List Manager
     FontInfo fontInfo; // For calculating list cell height
     Boolean messagesOk = false;
     Boolean inputOk = false;
     Boolean listOk = false;
+    Boolean scrollBarOk = false; // Flag for scroll bar init
 
     log_message("Loading dialog resource ID %d...", kBaseResID);
     gMainWindow = GetNewDialog(kBaseResID, NULL, (WindowPtr)-1L);
@@ -69,21 +110,47 @@ Boolean InitDialog(void) {
     GetDialogItem(gMainWindow, kMessagesTextEdit, &itemType, &itemHandle, &destRectMessages);
     if (itemType == userItem) {
         viewRectMessages = destRectMessages;
-        InsetRect(&viewRectMessages, 1, 1); // Inset view rect slightly for border
-        log_message("Calling TENew for Messages TE...");
+        // Shrink viewRect width to make space for scroll bar (standard width 16)
+        viewRectMessages.right -= 16;
+        // Inset view rect slightly for border (optional, applied to adjusted rect)
+        // InsetRect(&viewRectMessages, 1, 1);
+
+        log_message("Calling TENew for Messages TE (Adjusted Rect)...");
         gMessagesTE = TENew(&destRectMessages, &viewRectMessages);
         if (gMessagesTE == NULL) {
             log_message("CRITICAL ERROR: TENew failed for Messages TE! Out of memory?");
             messagesOk = false;
         } else {
             log_message("TENew succeeded for Messages TE. Handle: 0x%lX", (unsigned long)gMessagesTE);
-            TEAutoView(true, gMessagesTE); // <-- Re-enable TEAutoView for messages
+            TEAutoView(true, gMessagesTE); // Keep TEAutoView enabled
             messagesOk = true;
         }
     } else {
         log_message("ERROR: Item %d is NOT a UserItem (Type: %d)! Expected UserItem for TENew.", kMessagesTextEdit, itemType);
         gMessagesTE = NULL;
         messagesOk = false;
+    }
+    // --- Initialize Scroll Bar ---
+    if (messagesOk) { // Only init scrollbar if TE field is okay
+        log_message("Getting item %d info (Messages Scrollbar)...", kMessagesScrollbar);
+        GetDialogItem(gMainWindow, kMessagesScrollbar, &itemType, &itemHandle, &scrollBarRect);
+        // Use literal 16 for scrollBarProc (Inside Mac IV, pg 6-16)
+        // THIS CHECK IS WRONG:
+        // if (itemType == ctrlItem + 16) {
+
+        // CORRECTED CHECK: Check if it's a control item type
+        if (itemType == ctrlItem) {
+             gMessagesScrollBar = (ControlHandle)itemHandle;
+             // SetControlReference(gMessagesScrollBar, (long)gMessagesTE); // Optional: associate TE handle
+             log_message("Scrollbar handle obtained: 0x%lX (Item Type was: %d)", (unsigned long)gMessagesScrollBar, itemType);
+             AdjustMessagesScrollbar(); // Set initial state (max=0, hidden)
+             scrollBarOk = true;
+        } else {
+             // Log the actual type found vs expected ctrlItem (4)
+             log_message("ERROR: Item %d is not a Control Item (Type: %d, Expected %d)!", kMessagesScrollbar, itemType, ctrlItem);
+             gMessagesScrollBar = NULL;
+             scrollBarOk = false;
+        }
     }
 
     log_message("Getting item %d info (Input UserItem)...", kInputTextEdit);
@@ -106,8 +173,8 @@ Boolean InitDialog(void) {
         gInputTE = NULL;
         inputOk = false;
     }
-    gDialogTEInitialized = (messagesOk && inputOk);
-    log_message("Dialog TE fields initialization complete (Success: %s).", gDialogTEInitialized ? "YES" : "NO");
+    gDialogTEInitialized = (messagesOk && inputOk && scrollBarOk); // Add scrollbar check
+    log_message("Dialog TE fields & Scrollbar initialization complete (Success: %s).", gDialogTEInitialized ? "YES" : "NO");
 
     // --- Initialize List Manager Field ---
     log_message("Getting item %d info (Peer List UserItem)...", kPeerListUserItem);
@@ -164,6 +231,8 @@ Boolean InitDialog(void) {
 
 void CleanupDialog(void) {
     log_message("Cleaning up Dialog...");
+    // Scroll bar is owned by the dialog, no need to dispose explicitly
+    gMessagesScrollBar = NULL;
 
     if (gPeerListHandle != NULL) {
         log_message("Disposing Peer List...");
@@ -250,6 +319,7 @@ void HandleDialogClick(DialogPtr dialog, short itemHit, EventRecord *theEvent) {
             // Add cases for kMessagesTextEdit and kInputTextEdit if needed,
             // although TEActivate/TEDeactivate usually handle focus clicks.
             // LClick handles clicks within the list itself.
+            // Scrollbar clicks are handled in main event loop via FindControl/TrackControl
             default:
                  // Click might be outside any active item, e.g., to activate TE field
                  // Need local coordinates for TEClick
@@ -422,9 +492,8 @@ void AppendToMessagesTE(const char *text) {
             // Let TEAutoView handle scrolling, let update event handle drawing
             InvalRect(&(**gMessagesTE).viewRect); // <-- Use InvalRect
 
-            // REMOVED manual TEScroll
-            // REMOVED TECalText
-            // REMOVED forced TEUpdate
+            // Adjust scrollbar after text changes
+            AdjustMessagesScrollbar(); // <-- Adjust scrollbar state
 
         } else {
             log_message("Warning: Messages TE field is full. Cannot append.");
@@ -459,6 +528,16 @@ void ActivateDialogTE(Boolean activating) {
             TEDeactivate(gInputTE);
         }
     }
+    // Activate/Deactivate scroll bar along with the window/TE field
+    if (gMessagesScrollBar != NULL) {
+        if (activating) {
+             // Could highlight active scroll bar if desired, but usually not needed
+             // HiliteControl(gMessagesScrollBar, 0);
+        } else {
+             // Could dim inactive scroll bar if desired
+             // HiliteControl(gMessagesScrollBar, 255);
+        }
+    }
 }
 
 // Renamed from UpdateDialogTE to reflect it updates more controls now
@@ -478,6 +557,7 @@ void UpdateDialogControls(void) {
         GetDialogItem(gMainWindow, kMessagesTextEdit, &itemTypeIgnored, &itemHandleIgnored, &itemRect);
         // TEUpdate is still needed here for general window updates (expose, etc.)
         TEUpdate(&itemRect, gMessagesTE);
+        AdjustMessagesScrollbar(); // <-- Adjust scrollbar on update too
     }
     if (gInputTE != NULL) {
         GetDialogItem(gMainWindow, kInputTextEdit, &itemTypeIgnored, &itemHandleIgnored, &itemRect);
@@ -489,6 +569,9 @@ void UpdateDialogControls(void) {
         // Use LUpdate with the window's visRgn.
         LUpdate(windowPort->visRgn, gPeerListHandle);
     }
+
+    // Draw all controls (including scroll bar)
+    DrawControls(gMainWindow); // <-- Draw controls
 
     SetPort(oldPort); // Restore original port
 }
@@ -587,4 +670,56 @@ void UpdatePeerDisplayList(Boolean forceRedraw) {
     } else {
          // log_message("Peer list checked, no changes needed."); // Can be verbose
     }
+}
+
+// New function to adjust the scroll bar based on TE state
+void AdjustMessagesScrollbar(void) {
+    if (gMessagesTE == NULL || gMessagesScrollBar == NULL) return;
+
+    SignedByte teState = HGetState((Handle)gMessagesTE);
+    HLock((Handle)gMessagesTE);
+
+    if (*gMessagesTE != NULL) {
+        short lineHeight = (**gMessagesTE).lineHeight;
+        short linesInView;
+        short firstVisibleLine;
+        short totalLines = (**gMessagesTE).nLines;
+        short maxScroll;
+
+        if (lineHeight > 0) {
+            linesInView = ((**gMessagesTE).viewRect.bottom - (**gMessagesTE).viewRect.top) / lineHeight;
+            // Calculate the first visible line based on destRect's top edge relative to viewRect's top edge
+            // destRect.top is negative when scrolled down.
+            firstVisibleLine = -(**gMessagesTE).destRect.top / lineHeight;
+        } else {
+            linesInView = 0;
+            firstVisibleLine = 0;
+        }
+
+        if (linesInView < 1) linesInView = 1; // Avoid division by zero or negative
+
+        maxScroll = totalLines - linesInView;
+        if (maxScroll < 0) maxScroll = 0;
+
+        // Check if scrollbar state needs changing
+        if (GetControlMaximum(gMessagesScrollBar) != maxScroll || GetControlValue(gMessagesScrollBar) != firstVisibleLine) {
+             SetControlMaximum(gMessagesScrollBar, maxScroll);
+             SetControlValue(gMessagesScrollBar, firstVisibleLine);
+        }
+
+        // Show/Hide scrollbar
+        if (maxScroll > 0) {
+            // Check if it's already visible to avoid unnecessary calls
+            if (! (**gMessagesScrollBar).contrlVis) {
+                 ShowControl(gMessagesScrollBar);
+            }
+        } else {
+            // Check if it's already hidden
+            if ((**gMessagesScrollBar).contrlVis) {
+                 HideControl(gMessagesScrollBar);
+            }
+        }
+    }
+
+    HSetState((Handle)gMessagesTE, teState);
 }

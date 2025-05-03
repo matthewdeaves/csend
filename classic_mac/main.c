@@ -12,6 +12,7 @@
 #include <Menus.h>
 #include <Devices.h>
 #include <Lists.h> // <-- Include List Manager header
+#include <Controls.h> // <-- Include Controls header
 #include <stdlib.h>
 
 #include "logging.h"
@@ -63,7 +64,7 @@ int main(void) {
     dialogOk = InitDialog();
     if (!dialogOk) {
         log_message("Fatal: Dialog initialization failed. Exiting.");
-        CleanupUDPDiscoveryEndpoint(gMacTCPRefNum); // Cleanup UDP
+        // CleanupUDPDiscoveryEndpoint called within CleanupNetworking now
         CleanupNetworking(); // Cleanup network
         CloseLogFile();
         return 1;
@@ -95,7 +96,7 @@ void MainEventLoop(void) {
     EventRecord event;
     Boolean gotEvent;
     // Use a shorter sleep time to allow more frequent idle task checks
-    long sleepTime = 10L; // Check roughly 6 times per second
+    long sleepTime = 5L; // Check roughly 12 times per second
 
     while (!gDone) {
         // Idle TextEdit fields
@@ -189,6 +190,8 @@ void HandleIdleTasks(void) {
 void HandleEvent(EventRecord *event) {
     short windowPart;
     WindowPtr whichWindow;
+    ControlHandle whichControl; // For scrollbar handling
+    short controlPart; // For scrollbar handling
 
     switch (event->what) {
         case mouseDown:
@@ -218,18 +221,21 @@ void HandleEvent(EventRecord *event) {
                          if (whichWindow != FrontWindow()) {
                              SelectWindow(whichWindow);
                          } else {
-                             // Click in content of front window - could be TE or List
-                             // DialogSelect handles item clicks, but we might need
-                             // to handle clicks outside items or pass to TE/List directly.
-                             // LClick is now handled via DialogSelect -> HandleDialogClick
-                             // TEClick might be needed if DialogSelect doesn't handle it.
                              Point localPt = event->where;
                              GlobalToLocal(&localPt);
-                             if (gInputTE && PtInRect(localPt, &(**gInputTE).viewRect)) { // Use PtInRect
+                             // Check for clicks in controls FIRST
+                             controlPart = FindControl(localPt, whichWindow, &whichControl);
+                             if (whichControl == gMessagesScrollBar && controlPart != 0) {
+                                 // Click in our scroll bar
+                                 controlPart = TrackControl(whichControl, localPt, &MyScrollAction);
+                                 // MyScrollAction handles the actual scrolling
+                             } else if (gInputTE && PtInRect(localPt, &(**gInputTE).viewRect)) {
                                  // Let DialogSelect handle TE activation/clicks if possible
-                             } else if (gPeerListHandle && PtInRect(localPt, &(**gPeerListHandle).rView)) { // Use PtInRect
+                                 // (DialogSelect is called if IsDialogEvent is true)
+                             } else if (gPeerListHandle && PtInRect(localPt, &(**gPeerListHandle).rView)) {
                                  // LClick is handled via DialogSelect now
                              }
+                             // Clicks elsewhere in content are ignored for now
                          }
                      }
                     break;
@@ -251,7 +257,7 @@ void HandleEvent(EventRecord *event) {
                 BeginUpdate(whichWindow);
                 // Draw standard dialog items (buttons, checkboxes, static text)
                 DrawDialog(whichWindow);
-                // Custom drawing for user items (TE and List)
+                // Custom drawing for user items (TE and List) AND controls
                 UpdateDialogControls(); // Call the renamed update function
                 EndUpdate(whichWindow);
             }
@@ -259,7 +265,7 @@ void HandleEvent(EventRecord *event) {
 
         case activateEvt:
             whichWindow = (WindowPtr)event->message;
-            if (whichWindow == (WindowPtr)gMainWindow) {
+            if (whichWindow == (WindowPtr)event->message) {
                 // Activate/Deactivate TextEdit fields
                 ActivateDialogTE((event->modifiers & activeFlag) != 0);
                 // List Manager selection visibility is handled by LUpdate/LClick
