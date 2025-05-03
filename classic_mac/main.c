@@ -15,7 +15,7 @@
 #include <Controls.h> // <-- Include Controls header
 #include <stdlib.h>
 
-#include "logging.h"
+#include "logging.h" // Includes log_message AND log_to_file_only
 #include "network.h"
 #include "discovery.h"
 #include "dialog.h"
@@ -107,6 +107,7 @@ void MainEventLoop(void) {
         gotEvent = WaitNextEvent(everyEvent, &event, sleepTime, NULL);
 
         if (gotEvent) {
+            // Prioritize DialogSelect for events it handles (clicks in items, keypresses for TE)
             if (IsDialogEvent(&event)) {
                 DialogPtr whichDialog;
                 short itemHit;
@@ -114,12 +115,17 @@ void MainEventLoop(void) {
                 if (DialogSelect(&event, &whichDialog, &itemHit)) {
                     if (whichDialog == gMainWindow && itemHit > 0) {
                         // Pass the address of the event record to HandleDialogClick
-                        HandleDialogClick(whichDialog, itemHit, &event); // <-- Corrected call
+                        HandleDialogClick(whichDialog, itemHit, &event);
                     }
                 }
-            } else {
-                HandleEvent(&event);
+                 // If DialogSelect returns false, it might still be an event we handle manually (like scrollbar)
+                 // Fall through to HandleEvent only if DialogSelect didn't handle it *and* it's relevant?
+                 // For now, let's assume DialogSelect handles what it needs to, and HandleEvent handles the rest.
+                 // This might need refinement if DialogSelect consumes events we need later.
             }
+            // Handle events not processed by DialogSelect (like mouseDown in scrollbar, updates, activates)
+            HandleEvent(&event);
+
         } else {
             // No event, perform idle tasks
             HandleIdleTasks();
@@ -190,8 +196,9 @@ void HandleIdleTasks(void) {
 void HandleEvent(EventRecord *event) {
     short windowPart;
     WindowPtr whichWindow;
-    ControlHandle whichControl; // For scrollbar handling
-    short controlPart; // For scrollbar handling
+    ControlHandle foundControl; // Use a different name to avoid confusion with gMessagesScrollBar
+    short foundControlPart; // Use a different name
+    GrafPtr oldPort; // To save/restore port
 
     switch (event->what) {
         case mouseDown:
@@ -210,32 +217,99 @@ void HandleEvent(EventRecord *event) {
                     break;
                 case inGoAway:
                     if (whichWindow == (WindowPtr)gMainWindow) {
-                        if (TrackGoAway(whichWindow, event->where)) {
-                            log_message("Close box clicked. Setting gDone = true.");
-                            gDone = true; // Signal loop to terminate
-                        }
+                         if (TrackGoAway(whichWindow, event->where)) {
+                              log_message("Close box clicked. Setting gDone = true.");
+                              gDone = true; // Signal loop to terminate
+                         }
                     }
                     break;
                 case inContent:
                      if (whichWindow == (WindowPtr)gMainWindow) {
                          if (whichWindow != FrontWindow()) {
                              SelectWindow(whichWindow);
+                             // Don't process click further if window wasn't front
                          } else {
                              Point localPt = event->where;
+                             // Ensure correct port before GlobalToLocal and FindControl
+                             GetPort(&oldPort);
+                             SetPort(GetWindowPort(gMainWindow));
                              GlobalToLocal(&localPt);
+                             // *** Use file-only logging for scrollbar interaction ***
+                             log_to_file_only("HandleEvent: MouseDown inContent at local (%d, %d)", localPt.v, localPt.h); // Log local coords
+
                              // Check for clicks in controls FIRST
-                             controlPart = FindControl(localPt, whichWindow, &whichControl);
-                             if (whichControl == gMessagesScrollBar && controlPart != 0) {
-                                 // Click in our scroll bar
-                                 controlPart = TrackControl(whichControl, localPt, &MyScrollAction);
-                                 // MyScrollAction handles the actual scrolling
-                             } else if (gInputTE && PtInRect(localPt, &(**gInputTE).viewRect)) {
-                                 // Let DialogSelect handle TE activation/clicks if possible
-                                 // (DialogSelect is called if IsDialogEvent is true)
-                             } else if (gPeerListHandle && PtInRect(localPt, &(**gPeerListHandle).rView)) {
-                                 // LClick is handled via DialogSelect now
+                             foundControlPart = FindControl(localPt, whichWindow, &foundControl);
+                             log_to_file_only("HandleEvent: FindControl result: part=%d, control=0x%lX", foundControlPart, (unsigned long)foundControl);
+
+                             // *** SCROLLBAR HANDLING ***
+                             if (foundControl == gMessagesScrollBar && foundControlPart != 0) {
+                                 log_to_file_only("HandleEvent: Click identified in gMessagesScrollBar (part %d).", foundControlPart);
+                                 // Check if the control is active before tracking
+                                 short hiliteState = (**foundControl).contrlHilite;
+                                 log_to_file_only("HandleEvent: Scrollbar hilite state = %d (0=active, 255=inactive)", hiliteState);
+
+                                 if (hiliteState == 0) { // 0 = active
+                                     if (foundControlPart == 129 /* inThumb */) {
+                                         // Click in the thumb - Use TrackControl WITHOUT Action Proc
+                                         log_to_file_only("HandleEvent: Tracking scrollbar thumb...");
+                                         short oldValue = GetControlValue(foundControl);
+                                         foundControlPart = TrackControl(foundControl, localPt, nil); // Pass nil for action proc
+                                         log_to_file_only("HandleEvent: TrackControl(thumb) returned part %d", foundControlPart);
+
+                                         // Check if tracking occurred (TrackControl returns partcode if successful)
+                                         // Even if it returns 0, the value might have been set on mouseDown
+                                         short newValue = GetControlValue(foundControl);
+                                         log_to_file_only("HandleEvent: Thumb tracking finished. OldVal=%d, NewVal=%d", oldValue, newValue);
+
+                                         if (newValue != oldValue && gMessagesTE != NULL) {
+                                             // Value changed, scroll the TE field
+                                             SignedByte teState = HGetState((Handle)gMessagesTE);
+                                             HLock((Handle)gMessagesTE);
+                                             if (*gMessagesTE != NULL) {
+                                                 short lineHeight = (**gMessagesTE).lineHeight;
+                                                 Rect viewRectToInvalidate = (**gMessagesTE).viewRect; // Copy viewRect
+                                                 if (lineHeight > 0) {
+                                                     short scrollDeltaPixels = (oldValue - newValue) * lineHeight;
+                                                     log_to_file_only("HandleEvent: Scrolling TE by %d pixels due to thumb drag.", scrollDeltaPixels);
+                                                     TEScroll(0, scrollDeltaPixels, gMessagesTE);
+                                                     // *** ADD INVALIDATION AFTER SCROLL ***
+                                                     InvalRect(&viewRectToInvalidate);
+                                                     log_to_file_only("HandleEvent: Invalidated TE viewRect after thumb drag.");
+                                                 } else {
+                                                      log_to_file_only("HandleEvent: Thumb drag - lineHeight is 0!");
+                                                 }
+                                             } else {
+                                                 log_to_file_only("HandleEvent: Thumb drag - gMessagesTE deref failed!");
+                                             }
+                                             HSetState((Handle)gMessagesTE, teState);
+                                         } else if (newValue == oldValue) {
+                                             log_to_file_only("HandleEvent: Thumb tracking finished, value didn't change.");
+                                         }
+
+                                     } else {
+                                         // Click in arrows or page region - Use TrackControl with Action Proc
+                                         log_to_file_only("HandleEvent: Tracking scrollbar part %d with action proc at 0x%lX...", foundControlPart, (unsigned long)&MyScrollAction);
+                                         foundControlPart = TrackControl(foundControl, localPt, &MyScrollAction);
+                                         log_to_file_only("HandleEvent: TrackControl with action proc finished (returned %d).", foundControlPart);
+                                         // MyScrollAction handles SetControlValue, TEScroll, AND InvalRect now
+                                     }
+                                 } else {
+                                     log_to_file_only("HandleEvent: Scrollbar clicked but inactive (hilite=%d).", hiliteState);
+                                 }
+                             // *** END SCROLLBAR HANDLING ***
+
+                             } else {
+                                 // Click was not in the scrollbar, or FindControl returned 0.
+                                 // Let DialogSelect handle clicks in TE/List items if it hasn't already.
+                                 // We might need TEClick here if DialogSelect isn't used or doesn't cover it.
+                                 log_to_file_only("HandleEvent: Click not in scrollbar or FindControl returned 0.");
+                                 // Example: Check for TE click if DialogSelect doesn't handle it
+                                 // if (gInputTE && PtInRect(localPt, &(**gInputTE).viewRect)) {
+                                 //    log_message("HandleEvent: Passing click to TEClick for Input TE."); // Normal log ok here
+                                 //    TEClick(localPt, (event->modifiers & shiftKey) != 0, gInputTE);
+                                 // }
                              }
-                             // Clicks elsewhere in content are ignored for now
+                             SetPort(oldPort); // Restore port after handling click
                          }
                      }
                     break;
@@ -246,9 +320,18 @@ void HandleEvent(EventRecord *event) {
 
         case keyDown:
         case autoKey:
-            // Key events are usually handled by DialogSelect for TE fields
-            // If not using modal dialog loop, might need TEKey here.
-            // For now, assume DialogSelect handles it.
+            // Let DialogSelect handle key events if possible.
+            // If DialogSelect isn't used or doesn't handle keys for the active TE field,
+            // you would call TEKey here.
+            // Example:
+            // if (gMainWindow == (DialogPtr)FrontWindow()) {
+            //    // Determine which TE field has focus (if any) and call TEKey
+            //    // This requires tracking focus, which DialogSelect normally does.
+            //    // For simplicity, assume DialogSelect handles it if IsDialogEvent was true.
+            //    if (gInputTE != NULL) { // Crude check - assumes input TE always has focus if window front
+            //         TEKey(event->message & charCodeMask, gInputTE);
+            //    }
+            // }
             break;
 
         case updateEvt:
@@ -265,8 +348,10 @@ void HandleEvent(EventRecord *event) {
 
         case activateEvt:
             whichWindow = (WindowPtr)event->message;
-            if (whichWindow == (WindowPtr)event->message) {
-                // Activate/Deactivate TextEdit fields
+            // Check if the window being activated/deactivated is our main window
+            if (whichWindow == (WindowPtr)gMainWindow) {
+                log_message("HandleEvent: ActivateEvt for gMainWindow. Modifiers: %d (activeFlag=%d)", event->modifiers, activeFlag);
+                // Activate/Deactivate TextEdit fields and potentially controls
                 ActivateDialogTE((event->modifiers & activeFlag) != 0);
                 // List Manager selection visibility is handled by LUpdate/LClick
             }
