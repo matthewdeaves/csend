@@ -20,11 +20,13 @@
 #define kInputTextEdit    3 // UserItem for Input TE
 #define kSendButton       4 // Button
 #define kBroadcastCheckbox 5 // Checkbox
+#define kMessagesScrollbar 6 // Scrollbar for Messages TE <-- ADD THIS
 
 extern DialogPtr gMainWindow;
 extern TEHandle gMessagesTE;
 extern TEHandle gInputTE;
 extern ListHandle gPeerListHandle; // <-- Add ListHandle global
+extern ControlHandle gMessagesScrollBar; // <-- ADD THIS
 extern Boolean gDialogTEInitialized; // Tracks TE fields init state
 extern Boolean gDialogListInitialized; // <-- Tracks List Manager init state
 extern char gMyUsername[32];
@@ -39,5 +41,8 @@ void AppendToMessagesTE(const char *text);
 void ActivateDialogTE(Boolean activating);
 void UpdateDialogControls(void); // <-- Renamed from UpdateDialogTE
 void UpdatePeerDisplayList(Boolean forceRedraw); // <-- Add declaration
+void AdjustMessagesScrollbar(void); // <-- ADD THIS
+pascal void MyScrollAction(ControlHandle theControl, short partCode); // <-- ADD THIS (Action Proc)
+
 
 #endif // DIALOG_H
