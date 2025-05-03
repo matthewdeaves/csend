@@ -1,48 +1,35 @@
-//====================================
-// FILE: ./classic_mac/dialog.h
-//====================================
-
 #ifndef DIALOG_H
-#define DIALOG_H
-
+#define DIALOG_H 
 #include <MacTypes.h>
 #include <Dialogs.h>
 #include <TextEdit.h>
 #include <Controls.h>
-#include <Lists.h> // <-- Include List Manager header
-#include <Events.h> // <-- Include Events header for EventRecord
-
+#include <Lists.h>
+#include <Events.h>
 #define kBaseResID 128
-
-// Dialog Item IDs (matching csend.r DITL)
-#define kPeerListUserItem 1 // UserItem for List Manager
-#define kMessagesTextEdit 2 // UserItem for Messages TE
-#define kInputTextEdit    3 // UserItem for Input TE
-#define kSendButton       4 // Button
-#define kBroadcastCheckbox 5 // Checkbox
-#define kMessagesScrollbar 6 // Scrollbar for Messages TE <-- ADD THIS
-
+#define kPeerListUserItem 1
+#define kMessagesTextEdit 2
+#define kInputTextEdit 3
+#define kSendButton 4
+#define kBroadcastCheckbox 5
+#define kMessagesScrollbar 6
 extern DialogPtr gMainWindow;
 extern TEHandle gMessagesTE;
 extern TEHandle gInputTE;
-extern ListHandle gPeerListHandle; // <-- Add ListHandle global
-extern ControlHandle gMessagesScrollBar; // <-- ADD THIS
-extern Boolean gDialogTEInitialized; // Tracks TE fields init state
-extern Boolean gDialogListInitialized; // <-- Tracks List Manager init state
+extern ListHandle gPeerListHandle;
+extern ControlHandle gMessagesScrollBar;
+extern Boolean gDialogTEInitialized;
+extern Boolean gDialogListInitialized;
 extern char gMyUsername[32];
-extern Cell gLastSelectedCell; // <-- To store the selected cell coordinates
-
+extern Cell gLastSelectedCell;
 Boolean InitDialog(void);
 void CleanupDialog(void);
-// Correct the declaration to accept EventRecord*
-void HandleDialogClick(DialogPtr dialog, short itemHit, EventRecord *theEvent); // <-- Pass the event record
+void HandleDialogClick(DialogPtr dialog, short itemHit, EventRecord *theEvent);
 void DoSendAction(DialogPtr dialog);
 void AppendToMessagesTE(const char *text);
 void ActivateDialogTE(Boolean activating);
-void UpdateDialogControls(void); // <-- Renamed from UpdateDialogTE
-void UpdatePeerDisplayList(Boolean forceRedraw); // <-- Add declaration
-void AdjustMessagesScrollbar(void); // <-- ADD THIS
-pascal void MyScrollAction(ControlHandle theControl, short partCode); // <-- ADD THIS (Action Proc)
-
-
-#endif // DIALOG_H
+void UpdateDialogControls(void);
+void UpdatePeerDisplayList(Boolean forceRedraw);
+void AdjustMessagesScrollbar(void);
+pascal void MyScrollAction(ControlHandle theControl, short partCode);
+#endif
