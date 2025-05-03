@@ -134,20 +134,16 @@ Boolean InitDialog(void) {
     if (messagesOk) { // Only init scrollbar if TE field is okay
         log_message("Getting item %d info (Messages Scrollbar)...", kMessagesScrollbar);
         GetDialogItem(gMainWindow, kMessagesScrollbar, &itemType, &itemHandle, &scrollBarRect);
-        // Use literal 16 for scrollBarProc (Inside Mac IV, pg 6-16)
-        // THIS CHECK IS WRONG:
-        // if (itemType == ctrlItem + 16) {
+        log_message("DEBUG: GetDialogItem for item %d returned type %d, handle 0x%lX.", kMessagesScrollbar, itemType, (unsigned long)itemHandle); // Log type AND handle
 
-        // CORRECTED CHECK: Check if it's a control item type
-        if (itemType == ctrlItem) {
+        // TEMPORARY DEBUG: Bypass itemType check, trust the handle if not NULL
+        if (itemHandle != NULL) { // <<< USE THIS CHECK FOR NOW
              gMessagesScrollBar = (ControlHandle)itemHandle;
-             // SetControlReference(gMessagesScrollBar, (long)gMessagesTE); // Optional: associate TE handle
-             log_message("Scrollbar handle obtained: 0x%lX (Item Type was: %d)", (unsigned long)gMessagesScrollBar, itemType);
-             AdjustMessagesScrollbar(); // Set initial state (max=0, hidden)
-             scrollBarOk = true;
+             log_message("DEBUG: Forcing scrollbar handle assignment based on non-NULL handle: 0x%lX", (unsigned long)gMessagesScrollBar);
+             AdjustMessagesScrollbar(); // Set initial state
+             scrollBarOk = true; // Assume okay for now
         } else {
-             // Log the actual type found vs expected ctrlItem (4)
-             log_message("ERROR: Item %d is not a Control Item (Type: %d, Expected %d)!", kMessagesScrollbar, itemType, ctrlItem);
+             log_message("ERROR: GetDialogItem returned NULL handle for item %d. Type was %d.", kMessagesScrollbar, itemType);
              gMessagesScrollBar = NULL;
              scrollBarOk = false;
         }
