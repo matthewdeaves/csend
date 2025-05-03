@@ -66,6 +66,8 @@ REZFLAGS = -I"$(RINCLUDES)" # Quote the path
 
 MAC_DIR = classic_mac
 SHARED_DIR = shared
+# Define the directory containing the MPW resource file
+MPW_RES_DIR = MPW_resources
 
 BUILD_BASE_DIR = build
 BUILD_DIR = $(BUILD_BASE_DIR)/classic_mac
@@ -89,7 +91,9 @@ OBJS = $(MAC_OBJS) $(SHARED_OBJS)
 
 # --- Resource and Target Definitions ---
 
-R_FILE_MAC = $(MAC_DIR)/csend.r
+# *** UPDATED RESOURCE FILE PATH ***
+R_FILE_MAC = $(MPW_RES_DIR)/csend.r
+
 INTERMEDIATE_TARGET = $(OBJ_DIR)/csend-mac.code.bin
 
 TARGET_MAC_BASE = $(BUILD_DIR)/csend-mac

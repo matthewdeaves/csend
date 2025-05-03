@@ -6,4 +6,5 @@ extern FILE *gLogFile;
 void InitLogFile(void);
 void CloseLogFile(void);
 void log_message(const char *format, ...);
+void log_to_file_only(const char *format, ...);
 #endif
