@@ -14,7 +14,6 @@ OSErr InitializeNetworking(void) {
     ParamBlockRec pb;
     CntrlParam cntrlPB;
     log_message("Initializing Networking...");
-    PrintUDPiopbLayout();
     pb.ioParam.ioNamePtr = (StringPtr)kTCPDriverName;
     pb.ioParam.ioPermssn = fsCurPerm;
     log_message("Attempting PBOpenSync for .IPP driver...");
