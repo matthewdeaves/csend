@@ -77,7 +77,7 @@ Boolean InitDialog(void) {
             messagesOk = false;
         } else {
             log_message("TENew succeeded for Messages TE. Handle: 0x%lX", (unsigned long)gMessagesTE);
-            TEAutoView(false, gMessagesTE); // Keep TEAutoView disabled for messages
+            TEAutoView(true, gMessagesTE); // <-- Re-enable TEAutoView for messages
             messagesOk = true;
         }
     } else {
@@ -391,8 +391,8 @@ void DoSendAction(DialogPtr dialog) {
     }
 }
 
+// Reverted to simpler version, relying on TEAutoView and InvalRect
 void AppendToMessagesTE(const char *text) {
-    Boolean scroll = false; // Flag to indicate if scrolling is needed
     GrafPtr oldPort; // To restore port
 
     if (gMessagesTE == NULL || !gDialogTEInitialized) {
@@ -412,32 +412,19 @@ void AppendToMessagesTE(const char *text) {
 
     if (*gMessagesTE != NULL) {
         long currentLength = (**gMessagesTE).teLength;
-        long selStart = (**gMessagesTE).selStart;
-        long selEnd = (**gMessagesTE).selEnd;
-
-        // Check if selection is already at the end (insertion point at end)
-        if (selStart == currentLength && selEnd == currentLength) {
-            scroll = true;
-        }
 
         // Check if adding text exceeds TE limit (32K) - simple check
         if (currentLength + strlen(text) < 32000) {
             TESetSelect(currentLength, currentLength, gMessagesTE); // Select end
             TEInsert((Ptr)text, strlen(text), gMessagesTE);
 
-            // Scroll to show the new text ONLY if insertion point was at the end
-            if (scroll) {
-                TEScroll(0, (**gMessagesTE).nLines * (**gMessagesTE).lineHeight, gMessagesTE);
-            }
-
-            // Recalculate line breaks AFTER inserting and scrolling
-            TECalText(gMessagesTE); // <-- Add TECalText
-
-            // Invalidate the view rectangle AFTER all modifications
+            // Invalidate the view rectangle AFTER inserting text
+            // Let TEAutoView handle scrolling, let update event handle drawing
             InvalRect(&(**gMessagesTE).viewRect); // <-- Use InvalRect
 
-            // Remove the forced TEUpdate call
-            // TEUpdate(&(**gMessagesTE).viewRect, gMessagesTE);
+            // REMOVED manual TEScroll
+            // REMOVED TECalText
+            // REMOVED forced TEUpdate
 
         } else {
             log_message("Warning: Messages TE field is full. Cannot append.");
