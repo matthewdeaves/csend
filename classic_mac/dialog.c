@@ -24,7 +24,6 @@
 DialogPtr gMainWindow = NULL;
 Boolean gDialogTEInitialized = false;
 Boolean gDialogListInitialized = false;
-char gMyUsername[32] = "MacUser";
 Boolean InitDialog(void) {
     Boolean messagesOk = false;
     Boolean inputOk = false;
@@ -72,7 +71,7 @@ void CleanupDialog(void) {
 }
 void HandleDialogClick(DialogPtr dialog, short itemHit, EventRecord *theEvent) {
     if (dialog != gMainWindow) return;
-    log_to_file_only("HandleDialogClick called for item %d (Potentially redundant with HandleEvent).", itemHit);
+    log_to_file_only("HandleDialogClick called for item %d (Potentially redundant).", itemHit);
 }
 void HandleSendButtonClick(void) {
     char inputCStr[256];
