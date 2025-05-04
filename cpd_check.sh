@@ -13,7 +13,7 @@ EXCLUDE_PATTERNS=( -path '*/.finf' -o -path '*/.rsrc' )
 LANGUAGE="c"
 # File matching expression array for find. Separate elements for find syntax.
 # Parentheses must be separate arguments. Use single quotes around * glob.
-FILE_MATCHING_EXPR=( '(' -name '*.c' ')' )
+FILE_MATCHING_EXPR=( '(' -name '*.c' -not -path 'classic_mac/DNR.c' ')' )
 # Example for C and H files:
 # FILE_MATCHING_EXPR=( '(' -name '*.c' -o -name '*.h' ')' )
 
