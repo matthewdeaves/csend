@@ -63,7 +63,6 @@ int send_message(const char *ip, const char *message, const char *msg_type, cons
         return -1;
     }
     if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        perror("TCP connection failed");
         close(sock);
         return -1;
     }
@@ -92,10 +91,10 @@ void *listener_thread(void *arg) {
     int client_sock;
     char buffer[BUFFER_SIZE];
     char sender_ip[INET_ADDRSTRLEN];
+    char sender_ip_from_payload[INET_ADDRSTRLEN];
     char sender_username[32];
     char msg_type[32];
     char content[BUFFER_SIZE];
-    char sender_ip_from_payload[INET_ADDRSTRLEN];
     fd_set readfds;
     struct timeval timeout;
     ssize_t bytes_read;
@@ -113,11 +112,11 @@ void *listener_thread(void *arg) {
         if (!state->running) {
             break;
         }
-        if (activity <= 0) {
+        if (activity == 0) {
             continue;
         }
         if ((client_sock = accept(state->tcp_socket, (struct sockaddr *)&client_addr, &addrlen)) < 0) {
-            if (errno != EINTR) {
+            if (errno != EINTR && state->running) {
                 perror("TCP accept failed");
             }
             continue;
@@ -139,9 +138,9 @@ void *listener_thread(void *arg) {
                     log_message("Peer %s@%s has sent QUIT notification", sender_username, sender_ip);
                     pthread_mutex_lock(&state->peers_mutex);
                     for (int i = 0; i < MAX_PEERS; i++) {
-                        if (state->peers[i].active && strcmp(state->peers[i].ip, sender_ip) == 0) {
-                            state->peers[i].active = 0;
-                            log_message("Marked peer %s@%s as inactive.", state->peers[i].username, state->peers[i].ip);
+                        if (state->peer_manager.peers[i].active && strcmp(state->peer_manager.peers[i].ip, sender_ip) == 0) {
+                            state->peer_manager.peers[i].active = 0;
+                            log_message("Marked peer %s@%s as inactive.", state->peer_manager.peers[i].username, state->peer_manager.peers[i].ip);
                             break;
                         }
                     }
@@ -153,7 +152,9 @@ void *listener_thread(void *arg) {
         } else if (bytes_read == 0) {
             log_message("Peer %s disconnected.", sender_ip);
         } else {
-            perror("TCP read failed");
+            if (state->running) {
+               perror("TCP read failed");
+            }
         }
         close(client_sock);
     }

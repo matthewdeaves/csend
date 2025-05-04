@@ -141,21 +141,21 @@ void UpdatePeerDisplayList(Boolean forceRedraw) {
     }
     int newSelectionIndex = -1;
     for (int i = 0; i < MAX_PEERS; i++) {
-        if (gPeerList[i].active) {
-            const char *displayName = (gPeerList[i].username[0] != '\0') ? gPeerList[i].username : "???";
-            sprintf(peerStr, "%s@%s", displayName, gPeerList[i].ip);
+        if (gPeerManager.peers[i].active) {
+            const char *displayName = (gPeerManager.peers[i].username[0] != '\0') ? gPeerManager.peers[i].username : "???";
+            sprintf(peerStr, "%s@%s", displayName, gPeerManager.peers[i].ip);
             LAddRow(1, activePeerCount, gPeerListHandle);
             SetPt(&theCell, 0, activePeerCount);
             LSetCell(peerStr, strlen(peerStr), theCell, gPeerListHandle);
-            if (hadOldSelection && strcmp(gPeerList[i].ip, oldSelectedPeerData.ip) == 0) {
+            if (hadOldSelection && strcmp(gPeerManager.peers[i].ip, oldSelectedPeerData.ip) == 0) {
                  newSelectionIndex = activePeerCount;
                  selectionStillValid = true;
             }
             activePeerCount++;
         }
     }
-     (**gPeerListHandle).dataBounds.bottom = activePeerCount;
-     if (selectionStillValid && newSelectionIndex >= 0) {
+    (**gPeerListHandle).dataBounds.bottom = activePeerCount;
+    if (selectionStillValid && newSelectionIndex >= 0) {
          SetPt(&theCell, 0, newSelectionIndex);
          LSetSelect(true, theCell, gPeerListHandle);
          gLastSelectedCell = theCell;
@@ -165,9 +165,9 @@ void UpdatePeerDisplayList(Boolean forceRedraw) {
             log_to_file_only("UpdatePeerDisplayList: Selection invalidated or no previous selection.");
          }
          SetPt(&gLastSelectedCell, 0, -1);
-         Cell tempCell = {0,0};
          if (activePeerCount > 0) {
-             LSetSelect(false, tempCell, gPeerListHandle);
+             Cell firstCell = {0, 0};
+             LSetSelect(false, firstCell, gPeerListHandle);
          }
      }
     HSetState((Handle)gPeerListHandle, listState);

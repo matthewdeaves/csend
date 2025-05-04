@@ -3,10 +3,11 @@
 #include <time.h>
 #include <pthread.h>
 #include <signal.h>
-#include "common_defs.h"
+#include "../shared/common_defs.h"
+#include "../shared/peer_shared.h"
 typedef struct app_state_t {
     volatile sig_atomic_t running;
-    peer_t peers[MAX_PEERS];
+    peer_manager_t peer_manager;
     int tcp_socket;
     int udp_socket;
     char username[32];
