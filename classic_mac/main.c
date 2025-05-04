@@ -15,13 +15,31 @@
 #include "discovery.h"
 #include "dialog.h"
 #include "peer_mac.h"
+#include "dialog_peerlist.h"
+#ifndef inThumb
+#define inThumb 129
+#endif
+#ifndef inUpButton
+#define inUpButton 20
+#endif
+#ifndef inDownButton
+#define inDownButton 21
+#endif
+#ifndef inPageUp
+#define inPageUp 22
+#endif
+#ifndef inPageDown
+#define inPageDown 23
+#endif
 Boolean gDone = false;
 unsigned long gLastPeerListUpdateTime = 0;
 const unsigned long kPeerListUpdateIntervalTicks = 5 * 60;
 void InitializeToolbox(void);
 void MainEventLoop(void);
 void HandleEvent(EventRecord *event);
+void HandleMouseDownInContent(EventRecord *event);
 void HandleIdleTasks(void);
+void PruneInactivePeers(void);
 int main(void) {
     OSErr networkErr;
     Boolean dialogOk;
@@ -38,7 +56,7 @@ int main(void) {
         return 1;
     }
     networkErr = InitUDPDiscoveryEndpoint(gMacTCPRefNum);
-    if (networkErr != noErr) {
+     if (networkErr != noErr) {
         log_message("Fatal: UDP Discovery initialization failed (%d). Exiting.", networkErr);
         CleanupNetworking();
         CloseLogFile();
@@ -79,16 +97,72 @@ void MainEventLoop(void) {
         if (gInputTE != NULL) TEIdle(gInputTE);
         gotEvent = WaitNextEvent(everyEvent, &event, sleepTime, NULL);
         if (gotEvent) {
-            if (IsDialogEvent(&event)) {
-                DialogPtr whichDialog;
-                short itemHit;
-                if (DialogSelect(&event, &whichDialog, &itemHit)) {
-                    if (whichDialog == gMainWindow && itemHit > 0) {
-                        HandleDialogClick(whichDialog, itemHit, &event);
+            Boolean eventHandled = false;
+            if (event.what == mouseDown) {
+                WindowPtr whichWindow;
+                short windowPart = FindWindow(event.where, &whichWindow);
+                if (whichWindow == (WindowPtr)gMainWindow && windowPart == inContent) {
+                    Point localPt = event.where;
+                    ControlHandle foundControl;
+                    short foundControlPart;
+                    GrafPtr oldPort;
+                    GetPort(&oldPort);
+                    SetPort(GetWindowPort(gMainWindow));
+                    GlobalToLocal(&localPt);
+                    foundControlPart = FindControl(localPt, whichWindow, &foundControl);
+                    if (foundControl == gMessagesScrollBar && foundControlPart != 0) {
+                        log_to_file_only("MainEventLoop: Handling mouseDown on Messages Scrollbar (part %d) BEFORE DialogSelect.", foundControlPart);
+                        short hiliteState = (**foundControl).contrlHilite;
+                        if (hiliteState == 0) {
+                            if (foundControlPart == inThumb) {
+                                short oldValue = GetControlValue(foundControl);
+                                foundControlPart = TrackControl(foundControl, localPt, nil);
+                                short newValue = GetControlValue(foundControl);
+                                if (newValue != oldValue && gMessagesTE != NULL) {
+                                    SignedByte teState = HGetState((Handle)gMessagesTE); HLock((Handle)gMessagesTE);
+                                    if (*gMessagesTE != NULL) {
+                                        short lineHeight = (**gMessagesTE).lineHeight;
+                                        if (lineHeight > 0) {
+                                            short currentActualTopLine = -(**gMessagesTE).destRect.top / lineHeight;
+                                            short scrollDeltaPixels = (currentActualTopLine - newValue) * lineHeight;
+                                            ScrollMessagesTE(scrollDeltaPixels);
+                                        }
+                                    } HSetState((Handle)gMessagesTE, teState);
+                                }
+                            } else {
+                                TrackControl(foundControl, localPt, &MyScrollAction);
+                            }
+                        } else { log_to_file_only("MainEventLoop: Messages scrollbar clicked but inactive."); }
+                        eventHandled = true;
                     }
+                    SetPort(oldPort);
                 }
             }
-            HandleEvent(&event);
+            if (!eventHandled) {
+                if (IsDialogEvent(&event)) {
+                    DialogPtr whichDialog;
+                    short itemHit;
+                    if (DialogSelect(&event, &whichDialog, &itemHit)) {
+                        if (whichDialog == gMainWindow && itemHit > 0) {
+                             log_to_file_only("DialogSelect returned TRUE for item %d.", itemHit);
+                             if (itemHit == kSendButton) {
+                                 HandleSendButtonClick();
+                             } else if (itemHit == kBroadcastCheckbox) {
+                                 log_to_file_only("Broadcast checkbox state changed by DialogSelect.");
+                             } else if (itemHit == kMessagesScrollbar) {
+                                 log_message("WARNING: DialogSelect handled item %d (Messages Scrollbar) - Should have been handled earlier!", itemHit);
+                             } else {
+                                 log_to_file_only("DialogSelect handled item %d.", itemHit);
+                             }
+                        }
+                    } else {
+                         log_to_file_only("IsDialogEvent=TRUE, but DialogSelect=FALSE (what=%d)", event.what);
+                         HandleEvent(&event);
+                    }
+                } else {
+                     HandleEvent(&event);
+                }
+            }
         } else {
             HandleIdleTasks();
         }
@@ -119,6 +193,7 @@ void HandleIdleTasks(void) {
             if (bfrReturnResult != noErr) {
                 log_message("CRITICAL Error (Idle): Polled async udpBfrReturn completed with error: %d.", bfrReturnResult);
             } else {
+                 log_to_file_only("Idle: Async udpBfrReturn completed successfully.");
             }
             if (!gUDPReadPending) {
                 StartAsyncUDPRead();
@@ -139,12 +214,48 @@ void HandleIdleTasks(void) {
         gLastPeerListUpdateTime = currentTimeTicks;
     }
 }
+void HandleMouseDownInContent(EventRecord *event) {
+    WindowPtr whichWindow = (WindowPtr)gMainWindow;
+    Point localPt = event->where;
+    GrafPtr oldPort;
+    if (whichWindow != FrontWindow()) {
+        SelectWindow(whichWindow);
+        return;
+    }
+    GetPort(&oldPort);
+    SetPort(GetWindowPort(whichWindow));
+    GlobalToLocal(&localPt);
+    log_to_file_only("HandleMouseDownInContent: Processing click at local (%d, %d)", localPt.v, localPt.h);
+        SignedByte teState = HGetState((Handle)gInputTE); HLock((Handle)gInputTE);
+        Boolean inInputView = false;
+        if (*gInputTE != NULL) inInputView = PtInRect(localPt, &(**gInputTE).viewRect);
+        HSetState((Handle)gInputTE, teState);
+        if (inInputView) {
+            HandleInputTEClick(gMainWindow, event);
+        } else {
+            SignedByte listState = HGetState((Handle)gPeerListHandle); HLock((Handle)gPeerListHandle);
+            Boolean inListView = false;
+            if (*gPeerListHandle != NULL) inListView = PtInRect(localPt, &(**gPeerListHandle).rView);
+            HSetState((Handle)gPeerListHandle, listState);
+            if (inListView) {
+                HandlePeerListClick(gMainWindow, event);
+            } else {
+                teState = HGetState((Handle)gMessagesTE); HLock((Handle)gMessagesTE);
+                Boolean inMessagesView = false;
+                if (*gMessagesTE != NULL) inMessagesView = PtInRect(localPt, &(**gMessagesTE).viewRect);
+                HSetState((Handle)gMessagesTE, teState);
+                if (inMessagesView) {
+                    log_to_file_only("HandleMouseDownInContent: Click in Messages TE viewRect.");
+                } else {
+                    log_to_file_only("HandleMouseDownInContent: Click in content not handled.");
+                }
+            }
+        }
+    SetPort(oldPort);
+}
 void HandleEvent(EventRecord *event) {
     short windowPart;
     WindowPtr whichWindow;
-    ControlHandle foundControl;
-    short foundControlPart;
-    GrafPtr oldPort;
     switch (event->what) {
         case mouseDown:
             windowPart = FindWindow(event->where, &whichWindow);
@@ -169,63 +280,7 @@ void HandleEvent(EventRecord *event) {
                     break;
                 case inContent:
                      if (whichWindow == (WindowPtr)gMainWindow) {
-                         if (whichWindow != FrontWindow()) {
-                             SelectWindow(whichWindow);
-                         } else {
-                             Point localPt = event->where;
-                             GetPort(&oldPort);
-                             SetPort(GetWindowPort(gMainWindow));
-                             GlobalToLocal(&localPt);
-                             log_to_file_only("HandleEvent: MouseDown inContent at local (%d, %d)", localPt.v, localPt.h);
-                             foundControlPart = FindControl(localPt, whichWindow, &foundControl);
-                             log_to_file_only("HandleEvent: FindControl result: part=%d, control=0x%lX", foundControlPart, (unsigned long)foundControl);
-                             if (foundControl == gMessagesScrollBar && foundControlPart != 0) {
-                                 log_to_file_only("HandleEvent: Click identified in gMessagesScrollBar (part %d).", foundControlPart);
-                                 short hiliteState = (**foundControl).contrlHilite;
-                                 log_to_file_only("HandleEvent: Scrollbar hilite state = %d (0=active, 255=inactive)", hiliteState);
-                                 if (hiliteState == 0) {
-                                     if (foundControlPart == 129 ) {
-                                         log_to_file_only("HandleEvent: Tracking scrollbar thumb...");
-                                         short oldValue = GetControlValue(foundControl);
-                                         foundControlPart = TrackControl(foundControl, localPt, nil);
-                                         log_to_file_only("HandleEvent: TrackControl(thumb) returned part %d", foundControlPart);
-                                         short newValue = GetControlValue(foundControl);
-                                         log_to_file_only("HandleEvent: Thumb tracking finished. OldVal=%d, NewVal=%d", oldValue, newValue);
-                                         if (newValue != oldValue && gMessagesTE != NULL) {
-                                             SignedByte teState = HGetState((Handle)gMessagesTE);
-                                             HLock((Handle)gMessagesTE);
-                                             if (*gMessagesTE != NULL) {
-                                                 short lineHeight = (**gMessagesTE).lineHeight;
-                                                 Rect viewRectToInvalidate = (**gMessagesTE).viewRect;
-                                                 if (lineHeight > 0) {
-                                                     short scrollDeltaPixels = (oldValue - newValue) * lineHeight;
-                                                     log_to_file_only("HandleEvent: Scrolling TE by %d pixels due to thumb drag.", scrollDeltaPixels);
-                                                     TEScroll(0, scrollDeltaPixels, gMessagesTE);
-                                                     InvalRect(&viewRectToInvalidate);
-                                                     log_to_file_only("HandleEvent: Invalidated TE viewRect after thumb drag.");
-                                                 } else {
-                                                      log_to_file_only("HandleEvent: Thumb drag - lineHeight is 0!");
-                                                 }
-                                             } else {
-                                                 log_to_file_only("HandleEvent: Thumb drag - gMessagesTE deref failed!");
-                                             }
-                                             HSetState((Handle)gMessagesTE, teState);
-                                         } else if (newValue == oldValue) {
-                                             log_to_file_only("HandleEvent: Thumb tracking finished, value didn't change.");
-                                         }
-                                     } else {
-                                         log_to_file_only("HandleEvent: Tracking scrollbar part %d with action proc at 0x%lX...", foundControlPart, (unsigned long)&MyScrollAction);
-                                         foundControlPart = TrackControl(foundControl, localPt, &MyScrollAction);
-                                         log_to_file_only("HandleEvent: TrackControl with action proc finished (returned %d).", foundControlPart);
-                                     }
-                                 } else {
-                                     log_to_file_only("HandleEvent: Scrollbar clicked but inactive (hilite=%d).", hiliteState);
-                                 }
-                             } else {
-                                 log_to_file_only("HandleEvent: Click not in scrollbar or FindControl returned 0.");
-                             }
-                             SetPort(oldPort);
-                         }
+                         HandleMouseDownInContent(event);
                      }
                     break;
                 default:
@@ -247,11 +302,16 @@ void HandleEvent(EventRecord *event) {
         case activateEvt:
             whichWindow = (WindowPtr)event->message;
             if (whichWindow == (WindowPtr)gMainWindow) {
-                log_message("HandleEvent: ActivateEvt for gMainWindow. Modifiers: %d (activeFlag=%d)", event->modifiers, activeFlag);
-                ActivateDialogTE((event->modifiers & activeFlag) != 0);
+                Boolean becomingActive = ((event->modifiers & activeFlag) != 0);
+                log_message("HandleEvent: ActivateEvt for gMainWindow -> BecomingActive=%d", becomingActive);
+                ActivateDialogTE(becomingActive);
+                ActivatePeerList(becomingActive);
             }
             break;
         default:
             break;
     }
+}
+void PruneInactivePeers(void) {
+    log_to_file_only("PruneInactivePeers called (dummy implementation).");
 }

@@ -15,4 +15,5 @@ Boolean HandlePeerListClick(DialogPtr dialog, EventRecord *theEvent);
 void UpdatePeerDisplayList(Boolean forceRedraw);
 void HandlePeerListUpdate(DialogPtr dialog);
 Boolean GetSelectedPeerInfo(peer_t *outPeer);
+void ActivatePeerList(Boolean activating);
 #endif

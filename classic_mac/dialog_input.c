@@ -7,6 +7,7 @@
 #include <Windows.h>
 #include <Memory.h>
 #include <string.h>
+TEHandle gInputTE = NULL;
 Boolean InitInputTE(DialogPtr dialog) {
     DialogItemType itemType;
     Handle itemHandle;
@@ -16,7 +17,7 @@ Boolean InitInputTE(DialogPtr dialog) {
     if (itemType == userItem) {
         viewRectInput = destRectInput;
         InsetRect(&viewRectInput, 1, 1);
-        log_message("Calling TENew for Input TE (Rect: T%d,L%d,B%d,R%d; View: T%d,L%d,B%d,R%d)",
+        log_message("Calling TENew for Input TE (Dest: T%d,L%d,B%d,R%d; View: T%d,L%d,B%d,R%d)",
                     destRectInput.top, destRectInput.left, destRectInput.bottom, destRectInput.right,
                     viewRectInput.top, viewRectInput.left, viewRectInput.bottom, viewRectInput.right);
         gInputTE = TENew(&destRectInput, &viewRectInput);
@@ -76,7 +77,12 @@ void HandleInputTEUpdate(DialogPtr dialog) {
         GetPort(&oldPort);
         SetPort(GetWindowPort(dialog));
         GetDialogItem(dialog, kInputTextEdit, &itemTypeIgnored, &itemHandleIgnored, &itemRect);
-        TEUpdate(&itemRect, gInputTE);
+        SignedByte teState = HGetState((Handle)gInputTE);
+        HLock((Handle)gInputTE);
+        if (*gInputTE != NULL) {
+             TEUpdate(&itemRect, gInputTE);
+        }
+        HSetState((Handle)gInputTE, teState);
         SetPort(oldPort);
     }
 }
@@ -84,8 +90,11 @@ void ActivateInputTE(Boolean activating) {
     if (gInputTE != NULL) {
         if (activating) {
             TEActivate(gInputTE);
+            TESetSelect((**gInputTE).teLength, (**gInputTE).teLength, gInputTE);
+            log_to_file_only("ActivateInputTE: Activating Input TE.");
         } else {
             TEDeactivate(gInputTE);
+            log_to_file_only("ActivateInputTE: Deactivating Input TE.");
         }
     }
 }
