@@ -3,11 +3,6 @@
 #include <MacTypes.h>
 #include <Devices.h>
 #include <MacTCP.h>
-#define udpCreate UDPCreate
-#define udpRead UDPRead
-#define udpBfrReturn UDPBfrReturn
-#define udpWrite UDPWrite
-#define udpRelease UDPRelease
 #include "common_defs.h"
 #include "peer_mac.h"
 #define BROADCAST_IP 0xFFFFFFFFUL
@@ -27,4 +22,5 @@ OSErr SendDiscoveryResponseSync(short macTCPRefNum, const char *myUsername, cons
 OSErr ReturnUDPBufferAsync(Ptr dataPtr, unsigned short bufferSize);
 void ProcessUDPReceive(short macTCPRefNum, ip_addr myLocalIP);
 void CheckSendBroadcast(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr);
+void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP);
 #endif

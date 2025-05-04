@@ -1,4 +1,3 @@
-
 **Classic Mac Dialog/Control Handling Notes:**
 
 *   **Global Definitions:** Define global variables (`gMainWindow`, `gMessagesTE`, etc.) in *one* `.c` file only. Use `extern` declarations in headers for other files to access them. Avoid definitions in multiple `.c` files to prevent linker errors.
@@ -25,3 +24,30 @@
 *   **DITL Item Numbers:** Ensure `#define` constants (e.g., `kMessagesScrollbar`) exactly match the item numbers in the `DITL` resource. Mismatches cause `GetDialogItem` to fail (returning NULL handle, type 0).
 *   **`GetDialogItem` Checks:** When retrieving controls, ideally check both `itemHandle != NULL` and `itemType == (ctrlItem + expectedProcID)`. If using only `itemHandle != NULL`, be certain the DITL item number is correct.
 
+**Classic MacTCP Programming Notes:**
+
+*   **Single Stream Listener Model:** For servers handling sequential connections (one at a time), the typical MacTCP approach uses a single `StreamPtr`:
+    1.  Create the stream once using `TCPCreate`.
+    2.  Listen for an incoming connection using `TCPPassiveOpen` on that stream.
+    3.  Upon successful completion of `TCPPassiveOpen`, use `TCPRcv` on the *same stream* to receive data.
+    4.  After the connection ends (error, remote close, application decision), explicitly `TCPClose` the connection on the stream.
+    5.  After `TCPClose` completes, go back to step 2 (`TCPPassiveOpen`) on the *same stream* to wait for the next connection.
+*   **`TCPCreate` Buffer (`csParam.create.rcvBuff`):**
+    *   This call requires a non-zero buffer pointer and length. This buffer is for MacTCP's internal use with the stream.
+    *   Errors like `-23006` (`duplicateSocket`) during `TCPCreate` might indicate an issue with this buffer (e.g., size too small). Providing a reasonably large buffer (e.g., 8192 bytes, matching the application's receive buffer) can resolve such issues.
+*   **Re-Listening Issue (`-23007 connectionExists`):**
+    *   Attempting to call `TCPPassiveOpen` again on a stream immediately after a connection on it has finished (e.g., after `TCPRcv` returns `connectionClosing` or after processing a `QUIT` message) often fails with `-23007` (`connectionExists`).
+    *   MacTCP needs an explicit action to fully disassociate the previous connection from the stream/port before it can listen again.
+*   **Solution: Explicit `TCPClose` Before Re-Listen:**
+    *   To reliably allow `TCPPassiveOpen` to succeed after a connection finishes, call `TCPClose` on the stream.
+    *   Wait for the asynchronous `TCPClose` to complete.
+    *   *Then* initiate `TCPPassiveOpen` again.
+*   **`TCPClose` Action (`csParam.close.ulpTimeoutAction`):**
+    *   Using the `Abort` action (`ulpTimeoutAction = 1`) for `TCPClose` seems effective in quickly clearing the connection state and resolving the `-23007` error when re-listening. Set `csParam.close.validityFlags` to include `timeoutAction`.
+*   **Asynchronous Operation State Management:**
+    *   Maintain boolean flags (e.g., `gTCPListenPending`, `gTCPRecvPending`, `gTCPClosePending`) for each asynchronous operation.
+    *   Set the flag to `true` *before* calling `PBControlAsync`.
+    *   In the polling loop, check `ioResult <= 0` to detect completion.
+    *   Clear the corresponding flag *before* handling the completion result or initiating the next operation in the sequence.
+    *   Ensure incompatible operations aren't started while another is pending on the same stream (e.g., don't `TCPPassiveOpen` if `TCPClose` is pending).
+*   **Error Handling:** Check `ioResult` after asynchronous operations complete. Handle specific errors like `connectionClosing` (graceful), `connectionTerminated` (abort), `invalidStreamPtr` (critical), etc., according to the desired application logic and MacTCP documentation. Critical errors might require releasing the stream (`TCPRelease`) instead of just closing.
