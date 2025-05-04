@@ -4,6 +4,9 @@
 #include "protocol.h"
 #include "peer_mac.h"
 #include "common_defs.h"
+#include "dialog_messages.h"
+#include "dialog_input.h"
+#include "dialog_peerlist.h"
 #include <MacTypes.h>
 #include <Dialogs.h>
 #include <TextEdit.h>
@@ -19,14 +22,9 @@
 #include <string.h>
 #include <stdlib.h>
 DialogPtr gMainWindow = NULL;
-TEHandle gMessagesTE = NULL;
-TEHandle gInputTE = NULL;
-ListHandle gPeerListHandle = NULL;
-ControlHandle gMessagesScrollBar = NULL;
 Boolean gDialogTEInitialized = false;
 Boolean gDialogListInitialized = false;
 char gMyUsername[32] = "MacUser";
-Cell gLastSelectedCell = {0, 0};
 Boolean InitDialog(void) {
     Boolean messagesOk = false;
     Boolean inputOk = false;
@@ -73,86 +71,10 @@ void CleanupDialog(void) {
     log_message("Dialog cleanup complete.");
 }
 void HandleDialogClick(DialogPtr dialog, short itemHit, EventRecord *theEvent) {
-    ControlHandle checkboxHandle;
-    DialogItemType itemType;
-    Handle itemHandle;
-    Rect itemRect;
-    short currentValue;
-    Boolean clickHandled = false;
     if (dialog != gMainWindow) return;
-    GetDialogItem(dialog, kPeerListUserItem, &itemType, &itemHandle, &itemRect);
-    if (PtInRect(theEvent->where, &itemRect)) {
-        Point localClick = theEvent->where;
-        GrafPtr oldPort;
-        GetPort(&oldPort);
-        SetPort(GetWindowPort(dialog));
-        GlobalToLocal(&localClick);
-        SetPort(oldPort);
-        SignedByte listState = HGetState((Handle)gPeerListHandle);
-        HLock((Handle)gPeerListHandle);
-        Boolean inView = false;
-        if (*gPeerListHandle != NULL) {
-            inView = PtInRect(localClick, &(**gPeerListHandle).rView);
-        }
-        HSetState((Handle)gPeerListHandle, listState);
-        if (inView) {
-            clickHandled = HandlePeerListClick(dialog, theEvent);
-        } else {
-            log_to_file_only("Click in Peer List item rect, but outside LClick view rect.");
-        }
-    }
-    if (!clickHandled) {
-        switch (itemHit) {
-            case kSendButton:
-                log_message("Send button clicked.");
-                DoSendAction(dialog);
-                clickHandled = true;
-                break;
-            case kBroadcastCheckbox:
-                GetDialogItem(dialog, kBroadcastCheckbox, &itemType, &itemHandle, &itemRect);
-                if (itemType == (ctrlItem + chkCtrl)) {
-                    checkboxHandle = (ControlHandle)itemHandle;
-                    currentValue = GetControlValue(checkboxHandle);
-                    SetControlValue(checkboxHandle, !currentValue);
-                    log_message("Broadcast checkbox toggled to: %s", !currentValue ? "ON" : "OFF");
-                } else {
-                    log_message("Warning: Item %d clicked, but not a checkbox!", kBroadcastCheckbox);
-                }
-                clickHandled = true;
-                break;
-            case kMessagesTextEdit:
-            case kInputTextEdit:
-            case kPeerListUserItem:
-            case kMessagesScrollbar:
-                log_to_file_only("Ignoring click on userItem/scrollbar item %d in HandleDialogClick.", itemHit);
-                break;
-            default:
-                 {
-                     Point localPt = theEvent->where;
-                     GrafPtr oldPort;
-                     GetPort(&oldPort);
-                     SetPort(GetWindowPort(dialog));
-                     GlobalToLocal(&localPt);
-                     SetPort(oldPort);
-                     SignedByte teState = HGetState((Handle)gInputTE);
-                     HLock((Handle)gInputTE);
-                     Boolean inInputView = false;
-                     if (*gInputTE != NULL) {
-                         inInputView = PtInRect(localPt, &(**gInputTE).viewRect);
-                     }
-                     HSetState((Handle)gInputTE, teState);
-                     if (inInputView) {
-                         HandleInputTEClick(dialog, theEvent);
-                         clickHandled = true;
-                     } else {
-                         log_to_file_only("HandleDialogClick: Click in content not handled (itemHit %d).", itemHit);
-                     }
-                 }
-                break;
-        }
-    }
+    log_to_file_only("HandleDialogClick called for item %d (Potentially redundant with HandleEvent).", itemHit);
 }
-void DoSendAction(DialogPtr dialog) {
+void HandleSendButtonClick(void) {
     char inputCStr[256];
     char formattedMsg[BUFFER_SIZE];
     ControlHandle checkboxHandle;
@@ -170,11 +92,11 @@ void DoSendAction(DialogPtr dialog) {
         log_message("Send Action: Input field is empty.");
         return;
     }
-    GetDialogItem(dialog, kBroadcastCheckbox, &itemType, &itemHandle, &itemRect);
+    GetDialogItem(gMainWindow, kBroadcastCheckbox, &itemType, &itemHandle, &itemRect);
     if (itemType == (ctrlItem + chkCtrl)) {
         checkboxHandle = (ControlHandle)itemHandle;
         isBroadcast = (GetControlValue(checkboxHandle) == 1);
-        log_message("Broadcast checkbox state: %s", isBroadcast ? "Checked" : "Unchecked");
+        log_to_file_only("Broadcast checkbox state: %s", isBroadcast ? "Checked" : "Unchecked");
     } else {
         log_message("Warning: Broadcast item %d is not a checkbox! Assuming not broadcast.", kBroadcastCheckbox);
         isBroadcast = false;
@@ -226,11 +148,4 @@ void UpdateDialogControls(void) {
     HandlePeerListUpdate(gMainWindow);
     DrawControls(gMainWindow);
     SetPort(oldPort);
-}
-pascal void MyScrollAction(ControlHandle theControl, short partCode) {
-    if (theControl == gMessagesScrollBar) {
-        HandleMessagesScrollClick(theControl, partCode);
-    } else {
-         log_to_file_only("MyScrollAction: Ignoring unknown control 0x%lX", (unsigned long)theControl);
-    }
 }

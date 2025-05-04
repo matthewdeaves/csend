@@ -11,12 +11,15 @@
 #include <Resources.h>
 #include <stdio.h>
 #include <string.h>
+ListHandle gPeerListHandle = NULL;
+Cell gLastSelectedCell = {0, -1};
 Boolean InitPeerListControl(DialogPtr dialog) {
     DialogItemType itemType;
     Handle itemHandle;
     Rect destRectList, dataBounds;
     Point cellSize;
     FontInfo fontInfo;
+    Boolean listOk = false;
     log_message("Initializing Peer List Control...");
     GetDialogItem(dialog, kPeerListUserItem, &itemType, &itemHandle, &destRectList);
     if (itemType == userItem) {
@@ -39,18 +42,19 @@ Boolean InitPeerListControl(DialogPtr dialog) {
                                true, false, false, true);
         if (gPeerListHandle == NULL) {
             log_message("CRITICAL ERROR: LNew failed for Peer List! (Error: %d)", ResError());
-            return false;
+            listOk = false;
         } else {
             log_message("LNew succeeded for Peer List. Handle: 0x%lX", (unsigned long)gPeerListHandle);
             (*gPeerListHandle)->selFlags = lOnlyOne;
             LActivate(true, gPeerListHandle);
-            return true;
+            listOk = true;
         }
     } else {
         log_message("ERROR: Item %d is NOT a UserItem (Type: %d)! Expected UserItem for LNew.", kPeerListUserItem, itemType);
         gPeerListHandle = NULL;
-        return false;
+        listOk = false;
     }
+    return listOk;
 }
 void CleanupPeerListControl(void) {
     log_message("Cleaning up Peer List Control...");
@@ -72,24 +76,26 @@ Boolean HandlePeerListClick(DialogPtr dialog, EventRecord *theEvent) {
          SetPort(oldPort);
          SignedByte listState = HGetState((Handle)gPeerListHandle);
          HLock((Handle)gPeerListHandle);
-         Boolean clickedInside = false;
+         Boolean clickedInsideView = false;
          if (*gPeerListHandle != NULL) {
-             clickedInside = PtInRect(localClick, &(**gPeerListHandle).rView);
+             clickedInsideView = PtInRect(localClick, &(**gPeerListHandle).rView);
          } else {
              log_message("HandlePeerListClick Error: gPeerListHandle deref failed!");
          }
          HSetState((Handle)gPeerListHandle, listState);
-         if (clickedInside) {
-             log_message("HandlePeerListClick: Click inside Peer List view rect. Calling LClick.");
+         if (clickedInsideView) {
+             log_to_file_only("HandlePeerListClick: Click inside Peer List view rect. Calling LClick.");
              listClicked = LClick(localClick, theEvent->modifiers, gPeerListHandle);
-             if (!LGetSelect(true, &gLastSelectedCell, gPeerListHandle)) {
-                 SetPt(&gLastSelectedCell, 0, 0);
-                 log_message("HandlePeerListClick: No selection after LClick.");
+             Cell tempCell = {0,-1};
+             if (!LGetSelect(true, &tempCell, gPeerListHandle)) {
+                 SetPt(&gLastSelectedCell, 0, -1);
+                 log_to_file_only("HandlePeerListClick: No selection after LClick.");
              } else {
-                 log_message("HandlePeerListClick: Peer list item selected: Row %d, Col %d", gLastSelectedCell.v, gLastSelectedCell.h);
+                 gLastSelectedCell = tempCell;
+                 log_to_file_only("HandlePeerListClick: Peer list item selected: Row %d, Col %d", gLastSelectedCell.v, gLastSelectedCell.h);
              }
          } else {
-              log_message("HandlePeerListClick: Click was outside Peer List view rect.");
+              log_to_file_only("HandlePeerListClick: Click was outside Peer List view rect.");
          }
     }
     return listClicked;
@@ -102,9 +108,14 @@ void UpdatePeerDisplayList(Boolean forceRedraw) {
     SignedByte listState;
     Boolean selectionStillValid = false;
     Cell oldSelection = gLastSelectedCell;
+    peer_t oldSelectedPeerData;
+    Boolean hadOldSelection = false;
     if (gPeerListHandle == NULL) {
         log_message("Skipping UpdatePeerDisplayList: List not initialized.");
         return;
+    }
+    if (oldSelection.v >= 0) {
+        hadOldSelection = GetSelectedPeerInfo(&oldSelectedPeerData);
     }
     listState = HGetState((Handle)gPeerListHandle);
     HLock((Handle)gPeerListHandle);
@@ -115,9 +126,11 @@ void UpdatePeerDisplayList(Boolean forceRedraw) {
     }
     currentListLength = (**gPeerListHandle).dataBounds.bottom;
     if (currentListLength > 0) {
-        LDelRow(0, 0, gPeerListHandle);
+        LDelRow(currentListLength, 0, gPeerListHandle);
+         log_to_file_only("UpdatePeerDisplayList: Deleted %d rows.", currentListLength);
     }
     PruneTimedOutPeers();
+    int newSelectionIndex = -1;
     for (int i = 0; i < MAX_PEERS; i++) {
         if (gPeerList[i].active) {
             const char *displayName = (gPeerList[i].username[0] != '\0') ? gPeerList[i].username : "???";
@@ -125,21 +138,22 @@ void UpdatePeerDisplayList(Boolean forceRedraw) {
             LAddRow(1, activePeerCount, gPeerListHandle);
             SetPt(&theCell, 0, activePeerCount);
             LSetCell(peerStr, strlen(peerStr), theCell, gPeerListHandle);
-            if (oldSelection.v == activePeerCount) {
+            if (hadOldSelection && strcmp(gPeerList[i].ip, oldSelectedPeerData.ip) == 0) {
+                 newSelectionIndex = activePeerCount;
                  selectionStillValid = true;
             }
             activePeerCount++;
         }
     }
      (**gPeerListHandle).dataBounds.bottom = activePeerCount;
-     if (selectionStillValid && oldSelection.v < activePeerCount) {
-         LSetSelect(true, oldSelection, gPeerListHandle);
-         gLastSelectedCell = oldSelection;
+     if (selectionStillValid && newSelectionIndex >= 0) {
+         SetPt(&theCell, 0, newSelectionIndex);
+         LSetSelect(true, theCell, gPeerListHandle);
+         gLastSelectedCell = theCell;
+         log_to_file_only("UpdatePeerDisplayList: Reselected peer '%s' at new row %d.", oldSelectedPeerData.ip, newSelectionIndex);
      } else {
-         if (oldSelection.v >= 0 && oldSelection.v < currentListLength) {
-            LSetSelect(false, oldSelection, gPeerListHandle);
-         }
-         SetPt(&gLastSelectedCell, 0, 0);
+         SetPt(&gLastSelectedCell, 0, -1);
+         log_to_file_only("UpdatePeerDisplayList: Selection invalidated or no previous selection.");
      }
     HSetState((Handle)gPeerListHandle, listState);
     if (forceRedraw || activePeerCount != currentListLength) {
@@ -183,19 +197,26 @@ Boolean GetSelectedPeerInfo(peer_t *outPeer) {
     }
     int selectedDisplayRow = gLastSelectedCell.v;
     int current_active_count = 0;
-    PruneTimedOutPeers();
     for (int i = 0; i < MAX_PEERS; i++) {
         if (gPeerList[i].active) {
             if (current_active_count == selectedDisplayRow) {
                 *outPeer = gPeerList[i];
                 log_to_file_only("GetSelectedPeerInfo: Found selected peer '%s'@'%s' at display row %d (data index %d).",
-                                 outPeer->username, outPeer->ip, selectedDisplayRow, i);
+                                 (outPeer->username[0] ? outPeer->username : "???"), outPeer->ip, selectedDisplayRow, i);
                 return true;
             }
             current_active_count++;
         }
     }
-    log_message("GetSelectedPeerInfo Warning: Selected row %d is out of bounds for current active peers (%d).",
+    log_message("GetSelectedPeerInfo Warning: Selected row %d is out of bounds or peer timed out (current active peers: %d).",
                 selectedDisplayRow, current_active_count);
+    SetPt(&gLastSelectedCell, 0, -1);
     return false;
+}
+void ActivatePeerList(Boolean activating) {
+    if (gPeerListHandle != NULL) {
+        LActivate(activating, gPeerListHandle);
+        log_to_file_only("ActivatePeerList: List 0x%lX %s.",
+                         (unsigned long)gPeerListHandle, activating ? "activated" : "deactivated");
+    }
 }

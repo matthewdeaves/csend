@@ -15,4 +15,5 @@ void HandleMessagesScrollClick(ControlHandle theControl, short partCode);
 void HandleMessagesTEUpdate(DialogPtr dialog);
 void ActivateMessagesTEAndScrollbar(Boolean activating);
 void ScrollMessagesTE(short deltaPixels);
+pascal void MyScrollAction(ControlHandle theControl, short partCode);
 #endif
