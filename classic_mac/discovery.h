@@ -20,7 +20,6 @@ OSErr StartAsyncUDPRead(void);
 OSErr SendDiscoveryBroadcastSync(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr);
 OSErr SendDiscoveryResponseSync(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr, ip_addr destIP, udp_port destPort);
 OSErr ReturnUDPBufferAsync(Ptr dataPtr, unsigned short bufferSize);
-void ProcessUDPReceive(short macTCPRefNum, ip_addr myLocalIP);
 void CheckSendBroadcast(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr);
 void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP);
 #endif
