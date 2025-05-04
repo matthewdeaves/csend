@@ -1,13 +1,55 @@
 #include "discovery.h"
 #include "logging.h"
 #include "../shared/protocol.h"
+#include "../shared/discovery_logic.h"
 #include "network.h"
+#include "peer.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <errno.h>
+#include <pthread.h>
+static void posix_send_discovery_response(uint32_t dest_ip_addr_host, uint16_t dest_port_host, void* platform_context) {
+    app_state_t *state = (app_state_t *)platform_context;
+    char response[BUFFER_SIZE];
+    char local_ip[INET_ADDRSTRLEN];
+    int response_len;
+    struct sockaddr_in dest_addr;
+    if (!state || state->udp_socket < 0) {
+        log_message("Error (posix_send_discovery_response): Invalid state or UDP socket.");
+        return;
+    }
+    if (get_local_ip(local_ip, INET_ADDRSTRLEN) < 0) {
+        log_message("Warning: posix_send_discovery_response failed to get local IP. Using 'unknown'.");
+        strcpy(local_ip, "unknown");
+    }
+    response_len = format_message(response, BUFFER_SIZE, MSG_DISCOVERY_RESPONSE, state->username, local_ip, "");
+    if (response_len <= 0) {
+         log_message("Error: Failed to format discovery response message (buffer too small?).");
+         return;
+    }
+    memset(&dest_addr, 0, sizeof(dest_addr));
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_addr.s_addr = htonl(dest_ip_addr_host);
+    dest_addr.sin_port = htons(dest_port_host);
+    if (sendto(state->udp_socket, response, response_len - 1, 0,
+              (struct sockaddr *)&dest_addr, sizeof(dest_addr)) < 0) {
+        perror("Discovery response sendto failed");
+    } else {
+        log_message("Sent DISCOVERY_RESPONSE to %s:%u", inet_ntoa(dest_addr.sin_addr), dest_port_host);
+    }
+}
+static int posix_add_or_update_peer(const char* ip, const char* username, void* platform_context) {
+    app_state_t *state = (app_state_t *)platform_context;
+    if (!state) return -1;
+    return add_peer(state, ip, username);
+}
+static void posix_notify_peer_list_updated(void* platform_context) {
+    (void)platform_context;
+    log_message("posix_notify_peer_list_updated called (no-op for terminal).");
+}
 int init_discovery(app_state_t *state) {
     struct sockaddr_in address;
     int opt = 1;
@@ -63,74 +105,28 @@ int broadcast_discovery(app_state_t *state) {
         perror("Discovery broadcast sendto failed");
         return -1;
     }
+    log_message("Discovery broadcast sent.");
     return 0;
-}
-int handle_discovery_message(app_state_t *state, const char *buffer, int bytes_read,
-                            char *sender_ip, socklen_t addr_len,
-                            struct sockaddr_in *sender_addr) {
-    char sender_username[32];
-    char msg_type[32];
-    char content[BUFFER_SIZE];
-    char local_ip[INET_ADDRSTRLEN];
-    char sender_ip_from_payload[INET_ADDRSTRLEN];
-    int response_len;
-    if (parse_message(buffer, bytes_read, sender_ip_from_payload, sender_username, msg_type, content) == 0) {
-        if (strcmp(msg_type, MSG_DISCOVERY) == 0) {
-            char response[BUFFER_SIZE];
-            if (get_local_ip(local_ip, INET_ADDRSTRLEN) < 0) {
-                log_message("Warning: handle_discovery_message failed to get local IP for response. Using 'unknown'.");
-                strcpy(local_ip, "unknown");
-            }
-            response_len = format_message(response, BUFFER_SIZE, MSG_DISCOVERY_RESPONSE, state->username, local_ip, "");
-            if (response_len <= 0) {
-                 log_message("Error: Failed to format discovery response message (buffer too small?).");
-            } else {
-                if (sendto(state->udp_socket, response, response_len - 1, 0,
-                          (struct sockaddr *)sender_addr, addr_len) < 0) {
-                    perror("Discovery response sendto failed");
-                }
-            }
-            int add_result = add_peer(state, sender_ip, sender_username);
-            if (add_result > 0) {
-                log_message("New peer discovered via DISCOVERY: %s@%s", sender_username, sender_ip);
-                return 1;
-            } else if (add_result == 0) {
-                return 0;
-            } else {
-                log_message("Peer list full, could not add %s@%s", sender_username, sender_ip);
-                return -1;
-            }
-        }
-        else if (strcmp(msg_type, MSG_DISCOVERY_RESPONSE) == 0) {
-            int add_result = add_peer(state, sender_ip, sender_username);
-            if (add_result > 0) {
-                log_message("New peer discovered via RESPONSE: %s@%s", sender_username, sender_ip);
-                return 1;
-            } else if (add_result == 0) {
-                return 0;
-            } else {
-                log_message("Peer list full, could not add %s@%s", sender_username, sender_ip);
-                return -1;
-            }
-        }
-    } else {
-    }
-    return -1;
 }
 void *discovery_thread(void *arg) {
     app_state_t *state = (app_state_t *)arg;
     struct sockaddr_in sender_addr;
     socklen_t addr_len = sizeof(sender_addr);
     char buffer[BUFFER_SIZE];
-    char sender_ip[INET_ADDRSTRLEN];
-    char local_ip[INET_ADDRSTRLEN];
+    char sender_ip_str[INET_ADDRSTRLEN];
+    char local_ip_str[INET_ADDRSTRLEN];
     time_t last_broadcast = 0;
     int bytes_read;
-    if (get_local_ip(local_ip, INET_ADDRSTRLEN) < 0) {
+    discovery_platform_callbacks_t callbacks = {
+        .send_response_callback = posix_send_discovery_response,
+        .add_or_update_peer_callback = posix_add_or_update_peer,
+        .notify_peer_list_updated_callback = posix_notify_peer_list_updated
+    };
+    if (get_local_ip(local_ip_str, INET_ADDRSTRLEN) < 0) {
         log_message("Warning: Failed to get local IP address for discovery self-check. Using 127.0.0.1.");
-        strcpy(local_ip, "127.0.0.1");
+        strcpy(local_ip_str, "127.0.0.1");
     }
-    log_message("Discovery thread started (local IP: %s)", local_ip);
+    log_message("Discovery thread started (local IP: %s)", local_ip_str);
     broadcast_discovery(state);
     last_broadcast = time(NULL);
     while (state->running) {
@@ -139,17 +135,25 @@ void *discovery_thread(void *arg) {
             last_broadcast = time(NULL);
         }
         memset(buffer, 0, BUFFER_SIZE);
-        bytes_read = recvfrom(state->udp_socket, buffer, BUFFER_SIZE -1, 0,
+        bytes_read = recvfrom(state->udp_socket, buffer, BUFFER_SIZE - 1, 0,
                                  (struct sockaddr *)&sender_addr, &addr_len);
         if (bytes_read > 0) {
-            inet_ntop(AF_INET, &sender_addr.sin_addr, sender_ip, INET_ADDRSTRLEN);
-            if (strcmp(sender_ip, local_ip) == 0) {
+            inet_ntop(AF_INET, &sender_addr.sin_addr, sender_ip_str, INET_ADDRSTRLEN);
+            if (strcmp(sender_ip_str, local_ip_str) == 0) {
+                log_message("Ignored discovery packet from self (%s).", sender_ip_str);
                 continue;
             }
-            handle_discovery_message(state, buffer, bytes_read, sender_ip, addr_len, &sender_addr);
+            uint32_t sender_ip_addr_host = ntohl(sender_addr.sin_addr.s_addr);
+            uint16_t sender_port_host = ntohs(sender_addr.sin_port);
+            discovery_logic_process_packet(buffer, bytes_read,
+                                           sender_ip_str, sender_ip_addr_host, sender_port_host,
+                                           &callbacks,
+                                           state);
         } else if (bytes_read < 0) {
             if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                perror("Discovery recvfrom error");
+                if (state->running) {
+                   perror("Discovery recvfrom error");
+                }
             }
         }
         usleep(100000);
