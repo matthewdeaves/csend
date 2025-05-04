@@ -1,0 +1,27 @@
+
+**Classic Mac Dialog/Control Handling Notes:**
+
+*   **Global Definitions:** Define global variables (`gMainWindow`, `gMessagesTE`, etc.) in *one* `.c` file only. Use `extern` declarations in headers for other files to access them. Avoid definitions in multiple `.c` files to prevent linker errors.
+*   **`DialogSelect` vs. Manual Handling:**
+    *   `DialogSelect` handles standard items (buttons, checkboxes, TE key input) automatically.
+    *   Manual handling (`FindWindow`, `FindControl`, `TrackControl`, `TEClick`, `LClick`) is needed for:
+        *   Clicks in `userItem` areas (TE content, List content).
+        *   Controls requiring custom tracking/action procs (like scrollbars linked to TE).
+    *   Intercept `mouseDown` on custom-tracked controls *before* `DialogSelect` if `DialogSelect` would otherwise consume the event (e.g., standard scrollbar controls).
+*   **List Manager (`LNew`) Scrollbars:**
+    *   If `LNew`'s `scrollVert` parameter is `true`, the List Manager draws and handles its *own* scrollbar *inside* the list's `rView` rectangle.
+    *   There is *no* separate `ControlHandle` for this internal scrollbar.
+    *   Pass `mouseDown` events within the list's `rView` directly to `LClick` - it handles both content clicks and clicks on the internal scrollbar.
+*   **Separate Scrollbar Controls (`GetNewControl` / DITL `ctrlItem`):**
+    *   These have their own `ControlHandle`.
+    *   Require manual handling: `FindControl`, `TrackControl` (with `nil` or an action proc), `SetControlValue`, `GetControlValue`.
+    *   Must be manually linked to the scrolled element (e.g., using `TEScroll` based on scrollbar value changes).
+*   **Control Hilite State (`HiliteControl`):**
+    *   Controls should be dimmed (hilite `255`) when inactive.
+    *   A control is typically inactive if:
+        *   Its window is not the front window (`activateEvt`).
+        *   It's not functional (e.g., scrollbar `max <= min`).
+    *   Update hilite state in *both* the `activateEvt` handler *and* any function that changes the control's functionality (like `AdjustMessagesScrollbar` which updates `max`). Use `FrontWindow()` to check window activity when adjusting hilite outside of `activateEvt`.
+*   **DITL Item Numbers:** Ensure `#define` constants (e.g., `kMessagesScrollbar`) exactly match the item numbers in the `DITL` resource. Mismatches cause `GetDialogItem` to fail (returning NULL handle, type 0).
+*   **`GetDialogItem` Checks:** When retrieving controls, ideally check both `itemHandle != NULL` and `itemType == (ctrlItem + expectedProcID)`. If using only `itemHandle != NULL`, be certain the DITL item number is correct.
+
