@@ -1,109 +1,142 @@
+//====================================
+// FILE: ./classic_mac/tcp.c
+// Implements TCP listening and receiving using a single stream approach.
+// Adds explicit TCPClose(Abort) before re-listening.
+//====================================
+
 #include "tcp.h"
-#include "logging.h"
-#include "protocol.h"
-#include "peer_mac.h"
-#include "dialog_peerlist.h"
-#include "network.h"
-#include <Devices.h>
-#include <Errors.h>
-#include <Memory.h>
-#include <string.h>
-#include <stdio.h>
-#include <MacTCP.h>
+#include "logging.h"      // For log_message, log_to_file_only
+#include "protocol.h"     // For parse_message, MSG_ defines
+#include "peer_mac.h"     // For AddOrUpdatePeer, MarkPeerInactive
+#include "dialog.h"       // For AppendToMessagesTE
+#include "dialog_peerlist.h" // For UpdatePeerDisplayList
+#include "network.h"      // For gMyUsername, gMyLocalIPStr
 
-// Define the recommended buffer size
-#define kTCPRecommendedBufSize 8192
+#include <Devices.h>      // For PBControlSync, PBControlAsync, PBKillIO
+#include <Errors.h>       // For OSErr codes (noErr, etc.)
+#include <Memory.h>       // For NewPtrClear, DisposePtr
+#include <string.h>       // For memset, strcmp, sprintf
+#include <stdio.h>        // For sprintf (used in logging/display)
 
-StreamPtr gTCPListenStream = NULL;      // Pointer for the stream LISTENING for connections
-Ptr gTCPListenRecvBuffer = NULL;    // Buffer specifically for the listener stream
-TCPiopb gTCPListenPB;               // PB for TCPPassiveOpen calls
-Boolean gTCPListenPending = false;
+// MacTCP specific includes (already covered by MacTCP.h via tcp.h)
+// #include <MacTCP.h>
 
-StreamPtr gTCPConnectionStream = NULL;  // Pointer for the CURRENT ACTIVE connection
-Ptr gTCPRecvBuffer = NULL;          // Buffer for receiving data on the active connection
-TCPiopb gTCPRecvPB;                 // PB for TCPRcv calls on the active connection
-TCPiopb gTCPReleasePB;              // PB for TCPRelease calls
-Boolean gTCPRecvPending = false;
-Boolean gTCPReleasePending = false; // Tracks release state for EITHER listener or connection
-ip_addr gCurrentConnectionIP = 0;   // IP of the current active connection
-tcp_port gCurrentConnectionPort = 0; // Port of the current active connection
+/* --- Configuration --- */
+#define kTCPRecvBufferSize 8192
+#define kTCPListenInternalBufferSize 8192 // Keep this large
+#define kTCPListenRetryDelayTicks 60 // Delay before retrying listen *if* -23007 persists
 
-// Static function prototypes
+/* --- Constants from MacSocket.c / MacTCP.h --- */
+#define AbortTrue 1 // For ulpTimeoutAction in TCPClose
+
+/* --- Module Globals --- */
+static StreamPtr gTCPListenStream = NULL;
+static Ptr gTCPListenInternalBuffer = NULL;
+static Ptr gTCPRecvBuffer = NULL;
+
+static TCPiopb gTCPListenPB;
+static TCPiopb gTCPRecvPB;
+static TCPiopb gTCPClosePB; // *** NEW: PB for TCPClose ***
+static TCPiopb gTCPReleasePB;
+
+static Boolean gTCPListenPending = false;
+static Boolean gTCPRecvPending = false;
+static Boolean gTCPClosePending = false; // *** NEW: Flag for TCPClose ***
+static Boolean gTCPReleasePending = false;
+static StreamPtr gStreamBeingReleased = NULL;
+
+static Boolean gNeedToReListen = false;
+
+/* --- Public Globals (Defined as extern in header) --- */
+ip_addr gCurrentConnectionIP = 0;
+tcp_port gCurrentConnectionPort = 0;
+Boolean gIsConnectionActive = false;
+
+/* --- Static Function Prototypes --- */
 static OSErr StartAsyncTCPListen(short macTCPRefNum);
 static OSErr StartAsyncTCPRecv(short macTCPRefNum);
-static OSErr StartAsyncTCPRelease(short macTCPRefNum, StreamPtr streamToRelease, Boolean isConnectionStream);
-static void ProcessTCPReceive(short macTCPRefNum, ip_addr myLocalIP);
+static OSErr StartAsyncTCPClose(short macTCPRefNum, StreamPtr streamToClose, Boolean abortConnection); // *** NEW ***
+static OSErr StartAsyncTCPRelease(short macTCPRefNum, StreamPtr streamToRelease);
+static void ProcessTCPReceive(short macTCPRefNum);
+static void HandleListenerCompletion(short macTCPRefNum, OSErr ioResult);
+static void HandleReceiveCompletion(short macTCPRefNum, OSErr ioResult);
+static void HandleCloseCompletion(short macTCPRefNum, OSErr ioResult); // *** NEW ***
+static void HandleReleaseCompletion(short macTCPRefNum, OSErr ioResult);
 
+//--------------------------------------------------------------------------------
+// InitTCPListener
+// (No changes needed from previous version)
+//--------------------------------------------------------------------------------
 OSErr InitTCPListener(short macTCPRefNum) {
     OSErr err;
-    TCPiopb pbCreate; // Use a local variable for the create call
+    TCPiopb pbCreate; // Local PB for synchronous create
 
-    log_message("Initializing TCP Listener...");
+    log_message("Initializing TCP Listener (Single Stream Approach)...");
     if (macTCPRefNum == 0) return paramErr;
+    if (gTCPListenStream != NULL) {
+        log_message("Error (InitTCPListener): Already initialized?");
+        return streamAlreadyOpen; // -23001
+    }
 
-    // Allocate receive buffer (used for accepted connections later)
-    gTCPRecvBuffer = NewPtrClear(kTCPRecommendedBufSize);
+    // 1. Allocate Buffers
+    gTCPListenInternalBuffer = NewPtrClear(kTCPListenInternalBufferSize);
+     if (gTCPListenInternalBuffer == NULL) {
+        log_message("Fatal Error: Could not allocate TCP listen internal buffer (%ld bytes).", (long)kTCPListenInternalBufferSize);
+        return memFullErr;
+    }
+    log_message("Allocated %ld bytes for TCP listen internal buffer at 0x%lX.", (long)kTCPListenInternalBufferSize, (unsigned long)gTCPListenInternalBuffer);
+
+    gTCPRecvBuffer = NewPtrClear(kTCPRecvBufferSize);
     if (gTCPRecvBuffer == NULL) {
-        log_message("Fatal Error: Could not allocate TCP receive buffer (%ld bytes).", (long)kTCPRecommendedBufSize);
+        log_message("Fatal Error: Could not allocate TCP receive buffer (%ld bytes).", (long)kTCPRecvBufferSize);
+        DisposePtr(gTCPListenInternalBuffer); gTCPListenInternalBuffer = NULL;
         return memFullErr;
     }
-    log_message("Allocated %ld bytes for TCP receive buffer at 0x%lX.", (long)kTCPRecommendedBufSize, (unsigned long)gTCPRecvBuffer);
+    log_message("Allocated %ld bytes for TCP receive buffer at 0x%lX.", (long)kTCPRecvBufferSize, (unsigned long)gTCPRecvBuffer);
 
-    // Allocate buffer for the listener stream itself - USE RECOMMENDED SIZE
-    gTCPListenRecvBuffer = NewPtrClear(kTCPRecommendedBufSize); // Use 8192 bytes
-     if (gTCPListenRecvBuffer == NULL) {
-        log_message("Fatal Error: Could not allocate TCP listen buffer (%ld bytes).", (long)kTCPRecommendedBufSize);
-        DisposePtr(gTCPRecvBuffer); gTCPRecvBuffer = NULL;
-        return memFullErr;
-    }
-    log_message("Allocated %ld bytes for TCP listen buffer at 0x%lX.", (long)kTCPRecommendedBufSize, (unsigned long)gTCPListenRecvBuffer);
 
-    // --- Prepare TCPCreate Parameter Block ---
+    // 2. Create Listener Stream (Synchronously)
     memset(&pbCreate, 0, sizeof(TCPiopb));
-    pbCreate.ioCompletion = nil;
+    pbCreate.ioCompletion = nil; // Synchronous call
     pbCreate.ioCRefNum = macTCPRefNum;
     pbCreate.csCode = TCPCreate;
-    pbCreate.tcpStream = 0L; // MacTCP will fill this on success
-    pbCreate.csParam.create.rcvBuff = gTCPListenRecvBuffer; // Buffer for the listener stream itself
-    pbCreate.csParam.create.rcvBuffLen = kTCPRecommendedBufSize; // Use 8192 bytes
+    pbCreate.tcpStream = 0L;
+    pbCreate.csParam.create.rcvBuff = gTCPListenInternalBuffer;
+    pbCreate.csParam.create.rcvBuffLen = kTCPListenInternalBufferSize;
     pbCreate.csParam.create.notifyProc = nil;
     pbCreate.csParam.create.userDataPtr = nil;
 
-    log_message("Calling PBControlSync (TCPCreate) for passive listener on port %d...", PORT_TCP);
-    err = PBControlSync((ParmBlkPtr)&pbCreate); // Pass the address of the local pbCreate
-
+    log_message("Calling PBControlSync (TCPCreate) for listener stream...");
+    err = PBControlSync((ParmBlkPtr)&pbCreate);
     if (err != noErr) {
         log_message("Error (InitTCPListener): TCPCreate failed. Error: %d", err);
-        DisposePtr(gTCPRecvBuffer); gTCPRecvBuffer = NULL;
-        DisposePtr(gTCPListenRecvBuffer); gTCPListenRecvBuffer = NULL;
+        if (gTCPRecvBuffer) DisposePtr(gTCPRecvBuffer); gTCPRecvBuffer = NULL;
+        if (gTCPListenInternalBuffer) DisposePtr(gTCPListenInternalBuffer); gTCPListenInternalBuffer = NULL;
         return err;
     }
 
-    // --- Check and store the returned stream pointer ---
-    gTCPListenStream = pbCreate.tcpStream; // Get the stream pointer from the PB
+    gTCPListenStream = pbCreate.tcpStream;
     if (gTCPListenStream == NULL) {
         log_message("Error (InitTCPListener): TCPCreate succeeded but returned NULL stream.");
-        DisposePtr(gTCPRecvBuffer); gTCPRecvBuffer = NULL;
-        DisposePtr(gTCPListenRecvBuffer); gTCPListenRecvBuffer = NULL;
-        // Attempt to release the potentially created (but NULL?) stream just in case
-        if (pbCreate.tcpStream != NULL) { // Should be NULL based on check, but defensive
-             TCPiopb pbRelease;
-             memset(&pbRelease, 0, sizeof(TCPiopb));
-             pbRelease.ioCompletion = nil;
-             pbRelease.ioCRefNum = macTCPRefNum;
-             pbRelease.csCode = TCPRelease;
-             pbRelease.tcpStream = pbCreate.tcpStream; // Use the one from pbCreate
-             PBControlSync((ParmBlkPtr)&pbRelease); // Ignore error during cleanup
-        }
+        if (gTCPRecvBuffer) DisposePtr(gTCPRecvBuffer); gTCPRecvBuffer = NULL;
+        if (gTCPListenInternalBuffer) DisposePtr(gTCPListenInternalBuffer); gTCPListenInternalBuffer = NULL;
         return ioErr;
     }
     log_message("TCP Listener Stream created successfully (StreamPtr: 0x%lX).", (unsigned long)gTCPListenStream);
 
-    // --- Start listening asynchronously ---
-    err = StartAsyncTCPListen(macTCPRefNum); // This function uses the global gTCPListenStream
-    if (err != noErr && err != 1 /* 1 means request queued */) {
+    // 3. Initialize State and Start Listening Asynchronously
+    gNeedToReListen = false;
+    gIsConnectionActive = false;
+    gTCPListenPending = false;
+    gTCPRecvPending = false;
+    gTCPClosePending = false; // Initialize new flag
+    gTCPReleasePending = false;
+    gStreamBeingReleased = NULL;
+
+    err = StartAsyncTCPListen(macTCPRefNum);
+    if (err != noErr && err != 1) { // 1 means request is queued (inProgress)
          log_message("Error (InitTCPListener): Failed to start initial async TCP listen. Error: %d", err);
-         CleanupTCPListener(macTCPRefNum); // Cleanup will release the stream
+         CleanupTCPListener(macTCPRefNum); // Full cleanup
          return err;
     }
 
@@ -111,410 +144,718 @@ OSErr InitTCPListener(short macTCPRefNum) {
     return noErr;
 }
 
+//--------------------------------------------------------------------------------
+// CleanupTCPListener
+// (Added kill for gTCPClosePB)
+//--------------------------------------------------------------------------------
 void CleanupTCPListener(short macTCPRefNum) {
-    OSErr err;
-    log_message("Cleaning up TCP Listener...");
+    OSErr relErr;
+    TCPiopb pbReleaseSync;
 
-    // --- Release Active Connection Stream (if any) ---
-    // Use a temporary variable to avoid race conditions if release completes instantly
-    StreamPtr connStreamToRelease = gTCPConnectionStream;
-    if (connStreamToRelease != NULL) {
-        log_message("Attempting async release of active TCP connection stream 0x%lX...", (unsigned long)connStreamToRelease);
-        gTCPConnectionStream = NULL; // Mark as gone immediately
-        gTCPRecvPending = false;     // Cancel any pending receive on this stream
+    log_message("Cleaning up TCP Listener (Single Stream Approach)...");
 
-        // Initiate release (ignore errors during cleanup)
-        StartAsyncTCPRelease(macTCPRefNum, connStreamToRelease, true); // true indicates connection stream
-
-        // Wait briefly for release to potentially complete (best effort)
-        log_message("Waiting briefly for potential async release of connection stream...");
-        Delay(60, &gLastBroadcastTimeTicks); // Wait 1 second
-        if (gTCPReleasePending && gTCPReleasePB.tcpStream == connStreamToRelease) {
-            log_message("Warning: Async release of connection stream still pending during cleanup.");
-            // Consider TCPAbort for forceful cleanup if needed, but usually release is sufficient
-        }
-    }
-
-    // --- Release Listening Stream (if any) ---
     StreamPtr listenStreamToRelease = gTCPListenStream;
-    if (listenStreamToRelease != NULL) {
-        log_message("Attempting async release of TCP listening stream 0x%lX...", (unsigned long)listenStreamToRelease);
-        gTCPListenStream = NULL; // Mark as gone immediately
-        gTCPListenPending = false; // Cancel any pending listen
+    gTCPListenStream = NULL;
 
-        // Initiate release (ignore errors during cleanup)
-        StartAsyncTCPRelease(macTCPRefNum, listenStreamToRelease, false); // false indicates listener stream
+    // Cancel any pending asynchronous operations
+    if (gTCPListenPending) PBKillIO((ParmBlkPtr)&gTCPListenPB, false);
+    if (gTCPRecvPending) PBKillIO((ParmBlkPtr)&gTCPRecvPB, false);
+    if (gTCPClosePending) PBKillIO((ParmBlkPtr)&gTCPClosePB, false); // *** NEW ***
+    if (gTCPReleasePending) PBKillIO((ParmBlkPtr)&gTCPReleasePB, false);
 
-        // Wait briefly
-        log_message("Waiting briefly for potential async release of listening stream...");
-        Delay(60, &gLastBroadcastTimeTicks);
-         if (gTCPReleasePending && gTCPReleasePB.tcpStream == listenStreamToRelease) {
-            log_message("Warning: Async release of listening stream still pending during cleanup.");
+    // Reset all state flags
+    gTCPListenPending = false;
+    gTCPRecvPending = false;
+    gTCPClosePending = false; // *** NEW ***
+    gTCPReleasePending = false;
+    gNeedToReListen = false;
+    gIsConnectionActive = false;
+    gStreamBeingReleased = NULL;
+    gCurrentConnectionIP = 0;
+    gCurrentConnectionPort = 0;
+
+    // Release the single stream (use synchronous release during final cleanup)
+    if (listenStreamToRelease != NULL && macTCPRefNum != 0) {
+        log_message("Attempting synchronous release of listener stream 0x%lX...", (unsigned long)listenStreamToRelease);
+        memset(&pbReleaseSync, 0, sizeof(TCPiopb));
+        pbReleaseSync.ioCompletion = nil; // Synchronous
+        pbReleaseSync.ioCRefNum = macTCPRefNum;
+        pbReleaseSync.csCode = TCPRelease;
+        pbReleaseSync.tcpStream = listenStreamToRelease;
+
+        relErr = PBControlSync((ParmBlkPtr)&pbReleaseSync);
+        if (relErr != noErr) {
+             log_message("Warning (CleanupTCPListener): Synchronous TCPRelease failed. Error: %d", relErr);
+        } else {
+             log_to_file_only("CleanupTCPListener: Synchronous TCPRelease successful.");
         }
+    } else if (listenStreamToRelease != NULL) {
+        log_message("Warning (CleanupTCPListener): Cannot release stream, MacTCP refnum is 0.");
     }
 
-    // --- Dispose Buffers ---
+    // Dispose Buffers
     if (gTCPRecvBuffer != NULL) {
         log_message("Disposing TCP receive buffer at 0x%lX.", (unsigned long)gTCPRecvBuffer);
         DisposePtr(gTCPRecvBuffer);
         gTCPRecvBuffer = NULL;
     }
-     if (gTCPListenRecvBuffer != NULL) {
-        log_message("Disposing TCP listen buffer at 0x%lX.", (unsigned long)gTCPListenRecvBuffer);
-        DisposePtr(gTCPListenRecvBuffer);
-        gTCPListenRecvBuffer = NULL;
+     if (gTCPListenInternalBuffer != NULL) {
+        log_message("Disposing TCP listen internal buffer at 0x%lX.", (unsigned long)gTCPListenInternalBuffer);
+        DisposePtr(gTCPListenInternalBuffer);
+        gTCPListenInternalBuffer = NULL;
     }
-
-    // Reset flags just in case
-    gTCPListenPending = false;
-    gTCPRecvPending = false;
-    gTCPReleasePending = false;
 
     log_message("TCP Listener cleanup finished.");
 }
 
-
+//--------------------------------------------------------------------------------
+// PollTCPListener
+// (Added check for Close completion and condition for re-listen)
+//--------------------------------------------------------------------------------
 void PollTCPListener(short macTCPRefNum, ip_addr myLocalIP) {
     OSErr ioResult;
-    OSErr err;
 
-    // --- Poll Listener (TCPPassiveOpen) ---
+    // --- Check Pending Operations ---
+
+    // 1. Check Listen Completion
     if (gTCPListenPending) {
         ioResult = gTCPListenPB.ioResult;
-        if (ioResult != 1) { // 1 means still pending
-            gTCPListenPending = false; // Request completed (success or error)
-
-            // --- IMPORTANT: Store the original listener stream before checking result ---
-            // Because gTCPListenPB.tcpStream gets overwritten on success
-            StreamPtr originalListenerStream = gTCPListenStream; // Capture before potential overwrite
-
-            if (ioResult == noErr) {
-                // --- Connection Accepted ---
-
-                // ** FIX: Capture the NEW connection stream pointer **
-                StreamPtr newConnectionStream = gTCPListenPB.tcpStream;
-
-                // Check if we already have an active connection
-                if (gTCPConnectionStream != NULL) {
-                    log_message("Warning: New TCP connection accepted while another was active (Old: 0x%lX, New: 0x%lX). Releasing old one.",
-                                (unsigned long)gTCPConnectionStream, (unsigned long)newConnectionStream);
-                    StartAsyncTCPRelease(macTCPRefNum, gTCPConnectionStream, true); // Release the old one
-                }
-
-                // ** FIX: Store the NEW connection details **
-                gTCPConnectionStream = newConnectionStream;
-                gCurrentConnectionIP = gTCPListenPB.csParam.open.remoteHost;
-                gCurrentConnectionPort = gTCPListenPB.csParam.open.remotePort;
-
-                char senderIPStr[INET_ADDRSTRLEN];
-                AddrToStr(gCurrentConnectionIP, senderIPStr); // Convert IP for logging
-                log_message("TCP Connection accepted from %s:%u (New Stream: 0x%lX).", senderIPStr, gCurrentConnectionPort, (unsigned long)gTCPConnectionStream);
-
-                // Start receiving on the NEW connection stream
-                err = StartAsyncTCPRecv(macTCPRefNum); // Uses gTCPConnectionStream
-                if (err != noErr && err != 1) { // 1 means queued
-                     log_message("Error (PollTCPListener): Failed to start async TCP receive after accept. Error: %d", err);
-                     // If receive fails, release the newly accepted connection
-                     StartAsyncTCPRelease(macTCPRefNum, gTCPConnectionStream, true);
-                     gTCPConnectionStream = NULL; // Forget the bad connection
-                }
-
-                // Re-issue the listen on the ORIGINAL listening stream
-                // ** FIX: Use the captured original listener stream pointer **
-                gTCPListenStream = originalListenerStream; // Restore original listener pointer
-                if (gTCPListenStream != NULL) {
-                    err = StartAsyncTCPListen(macTCPRefNum); // Uses gTCPListenStream
-                     if (err != noErr && err != 1) { // 1 means queued
-                         log_message("CRITICAL Error (PollTCPListener): Failed to re-issue async TCP listen after accept. Error: %d. No longer listening!", err);
-                         // Application can no longer accept new connections!
-                     } else {
-                         log_to_file_only("PollTCPListener: Re-issued async TCP listen on stream 0x%lX.", (unsigned long)gTCPListenStream);
-                     }
-                } else {
-                     log_message("CRITICAL Error (PollTCPListener): Original listener stream was NULL when trying to re-listen!");
-                }
-
-            } else {
-                // --- Listener Error ---
-                log_message("Error (PollTCPListener): Async TCPPassiveOpen completed with error: %d on listener stream 0x%lX", ioResult, (unsigned long)originalListenerStream);
-                 // Attempt to re-issue the listen even after an error, using the original stream
-                 gTCPListenStream = originalListenerStream; // Ensure we use the correct stream
-                 if (gTCPListenStream != NULL) {
-                     err = StartAsyncTCPListen(macTCPRefNum);
-                     if (err != noErr && err != 1) { // 1 means queued
-                         log_message("CRITICAL Error (PollTCPListener): Failed to re-issue async TCP listen after error. Error: %d. No longer listening!", err);
-                     } else {
-                          log_to_file_only("PollTCPListener: Re-issued async TCP listen after previous error on stream 0x%lX.", (unsigned long)gTCPListenStream);
-                     }
-                 } else {
-                      log_message("CRITICAL Error (PollTCPListener): Listener stream was NULL when trying to re-listen after error!");
-                 }
-            }
+        if (ioResult <= 0) {
+            gTCPListenPending = false;
+            HandleListenerCompletion(macTCPRefNum, ioResult);
         }
-        // else: ioResult == 1, listen still pending, do nothing this cycle
     }
 
-    // --- Poll Receiver (TCPRcv on connection stream) ---
+    // 2. Check Receive Completion
     if (gTCPRecvPending) {
-        // Ensure this poll corresponds to the current connection stream
-        if (gTCPRecvPB.tcpStream == gTCPConnectionStream && gTCPConnectionStream != NULL) {
+        if (gTCPRecvPB.tcpStream == gTCPListenStream && gTCPListenStream != NULL) {
             ioResult = gTCPRecvPB.ioResult;
-            if (ioResult != 1) { // 1 means still pending
-                gTCPRecvPending = false; // Request completed
-
-                // Capture stream pointer before potential release
-                StreamPtr completedRecvStream = gTCPRecvPB.tcpStream;
-
-                if (ioResult == noErr) {
-                    // --- Data Received ---
-                    ProcessTCPReceive(macTCPRefNum, myLocalIP);
-                    // Start the next receive ONLY if the connection wasn't closed in ProcessTCPReceive
-                    if (gTCPConnectionStream == completedRecvStream && gTCPConnectionStream != NULL) {
-                        err = StartAsyncTCPRecv(macTCPRefNum);
-                         if (err != noErr && err != 1) { // 1 means queued
-                             log_message("Error (PollTCPListener): Failed to start next async TCP receive. Error: %d. Releasing connection.", err);
-                             StartAsyncTCPRelease(macTCPRefNum, gTCPConnectionStream, true);
-                             gTCPConnectionStream = NULL; // Forget the connection
-                         }
-                    } else {
-                         log_to_file_only("PollTCPListener: Receive completed, but connection stream changed/closed during processing. Not starting new receive.");
-                    }
-                } else if (ioResult == connectionClosing) {
-                     // --- Graceful Close Received ---
-                     char senderIPStr[INET_ADDRSTRLEN];
-                     AddrToStr(gCurrentConnectionIP, senderIPStr); // Use the stored IP
-                     log_message("TCP Connection closing gracefully from %s (Stream: 0x%lX). Releasing.", senderIPStr, (unsigned long)completedRecvStream);
-                     StartAsyncTCPRelease(macTCPRefNum, completedRecvStream, true);
-                     // Clear connection state if this was the active connection
-                     if (gTCPConnectionStream == completedRecvStream) {
-                         gTCPConnectionStream = NULL;
-                     }
-                }
-                 else {
-                     // --- Receive Error ---
-                     char senderIPStr[INET_ADDRSTRLEN];
-                     AddrToStr(gCurrentConnectionIP, senderIPStr); // Use the stored IP
-                    log_message("Error (PollTCPListener): Async TCPRcv completed with error: %d from %s (Stream: 0x%lX). Releasing.", ioResult, senderIPStr, (unsigned long)completedRecvStream);
-                    StartAsyncTCPRelease(macTCPRefNum, completedRecvStream, true);
-                     // Clear connection state if this was the active connection
-                     if (gTCPConnectionStream == completedRecvStream) {
-                         gTCPConnectionStream = NULL;
-                     }
-                }
+            if (ioResult <= 0) {
+                gTCPRecvPending = false;
+                HandleReceiveCompletion(macTCPRefNum, ioResult);
             }
-            // else: ioResult == 1, receive still pending, do nothing this cycle
-        } else if (gTCPConnectionStream == NULL) {
-            // Receive completed for a stream that is no longer the active connection
-            log_to_file_only("PollTCPListener: Ignoring completed TCPRcv (ioResult=%d) because gTCPConnectionStream is NULL.", gTCPRecvPB.ioResult);
-            gTCPRecvPending = false; // Mark as processed
-        } else {
-             // Receive completed for a stream different than the current gTCPConnectionStream
-             log_to_file_only("PollTCPListener: Ignoring completed TCPRcv (ioResult=%d) on stream 0x%lX; current connection is 0x%lX.",
-                              gTCPRecvPB.ioResult, (unsigned long)gTCPRecvPB.tcpStream, (unsigned long)gTCPConnectionStream);
-             gTCPRecvPending = false; // Mark as processed
+        } else if (gTCPRecvPending) {
+             log_message("Warning (PollTCPListener): Receive pending but stream pointer mismatch or NULL. Clearing flag.");
+             gTCPRecvPending = false;
         }
     }
 
-
-    // --- Poll Releaser (TCPRelease) ---
-    if (gTCPReleasePending) {
-        ioResult = gTCPReleasePB.ioResult;
-        if (ioResult != 1) { // 1 means still pending
-            StreamPtr releasedStream = gTCPReleasePB.tcpStream; // Identify which stream was released
-            gTCPReleasePending = false; // Request completed
-
-            if (ioResult == noErr) {
-                log_to_file_only("PollTCPListener: Async TCPRelease completed successfully for stream 0x%lX.", (unsigned long)releasedStream);
-                // If this was the connection stream, gTCPConnectionStream should already be NULL
-                // If this was the listener stream, gTCPListenStream should already be NULL
-            } else {
-                log_message("Error (PollTCPListener): Async TCPRelease for stream 0x%lX completed with error: %d", (unsigned long)releasedStream, ioResult);
-                // The stream might still be in an indeterminate state
+    // 3. Check Close Completion *** NEW ***
+    if (gTCPClosePending) {
+        if (gTCPClosePB.tcpStream == gTCPListenStream && gTCPListenStream != NULL) {
+            ioResult = gTCPClosePB.ioResult;
+            if (ioResult <= 0) {
+                gTCPClosePending = false;
+                HandleCloseCompletion(macTCPRefNum, ioResult);
             }
+        } else if (gTCPClosePending) {
+             log_message("Warning (PollTCPListener): Close pending but stream pointer mismatch or NULL. Clearing flag.");
+             gTCPClosePending = false;
         }
-        // else: ioResult == 1, release still pending, do nothing this cycle
+    }
+
+    // 4. Check Release Completion
+    if (gTCPReleasePending) {
+        if (gTCPReleasePB.tcpStream == gStreamBeingReleased && gStreamBeingReleased != NULL) {
+            ioResult = gTCPReleasePB.ioResult;
+            if (ioResult <= 0) {
+                gTCPReleasePending = false;
+                HandleReleaseCompletion(macTCPRefNum, ioResult);
+            }
+        } else if (gTCPReleasePending) {
+             log_message("Warning (PollTCPListener): Release pending but stream pointer mismatch or NULL. Clearing flag.");
+             gTCPReleasePending = false;
+             gStreamBeingReleased = NULL;
+        }
+    }
+
+    // --- Re-issue Listen if Necessary and Possible ---
+    // Can only re-listen if the stream exists, we need to, and NO operations are pending on it.
+    if (gNeedToReListen && gTCPListenStream != NULL &&
+        !gTCPListenPending && !gTCPRecvPending && !gTCPClosePending && !gTCPReleasePending) // *** Added !gTCPClosePending ***
+    {
+        log_to_file_only("PollTCPListener: Conditions met to attempt re-issuing listen.");
+        gNeedToReListen = false;
+        gIsConnectionActive = false; // Ensure connection state is reset
+
+        OSErr err = StartAsyncTCPListen(macTCPRefNum);
+        if (err != noErr && err != 1) {
+            log_message("Error (PollTCPListener): Attempt to re-issue listen failed immediately. Error: %d. Will retry later.", err);
+            gNeedToReListen = true; // Set flag again to retry next time
+        } else {
+            log_to_file_only("PollTCPListener: Re-issued Async TCPPassiveOpen successfully (or already pending).");
+        }
+    } else if (gNeedToReListen && gTCPListenStream == NULL) {
+        log_message("Warning (PollTCPListener): Need to re-listen but stream is NULL. Cannot proceed.");
+        gNeedToReListen = false;
     }
 }
 
+//--------------------------------------------------------------------------------
+// HandleListenerCompletion
+// (No changes needed from previous version)
+//--------------------------------------------------------------------------------
+static void HandleListenerCompletion(short macTCPRefNum, OSErr ioResult) {
+    StreamPtr completedListenerStream = gTCPListenPB.tcpStream;
+
+    if (completedListenerStream != gTCPListenStream || gTCPListenStream == NULL) {
+        log_message("Warning (HandleListenerCompletion): Ignoring completion for unexpected/NULL stream 0x%lX (Current: 0x%lX).",
+                    (unsigned long)completedListenerStream, (unsigned long)gTCPListenStream);
+        return;
+    }
+
+    if (ioResult == noErr) {
+        ip_addr acceptedIP = gTCPListenPB.csParam.open.remoteHost;
+        tcp_port acceptedPort = gTCPListenPB.csParam.open.remotePort;
+        char senderIPStr[INET_ADDRSTRLEN];
+        AddrToStr(acceptedIP, senderIPStr);
+
+        log_message("TCP Connection Indication from %s:%u on listener stream 0x%lX.",
+                    senderIPStr, acceptedPort, (unsigned long)completedListenerStream);
+
+        if (gIsConnectionActive || gTCPRecvPending || gTCPClosePending) { // Added gTCPClosePending check
+             log_message("Warning: New connection indication while listener stream busy (Active: %d, RecvPending: %d, ClosePending: %d). Setting flag to re-listen later.",
+                         gIsConnectionActive, gTCPRecvPending, gTCPClosePending);
+             gNeedToReListen = true;
+        } else {
+            gCurrentConnectionIP = acceptedIP;
+            gCurrentConnectionPort = acceptedPort;
+            gIsConnectionActive = true;
+
+            OSErr err = StartAsyncTCPRecv(macTCPRefNum);
+            if (err != noErr && err != 1) {
+                log_message("Error (HandleListenerCompletion): Failed to start first TCPRcv on listener stream. Error: %d. Releasing connection state.", err);
+                gIsConnectionActive = false;
+                gCurrentConnectionIP = 0;
+                gCurrentConnectionPort = 0;
+                // Attempt to close the connection immediately on error? Or just re-listen? Let's try re-listen first.
+                gNeedToReListen = true;
+            } else {
+                 log_to_file_only("HandleListenerCompletion: First TCPRcv initiated on listener stream 0x%lX.", (unsigned long)gTCPListenStream);
+            }
+        }
+    } else {
+        const char *errMsg = "Unknown Error";
+        Boolean isConnectionExists = (ioResult == connectionExists); // -23007
+        Boolean isInvalidStream = (ioResult == invalidStreamPtr);   // -23010
+        Boolean isBadBuf = (ioResult == invalidBufPtr);       // -23004
+        Boolean isInsufficientRes = (ioResult == insufficientResources); // -23005
+
+        if (isConnectionExists) errMsg = "connectionExists (-23007)";
+        else if (isInvalidStream) errMsg = "invalidStreamPtr (-23010)";
+        else if (isBadBuf) errMsg = "invalidBufPtr (-23004)";
+        else if (isInsufficientRes) errMsg = "insufficientResources (-23005)";
+
+        if (isConnectionExists) {
+             log_to_file_only("HandleListenerCompletion: TCPPassiveOpen completed with transient error: %d (%s). Will retry after delay.", ioResult, errMsg);
+             unsigned long dummyTimer;
+             Delay(kTCPListenRetryDelayTicks, &dummyTimer);
+             gNeedToReListen = true;
+        } else {
+            log_message("Error (HandleListenerCompletion): TCPPassiveOpen completed with error: %d (%s)", ioResult, errMsg);
+
+            if (isInvalidStream) {
+                 log_message("CRITICAL Error: Listener stream 0x%lX reported as invalid. Attempting release.", (unsigned long)gTCPListenStream);
+                 StartAsyncTCPRelease(macTCPRefNum, gTCPListenStream);
+                 gNeedToReListen = false;
+            } else {
+                 gNeedToReListen = true;
+            }
+        }
+    }
+}
+
+
+//--------------------------------------------------------------------------------
+// HandleReceiveCompletion
+// (No changes needed from previous version, ProcessTCPReceive handles state change)
+//--------------------------------------------------------------------------------
+static void HandleReceiveCompletion(short macTCPRefNum, OSErr ioResult) {
+    StreamPtr completedRecvStream = gTCPRecvPB.tcpStream;
+
+    if (completedRecvStream != gTCPListenStream || gTCPListenStream == NULL) {
+         log_message("Warning (HandleReceiveCompletion): Ignoring completion for unexpected/NULL stream 0x%lX (Current: 0x%lX).",
+                     (unsigned long)completedRecvStream, (unsigned long)gTCPListenStream);
+         return;
+    }
+    // Check gIsConnectionActive *after* checking stream, as ProcessTCPReceive might change it
+    if (!gIsConnectionActive && ioResult == noErr) {
+         // We received data, but ProcessTCPReceive (called just before this check in theory)
+         // might have already marked connection inactive (e.g. QUIT).
+         log_to_file_only("Warning (HandleReceiveCompletion): Receive completed successfully but connection no longer marked active. Data processed, not re-issuing receive.");
+         // gNeedToReListen should be true if QUIT was processed.
+         return;
+    }
+     if (!gIsConnectionActive && ioResult != noErr) {
+         // Receive completed with error, and connection already marked inactive. Just log.
+         log_to_file_only("Warning (HandleReceiveCompletion): Receive completed with error %d, connection already inactive.", ioResult);
+         // gNeedToReListen should be true from previous error handling or QUIT processing.
+         return;
+     }
+
+
+    if (ioResult == noErr) {
+        ProcessTCPReceive(macTCPRefNum);
+
+        // Re-post receive ONLY if the connection is still active after processing
+        if (gIsConnectionActive && gTCPListenStream != NULL) {
+            OSErr err = StartAsyncTCPRecv(macTCPRefNum);
+             if (err != noErr && err != 1) {
+                 log_message("Error (HandleReceiveCompletion): Failed to start next async TCP receive after successful receive. Error: %d. Closing connection state.", err);
+                 gIsConnectionActive = false;
+                 gCurrentConnectionIP = 0;
+                 gCurrentConnectionPort = 0;
+                 // Don't just re-listen, try to close first
+                 StartAsyncTCPClose(macTCPRefNum, gTCPListenStream, true); // Attempt abort
+                 // gNeedToReListen will be set in HandleCloseCompletion
+             } else {
+                 log_to_file_only("HandleReceiveCompletion: Successfully re-issued TCPRcv on stream 0x%lX.", (unsigned long)gTCPListenStream);
+             }
+        } else {
+             // Connection was closed during processing (QUIT) or stream became NULL
+             log_to_file_only("HandleReceiveCompletion: Connection stream closed/inactive during processing. Not starting new receive.");
+             // If QUIT was processed, StartAsyncTCPClose should have been called.
+             // If stream became NULL, HandleReleaseCompletion will prevent re-listen.
+        }
+    } else if (ioResult == connectionClosing) { // -23009
+         char senderIPStr[INET_ADDRSTRLEN];
+         AddrToStr(gCurrentConnectionIP, senderIPStr);
+         log_message("TCP Connection closing gracefully from %s (Stream: 0x%lX).", senderIPStr, (unsigned long)completedRecvStream);
+         gIsConnectionActive = false;
+         gCurrentConnectionIP = 0;
+         gCurrentConnectionPort = 0;
+         // No need to explicitly close here, but set flag to re-listen
+         gNeedToReListen = true;
+    } else {
+         char senderIPStr[INET_ADDRSTRLEN];
+         AddrToStr(gCurrentConnectionIP, senderIPStr);
+         const char *errMsg = "Unknown Error";
+         Boolean isConnDoesntExist = (ioResult == connectionDoesntExist); // -23008
+         Boolean isInvalidStream = (ioResult == invalidStreamPtr);       // -23010
+         Boolean isConnTerminated = (ioResult == connectionTerminated);   // -23012
+         Boolean isBadBuf = (ioResult == invalidBufPtr);           // -23004
+
+         if (isConnDoesntExist) errMsg = "connectionDoesntExist (-23008)";
+         else if (isInvalidStream) errMsg = "invalidStreamPtr (-23010)";
+         else if (isConnTerminated) errMsg = "connectionTerminated (-23012)";
+         else if (isBadBuf) errMsg = "invalidBufPtr (-23004)";
+
+        log_message("Error (HandleReceiveCompletion): Async TCPRcv completed with error: %d (%s) from %s (Stream: 0x%lX).", ioResult, errMsg, senderIPStr, (unsigned long)completedRecvStream);
+
+        gIsConnectionActive = false;
+        gCurrentConnectionIP = 0;
+        gCurrentConnectionPort = 0;
+
+        if (isInvalidStream) {
+             log_message("CRITICAL Error: Listener stream 0x%lX reported as invalid during receive. Attempting release.", (unsigned long)gTCPListenStream);
+             StartAsyncTCPRelease(macTCPRefNum, gTCPListenStream);
+             gNeedToReListen = false;
+        } else {
+             // For other errors, attempt an abortive close before trying to re-listen
+             log_to_file_only("HandleReceiveCompletion: Attempting abortive close due to receive error.");
+             StartAsyncTCPClose(macTCPRefNum, gTCPListenStream, true); // Attempt abort
+             // gNeedToReListen will be set in HandleCloseCompletion
+        }
+    }
+}
+
+//--------------------------------------------------------------------------------
+// HandleCloseCompletion *** NEW ***
+//--------------------------------------------------------------------------------
+static void HandleCloseCompletion(short macTCPRefNum, OSErr ioResult) {
+    StreamPtr closedStream = gTCPClosePB.tcpStream;
+
+    // Ensure completion is for the current listener stream
+    if (closedStream != gTCPListenStream || gTCPListenStream == NULL) {
+         log_message("Warning (HandleCloseCompletion): Ignoring completion for unexpected/NULL stream 0x%lX (Current: 0x%lX).",
+                     (unsigned long)closedStream, (unsigned long)gTCPListenStream);
+         return;
+    }
+
+    if (ioResult == noErr) {
+        log_to_file_only("HandleCloseCompletion: Async TCPClose completed successfully for stream 0x%lX.", (unsigned long)closedStream);
+    } else {
+        const char *errMsg = "Unknown Error";
+        // Add specific error checks if needed (e.g., invalidStreamPtr)
+        if (ioResult == invalidStreamPtr) errMsg = "invalidStreamPtr (-23010)";
+        else if (ioResult == connectionDoesntExist) errMsg = "connectionDoesntExist (-23008)";
+        else if (ioResult == connectionClosing) errMsg = "connectionClosing (-23009)"; // Already closing
+
+        log_message("Error (HandleCloseCompletion): Async TCPClose for stream 0x%lX completed with error: %d (%s)", (unsigned long)closedStream, ioResult, errMsg);
+
+        if (ioResult == invalidStreamPtr) {
+             log_message("CRITICAL Error: Listener stream 0x%lX reported as invalid during close. Attempting release.", (unsigned long)gTCPListenStream);
+             StartAsyncTCPRelease(macTCPRefNum, gTCPListenStream);
+             gNeedToReListen = false; // Cannot re-listen
+             return; // Don't set gNeedToReListen below
+        }
+    }
+
+    // Regardless of close success/failure (unless stream invalid), we are now ready to try listening again.
+    log_to_file_only("HandleCloseCompletion: Setting flag to re-listen.");
+    gNeedToReListen = true;
+}
+
+
+//--------------------------------------------------------------------------------
+// HandleReleaseCompletion
+// (No changes needed from previous version)
+//--------------------------------------------------------------------------------
+static void HandleReleaseCompletion(short macTCPRefNum, OSErr ioResult) {
+    StreamPtr releasedStream = gTCPReleasePB.tcpStream;
+
+    if (releasedStream != gStreamBeingReleased || releasedStream == NULL) {
+        log_message("Warning (HandleReleaseCompletion): Ignoring completion for unexpected/NULL stream 0x%lX (Expected: 0x%lX).",
+                    (unsigned long)releasedStream, (unsigned long)gStreamBeingReleased);
+        gStreamBeingReleased = NULL;
+        return;
+    }
+
+    gStreamBeingReleased = NULL;
+
+    if (ioResult == noErr) {
+        log_to_file_only("HandleReleaseCompletion: Async TCPRelease completed successfully for stream 0x%lX.", (unsigned long)releasedStream);
+    } else {
+         const char *errMsg = "Unknown Error";
+         if (ioResult == invalidStreamPtr) errMsg = "invalidStreamPtr (-23010)";
+
+        log_message("Error (HandleReleaseCompletion): Async TCPRelease for stream 0x%lX completed with error: %d (%s)", (unsigned long)releasedStream, ioResult, errMsg);
+    }
+
+    if (releasedStream == gTCPListenStream) {
+         log_message("HandleReleaseCompletion: Listener stream 0x%lX was released. Setting global pointer to NULL.", (unsigned long)releasedStream);
+         gTCPListenStream = NULL;
+         gNeedToReListen = false;
+         gIsConnectionActive = false;
+         gCurrentConnectionIP = 0;
+         gCurrentConnectionPort = 0;
+    }
+}
+
+
 // --- Static Helper Functions ---
 
+//--------------------------------------------------------------------------------
+// StartAsyncTCPListen
+// (Added check for gTCPClosePending)
+//--------------------------------------------------------------------------------
 static OSErr StartAsyncTCPListen(short macTCPRefNum) {
     OSErr err;
-    // ** FIX: Check gTCPListenStream, not gTCPConnectionStream **
+
     if (gTCPListenStream == NULL) {
         log_message("Error (StartAsyncTCPListen): Cannot listen, gTCPListenStream is NULL.");
         return invalidStreamPtr;
     }
-    if (gTCPListenPending) return 1; // Already listening
+    if (gTCPListenPending) {
+        log_to_file_only("StartAsyncTCPListen: Listen already pending on stream 0x%lX.", (unsigned long)gTCPListenStream);
+        return 1;
+    }
+    if (gIsConnectionActive || gTCPRecvPending || gTCPClosePending) { // *** Added gTCPClosePending ***
+        log_message("Error (StartAsyncTCPListen): Cannot listen, stream 0x%lX is busy (Active: %d, RecvPending: %d, ClosePending: %d).",
+                    (unsigned long)gTCPListenStream, gIsConnectionActive, gTCPRecvPending, gTCPClosePending);
+        return inProgress;
+    }
+    if (gTCPReleasePending && gStreamBeingReleased == gTCPListenStream) {
+         log_message("Error (StartAsyncTCPListen): Cannot listen, stream 0x%lX release is pending.", (unsigned long)gTCPListenStream);
+         return inProgress;
+    }
 
     memset(&gTCPListenPB, 0, sizeof(TCPiopb));
-    gTCPListenPB.ioCompletion = nil; // Use polling
+    gTCPListenPB.ioCompletion = nil;
     gTCPListenPB.ioCRefNum = macTCPRefNum;
     gTCPListenPB.csCode = TCPPassiveOpen;
-    // ** FIX: Use gTCPListenStream **
-    gTCPListenPB.tcpStream = gTCPListenStream; // The stream created initially for listening
+    gTCPListenPB.tcpStream = gTCPListenStream;
+
+    gTCPListenPB.csParam.open.validityFlags = timeoutValue | timeoutAction;
+    gTCPListenPB.csParam.open.ulpTimeoutValue = kTCPDefaultTimeout;
+    gTCPListenPB.csParam.open.ulpTimeoutAction = AbortTrue; // Use constant
+    gTCPListenPB.csParam.open.commandTimeoutValue = 0;
     gTCPListenPB.csParam.open.localPort = PORT_TCP;
-    gTCPListenPB.csParam.open.localHost = 0L; // INADDR_ANY equivalent for MacTCP PassiveOpen
-    gTCPListenPB.csParam.open.commandTimeoutValue = 0; // Infinite timeout for listen
+    gTCPListenPB.csParam.open.localHost = 0L;
+    gTCPListenPB.csParam.open.remoteHost = 0L;
+    gTCPListenPB.csParam.open.remotePort = 0;
     gTCPListenPB.csParam.open.userDataPtr = nil;
-    gTCPListenPB.csParam.open.ulpTimeoutValue = 0; // Use default ULP timeout
-    gTCPListenPB.csParam.open.ulpTimeoutAction = 1; // Abort on ULP timeout (0=report)
-    gTCPListenPB.csParam.open.validityFlags = 0; // Use defaults for optional params
-    gTCPListenPB.csParam.open.remoteHost = 0L; // Accept from any host
-    gTCPListenPB.csParam.open.remotePort = 0; // Accept from any port
 
     gTCPListenPending = true;
     err = PBControlAsync((ParmBlkPtr)&gTCPListenPB);
+
     if (err != noErr) {
         log_message("Error (StartAsyncTCPListen): PBControlAsync(TCPPassiveOpen) failed immediately. Error: %d", err);
-        gTCPListenPending = false; // Failed to start
+        gTCPListenPending = false;
         return err;
     }
-    // Successfully queued
+
     log_to_file_only("StartAsyncTCPListen: Async TCPPassiveOpen initiated on listener stream 0x%lX.", (unsigned long)gTCPListenStream);
-    return err; // Will be 1 (request queued) or noErr if completed instantly (unlikely)
+    return 1;
 }
 
+
+//--------------------------------------------------------------------------------
+// StartAsyncTCPRecv
+// (Added check for gTCPClosePending)
+//--------------------------------------------------------------------------------
 static OSErr StartAsyncTCPRecv(short macTCPRefNum) {
     OSErr err;
-    if (gTCPConnectionStream == NULL) {
-        log_message("Error (StartAsyncTCPRecv): Cannot receive, gTCPConnectionStream is NULL.");
+
+    if (gTCPListenStream == NULL) {
+        log_message("Error (StartAsyncTCPRecv): Cannot receive, gTCPListenStream is NULL.");
         return invalidStreamPtr;
      }
     if (gTCPRecvBuffer == NULL) {
          log_message("Error (StartAsyncTCPRecv): Cannot receive, gTCPRecvBuffer is NULL.");
          return invalidBufPtr;
     }
-    if (gTCPRecvPending) return 1; // Already receiving
+    if (gTCPRecvPending) {
+         log_to_file_only("StartAsyncTCPRecv: Receive already pending on listener stream 0x%lX.", (unsigned long)gTCPListenStream);
+         return 1;
+    }
+    if (!gIsConnectionActive) {
+         log_message("Error (StartAsyncTCPRecv): Cannot receive, connection not active on listener stream 0x%lX.", (unsigned long)gTCPListenStream);
+         return connectionDoesntExist;
+    }
+    if (gTCPListenPending || gTCPClosePending || (gTCPReleasePending && gStreamBeingReleased == gTCPListenStream)) { // *** Added gTCPClosePending ***
+         log_message("Error (StartAsyncTCPRecv): Cannot receive, stream 0x%lX has other pending operations (Listen: %d, Close: %d, Release: %d).",
+                     (unsigned long)gTCPListenStream, gTCPListenPending, gTCPClosePending, gTCPReleasePending);
+         return inProgress;
+    }
 
     memset(&gTCPRecvPB, 0, sizeof(TCPiopb));
-    gTCPRecvPB.ioCompletion = nil; // Use polling
+    gTCPRecvPB.ioCompletion = nil;
     gTCPRecvPB.ioCRefNum = macTCPRefNum;
     gTCPRecvPB.csCode = TCPRcv;
-    gTCPRecvPB.tcpStream = gTCPConnectionStream; // Use the active connection stream
-    gTCPRecvPB.csParam.receive.rcvBuff = gTCPRecvBuffer; // The buffer for incoming data
-    gTCPRecvPB.csParam.receive.rcvBuffLen = kTCPRecommendedBufSize; // Size of the buffer
-    gTCPRecvPB.csParam.receive.commandTimeoutValue = 0; // Infinite timeout for receive
+    gTCPRecvPB.tcpStream = gTCPListenStream;
+
+    gTCPRecvPB.csParam.receive.rcvBuff = gTCPRecvBuffer;
+    gTCPRecvPB.csParam.receive.rcvBuffLen = kTCPRecvBufferSize;
+    gTCPRecvPB.csParam.receive.commandTimeoutValue = 0;
     gTCPRecvPB.csParam.receive.userDataPtr = nil;
 
     gTCPRecvPending = true;
     err = PBControlAsync((ParmBlkPtr)&gTCPRecvPB);
+
     if (err != noErr) {
         log_message("Error (StartAsyncTCPRecv): PBControlAsync(TCPRcv) failed immediately. Error: %d", err);
-        gTCPRecvPending = false; // Failed to start
+        gTCPRecvPending = false;
+        gIsConnectionActive = false;
+        gCurrentConnectionIP = 0;
+        gCurrentConnectionPort = 0;
+        // Attempt close before trying to re-listen on failure
+        StartAsyncTCPClose(macTCPRefNum, gTCPListenStream, true); // Attempt abort
+        // gNeedToReListen will be set in HandleCloseCompletion
         return err;
     }
-    // Successfully queued
-    log_to_file_only("StartAsyncTCPRecv: Async TCPRcv initiated on connection stream 0x%lX.", (unsigned long)gTCPConnectionStream);
-    return err; // Will be 1 (request queued) or noErr
+
+    log_to_file_only("StartAsyncTCPRecv: Async TCPRcv initiated on listener stream 0x%lX.", (unsigned long)gTCPListenStream);
+    return 1;
 }
 
-// Added boolean to distinguish which stream type is being released for logging/debugging
-static OSErr StartAsyncTCPRelease(short macTCPRefNum, StreamPtr streamToRelease, Boolean isConnectionStream) {
+//--------------------------------------------------------------------------------
+// StartAsyncTCPClose *** NEW ***
+//--------------------------------------------------------------------------------
+static OSErr StartAsyncTCPClose(short macTCPRefNum, StreamPtr streamToClose, Boolean abortConnection) {
     OSErr err;
-    const char *streamTypeStr = isConnectionStream ? "connection" : "listener";
 
-    if (streamToRelease == NULL) {
-        log_message("Error (StartAsyncTCPRelease): Cannot release NULL %s stream.", streamTypeStr);
+    // Preconditions
+    if (streamToClose == NULL) {
+        log_message("Error (StartAsyncTCPClose): Cannot close NULL stream.");
         return invalidStreamPtr;
     }
-
-    // Allow initiating release even if another is pending, but log it.
-    if (gTCPReleasePending) {
-         log_message("Warning (StartAsyncTCPRelease): Initiating release for %s stream 0x%lX while another release is pending.", streamTypeStr, (unsigned long)streamToRelease);
-         // Potentially problematic if the pending release is for the *same* stream.
-         // If the PBs are different (gTCPReleasePB vs a local one), it might be okay,
-         // but using a single global gTCPReleasePB means this new call will overwrite the pending one.
-         // For cleanup, this might be acceptable, but in active use, needs care.
+    // Should only be closing the listener stream in this model
+    if (streamToClose != gTCPListenStream) {
+        log_message("Error (StartAsyncTCPClose): Attempt to close non-listener stream 0x%lX.", (unsigned long)streamToClose);
+        return invalidStreamPtr;
     }
+    if (gTCPClosePending) {
+        log_to_file_only("StartAsyncTCPClose: Close already pending for listener stream 0x%lX.", (unsigned long)streamToClose);
+        return 1; // Already in progress
+    }
+     if (gTCPReleasePending && gStreamBeingReleased == streamToClose) {
+         log_message("Error (StartAsyncTCPClose): Cannot close, stream 0x%lX release is pending.", (unsigned long)streamToClose);
+         return inProgress;
+    }
+    // It's generally okay to close while listen or receive are pending (they should fail)
 
-    memset(&gTCPReleasePB, 0, sizeof(TCPiopb)); // Use the global PB
-    gTCPReleasePB.ioCompletion = nil; // Use polling
-    gTCPReleasePB.ioCRefNum = macTCPRefNum;
-    gTCPReleasePB.csCode = TCPRelease;
-    gTCPReleasePB.tcpStream = streamToRelease; // The stream to close
+    // Setup Parameter Block for TCPClose
+    memset(&gTCPClosePB, 0, sizeof(TCPiopb));
+    gTCPClosePB.ioCompletion = nil; // Use polling
+    gTCPClosePB.ioCRefNum = macTCPRefNum;
+    gTCPClosePB.csCode = TCPClose;
+    gTCPClosePB.tcpStream = streamToClose;
 
-    gTCPReleasePending = true; // Mark that *a* release is pending using the global PB
-    err = PBControlAsync((ParmBlkPtr)&gTCPReleasePB);
+    // --- Parameters for Close ---
+    // Use validity flags to specify which timeout fields are valid.
+    gTCPClosePB.csParam.close.validityFlags = timeoutValue | timeoutAction;
+    gTCPClosePB.csParam.close.ulpTimeoutValue = kTCPDefaultTimeout; // Timeout for graceful close (0 likely okay)
+    if (abortConnection) {
+        gTCPClosePB.csParam.close.ulpTimeoutAction = AbortTrue; // 1 = Abort connection immediately
+        log_to_file_only("StartAsyncTCPClose: Using Abort action.");
+    } else {
+        gTCPClosePB.csParam.close.ulpTimeoutAction = 0; // 0 = Graceful close (default)
+        log_to_file_only("StartAsyncTCPClose: Using Graceful close action.");
+    }
+    gTCPClosePB.csParam.close.userDataPtr = nil;
+
+    // Initiate Asynchronous Call
+    gTCPClosePending = true; // Set flag *before* calling
+    err = PBControlAsync((ParmBlkPtr)&gTCPClosePB);
+
     if (err != noErr) {
-        log_message("Error (StartAsyncTCPRelease): PBControlAsync(TCPRelease) failed immediately for %s stream 0x%lX. Error: %d", streamTypeStr, (unsigned long)streamToRelease, err);
-        gTCPReleasePending = false; // Failed to start
+        // Call failed immediately
+        log_message("Error (StartAsyncTCPClose): PBControlAsync(TCPClose) failed immediately for stream 0x%lX. Error: %d", (unsigned long)streamToClose, err);
+        gTCPClosePending = false; // Reset flag
+        // If close fails, the stream state is uncertain. Set flag to re-listen anyway? Or release?
+        // Let's try setting re-listen for now, HandleCloseCompletion won't run.
+        gNeedToReListen = true;
         return err;
     }
-    // Successfully queued
-    log_to_file_only("StartAsyncTCPRelease: Initiated async release for %s stream 0x%lX.", streamTypeStr, (unsigned long)streamToRelease);
-    return err; // Will be 1 (request queued) or noErr
+
+    // If err == noErr, request was queued. ioResult will be > 0.
+    log_to_file_only("StartAsyncTCPClose: Initiated async TCPClose for listener stream 0x%lX.", (unsigned long)streamToClose);
+    return 1; // Return 1 to indicate request is pending/in progress
 }
 
 
-static void ProcessTCPReceive(short macTCPRefNum, ip_addr myLocalIP) {
+//--------------------------------------------------------------------------------
+// StartAsyncTCPRelease
+// (Added check for gTCPClosePending)
+//--------------------------------------------------------------------------------
+static OSErr StartAsyncTCPRelease(short macTCPRefNum, StreamPtr streamToRelease) {
+    OSErr err;
+
+    if (streamToRelease == NULL) {
+        log_message("Error (StartAsyncTCPRelease): Cannot release NULL stream.");
+        return invalidStreamPtr;
+    }
+    if (streamToRelease != gTCPListenStream) {
+        log_message("Error (StartAsyncTCPRelease): Attempt to release non-listener stream 0x%lX.", (unsigned long)streamToRelease);
+        return invalidStreamPtr;
+    }
+    if (gTCPReleasePending && gStreamBeingReleased == streamToRelease) {
+         log_to_file_only("StartAsyncTCPRelease: Release already pending for listener stream 0x%lX.", (unsigned long)streamToRelease);
+         return 1;
+    }
+    if (gTCPReleasePending) {
+         log_message("Warning (StartAsyncTCPRelease): Overwriting pending release for stream 0x%lX with new release request for listener stream 0x%lX.",
+                     (unsigned long)gStreamBeingReleased, (unsigned long)streamToRelease);
+    }
+    // Check for other pending operations on this stream
+    if (gTCPListenPending || gTCPRecvPending || gTCPClosePending) { // *** Added gTCPClosePending ***
+         log_message("Warning (StartAsyncTCPRelease): Releasing stream 0x%lX while other operations pending (Listen: %d, Recv: %d, Close: %d).",
+                     (unsigned long)streamToRelease, gTCPListenPending, gTCPRecvPending, gTCPClosePending);
+    }
+
+    memset(&gTCPReleasePB, 0, sizeof(TCPiopb));
+    gTCPReleasePB.ioCompletion = nil;
+    gTCPReleasePB.ioCRefNum = macTCPRefNum;
+    gTCPReleasePB.csCode = TCPRelease;
+    gTCPReleasePB.tcpStream = streamToRelease;
+
+    gTCPReleasePending = true;
+    gStreamBeingReleased = streamToRelease;
+    err = PBControlAsync((ParmBlkPtr)&gTCPReleasePB);
+
+    if (err != noErr) {
+        log_message("Error (StartAsyncTCPRelease): PBControlAsync(TCPRelease) failed immediately for listener stream 0x%lX. Error: %d", (unsigned long)streamToRelease, err);
+        gTCPReleasePending = false;
+        gStreamBeingReleased = NULL;
+        return err;
+    }
+
+    log_to_file_only("StartAsyncTCPRelease: Initiated async release for listener stream 0x%lX.", (unsigned long)streamToRelease);
+    return 1;
+}
+
+//--------------------------------------------------------------------------------
+// ProcessTCPReceive
+// (Modified QUIT handling to call StartAsyncTCPClose)
+//--------------------------------------------------------------------------------
+static void ProcessTCPReceive(short macTCPRefNum) {
     char senderIPStrFromConnection[INET_ADDRSTRLEN];
     char senderIPStrFromPayload[INET_ADDRSTRLEN];
     char senderUsername[32];
     char msgType[32];
-    char content[BUFFER_SIZE]; // Ensure this matches protocol.c needs
+    char content[BUFFER_SIZE];
     unsigned short dataLength;
 
-    // Get the length of received data from the completed PB
-    // ** FIX: Ensure we are processing data for the correct stream **
-    if (gTCPRecvPB.tcpStream != gTCPConnectionStream || gTCPConnectionStream == NULL) {
-        log_message("Warning (ProcessTCPReceive): Received data for stream 0x%lX but current connection is 0x%lX. Ignoring.",
-                    (unsigned long)gTCPRecvPB.tcpStream, (unsigned long)gTCPConnectionStream);
-        return; // Don't process data for an old/invalid stream
+    if (!gIsConnectionActive || gTCPListenStream == NULL) {
+        log_message("Warning (ProcessTCPReceive): Called when connection not active or listener stream is NULL.");
+        return;
+    }
+    if (gTCPRecvPB.tcpStream != gTCPListenStream) {
+        log_message("CRITICAL Warning (ProcessTCPReceive): Received data for unexpected stream 0x%lX, expected 0x%lX. Ignoring.",
+                    (unsigned long)gTCPRecvPB.tcpStream, (unsigned long)gTCPListenStream);
+        gIsConnectionActive = false;
+        gCurrentConnectionIP = 0;
+        gCurrentConnectionPort = 0;
+        // Attempt close before trying to re-listen on logic error
+        StartAsyncTCPClose(macTCPRefNum, gTCPListenStream, true); // Attempt abort
+        // gNeedToReListen will be set in HandleCloseCompletion
+        return;
     }
 
     dataLength = gTCPRecvPB.csParam.receive.rcvBuffLen;
 
     if (dataLength > 0) {
-        // Get the sender's IP from the stored connection info
-        AddrToStr(gCurrentConnectionIP, senderIPStrFromConnection);
+        OSErr addrErr = AddrToStr(gCurrentConnectionIP, senderIPStrFromConnection);
+        if (addrErr != noErr) {
+            sprintf(senderIPStrFromConnection, "%lu.%lu.%lu.%lu",
+                    (gCurrentConnectionIP >> 24) & 0xFF, (gCurrentConnectionIP >> 16) & 0xFF,
+                    (gCurrentConnectionIP >> 8) & 0xFF, gCurrentConnectionIP & 0xFF);
+            log_to_file_only("ProcessTCPReceive: AddrToStr failed (%d) for sender IP %lu. Using fallback '%s'.",
+                         addrErr, (unsigned long)gCurrentConnectionIP, senderIPStrFromConnection);
+        }
 
-        // Attempt to parse the message
         if (parse_message(gTCPRecvBuffer, dataLength, senderIPStrFromPayload, senderUsername, msgType, content) == 0) {
             log_to_file_only("ProcessTCPReceive: Parsed '%s' from %s@%s (Payload IP: %s). Content: '%.30s...'",
                        msgType, senderUsername, senderIPStrFromConnection, senderIPStrFromPayload, content);
 
-            // Update peer list based on the connection IP
             int addResult = AddOrUpdatePeer(senderIPStrFromConnection, senderUsername);
-             if (addResult > 0) { // Peer was newly added
-                 log_message("New peer connected/updated via TCP: %s@%s", senderUsername, senderIPStrFromConnection);
-                 UpdatePeerDisplayList(true); // Force redraw if new peer
-             } else if (addResult < 0) { // List was full
-                 log_message("Peer list full, could not add %s@%s from TCP connection", senderUsername, senderIPStrFromConnection);
+             if (addResult > 0) {
+                 log_message("Peer connected/updated via TCP: %s@%s", senderUsername, senderIPStrFromConnection);
+                 UpdatePeerDisplayList(true);
+             } else if (addResult < 0) {
+                 log_message("Peer list full, could not add/update %s@%s from TCP connection", senderUsername, senderIPStrFromConnection);
              }
-             // else addResult == 0, peer was updated, no redraw needed unless forced elsewhere
 
-            // Handle specific message types
             if (strcmp(msgType, MSG_QUIT) == 0) {
                 log_message("Peer %s@%s has sent QUIT notification via TCP.", senderUsername, senderIPStrFromConnection);
                 if (MarkPeerInactive(senderIPStrFromConnection)) {
-                     UpdatePeerDisplayList(true); // Force redraw if peer removed
+                     UpdatePeerDisplayList(true);
                 }
-                // ** FIX: Close the connection after receiving QUIT **
-                log_message("Closing connection to %s due to QUIT.", senderIPStrFromConnection);
-                StartAsyncTCPRelease(macTCPRefNum, gTCPConnectionStream, true); // Release this connection
-                gTCPConnectionStream = NULL; // Mark connection as gone immediately
-                gTCPRecvPending = false; // Stop trying to receive on this closed stream
+                log_message("Connection to %s finishing due to QUIT.", senderIPStrFromConnection);
+
+                // Close the connection state
+                gIsConnectionActive = false;
+                gCurrentConnectionIP = 0;
+                gCurrentConnectionPort = 0;
+                // *** NEW: Initiate Abortive Close ***
+                StartAsyncTCPClose(macTCPRefNum, gTCPListenStream, true); // true = Abort
+                // *** DO NOT set gNeedToReListen here. Set it in HandleCloseCompletion. ***
+
+                // Cancel any pending receive (safety check)
+                if(gTCPRecvPending && gTCPRecvPB.tcpStream == gTCPListenStream) {
+                    log_to_file_only("ProcessTCPReceive (QUIT): Cancelling pending receive.");
+                    PBKillIO((ParmBlkPtr)&gTCPRecvPB, false);
+                    gTCPRecvPending = false;
+                }
 
             } else if (strcmp(msgType, MSG_TEXT) == 0) {
-                char displayMsg[BUFFER_SIZE + 100]; // Make sure this is large enough
+                char displayMsg[BUFFER_SIZE + 100];
                  sprintf(displayMsg, "%s: %s", senderUsername, content);
                  AppendToMessagesTE(displayMsg);
-                 AppendToMessagesTE("\r"); // Add newline for display
+                 AppendToMessagesTE("\r");
                  log_message("Message from %s@%s: %s", senderUsername, senderIPStrFromConnection, content);
+                 // Connection remains active, expect HandleReceiveCompletion to re-post receive
             } else {
-                 // Handle other potential TCP message types if needed
                  log_message("Received unhandled TCP message type '%s' from %s@%s.", msgType, senderUsername, senderIPStrFromConnection);
+                 // Connection remains active, expect HandleReceiveCompletion to re-post receive
             }
         } else {
-            // Parsing failed
             log_message("Failed to parse TCP message from %s (%u bytes). Discarding.", senderIPStrFromConnection, dataLength);
+            // Connection remains active, expect HandleReceiveCompletion to re-post receive
         }
     } else {
-        // Received 0 bytes - often indicates graceful close initiated by remote
-        log_to_file_only("ProcessTCPReceive: Received 0 bytes (graceful close initiated by remote?).");
-        // The connectionClosing error in PollTCPListener will handle the release.
+        log_to_file_only("ProcessTCPReceive: Received 0 bytes. Connection likely closing.");
+        // Let HandleReceiveCompletion deal with connectionClosing error
     }
-    // Note: The next receive is started in PollTCPListener after this function returns,
-    // *unless* we closed the connection here due to QUIT.
 }
