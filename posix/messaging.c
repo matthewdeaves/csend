@@ -1,6 +1,7 @@
 #include "messaging.h"
 #include "network.h"
 #include "../shared/protocol.h"
+#include "../shared/messaging_logic.h"
 #include "logging.h"
 #include <stdio.h>
 #include <string.h>
@@ -12,6 +13,38 @@
 #include <arpa/inet.h>
 #include <sys/select.h>
 #include <sys/time.h>
+static int posix_tcp_add_or_update_peer(const char* ip, const char* username, void* platform_context) {
+    app_state_t *state = (app_state_t *)platform_context;
+    if (!state) {
+        log_message("Error (posix_tcp_add_or_update_peer): NULL platform_context.");
+        return -1;
+    }
+    return add_peer(state, ip, username);
+}
+static void posix_tcp_display_text_message(const char* username, const char* ip, const char* message_content, void* platform_context) {
+    (void)platform_context;
+    log_message("Message from %s@%s: %s", username, ip, message_content);
+}
+static void posix_tcp_mark_peer_inactive(const char* ip, void* platform_context) {
+    app_state_t *state = (app_state_t *)platform_context;
+    if (!state || !ip) {
+        log_message("Error (posix_tcp_mark_peer_inactive): NULL platform_context or IP.");
+        return;
+    }
+    pthread_mutex_lock(&state->peers_mutex);
+    int index = peer_shared_find_by_ip(&state->peer_manager, ip);
+    if (index != -1) {
+        if (state->peer_manager.peers[index].active) {
+            state->peer_manager.peers[index].active = 0;
+            log_message("Marked peer %s@%s as inactive.", state->peer_manager.peers[index].username, ip);
+        } else {
+            log_message("posix_tcp_mark_peer_inactive: Peer %s was already inactive.", ip);
+        }
+    } else {
+        log_message("posix_tcp_mark_peer_inactive: Peer %s not found.", ip);
+    }
+    pthread_mutex_unlock(&state->peers_mutex);
+}
 int init_listener(app_state_t *state) {
     struct sockaddr_in address;
     int opt = 1;
@@ -63,6 +96,7 @@ int send_message(const char *ip, const char *message, const char *msg_type, cons
         return -1;
     }
     if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        log_message("Failed to connect to %s:%d - %s", ip, PORT_TCP, strerror(errno));
         close(sock);
         return -1;
     }
@@ -98,6 +132,11 @@ void *listener_thread(void *arg) {
     fd_set readfds;
     struct timeval timeout;
     ssize_t bytes_read;
+    tcp_platform_callbacks_t posix_callbacks = {
+        .add_or_update_peer = posix_tcp_add_or_update_peer,
+        .display_text_message = posix_tcp_display_text_message,
+        .mark_peer_inactive = posix_tcp_mark_peer_inactive
+    };
     log_message("Listener thread started");
     while (state->running) {
         FD_ZERO(&readfds);
@@ -126,26 +165,8 @@ void *listener_thread(void *arg) {
         bytes_read = read(client_sock, buffer, BUFFER_SIZE - 1);
         if (bytes_read > 0) {
             if (parse_message(buffer, bytes_read, sender_ip_from_payload, sender_username, msg_type, content) == 0) {
-                int add_result = add_peer(state, sender_ip, sender_username);
-                if (add_result > 0) {
-                    log_message("New peer connected via TCP: %s@%s", sender_username, sender_ip);
-                } else if (add_result < 0) {
-                    log_message("Peer list full, could not add %s@%s from TCP connection", sender_username, sender_ip);
-                }
-                if (strcmp(msg_type, MSG_TEXT) == 0) {
-                    log_message("Message from %s@%s: %s", sender_username, sender_ip, content);
-                } else if (strcmp(msg_type, MSG_QUIT) == 0) {
-                    log_message("Peer %s@%s has sent QUIT notification", sender_username, sender_ip);
-                    pthread_mutex_lock(&state->peers_mutex);
-                    for (int i = 0; i < MAX_PEERS; i++) {
-                        if (state->peer_manager.peers[i].active && strcmp(state->peer_manager.peers[i].ip, sender_ip) == 0) {
-                            state->peer_manager.peers[i].active = 0;
-                            log_message("Marked peer %s@%s as inactive.", state->peer_manager.peers[i].username, state->peer_manager.peers[i].ip);
-                            break;
-                        }
-                    }
-                    pthread_mutex_unlock(&state->peers_mutex);
-                }
+                handle_received_tcp_message(sender_ip, sender_username, msg_type, content,
+                                            &posix_callbacks, state);
             } else {
                 log_message("Failed to parse TCP message from %s (%ld bytes)", sender_ip, bytes_read);
             }

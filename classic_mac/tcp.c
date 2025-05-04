@@ -5,6 +5,7 @@
 #include "dialog.h"
 #include "dialog_peerlist.h"
 #include "network.h"
+#include "../shared/messaging_logic.h"
 #include <Devices.h>
 #include <Errors.h>
 #include <Memory.h>
@@ -39,6 +40,42 @@ static void HandleListenerCompletion(short macTCPRefNum, OSErr ioResult);
 static void HandleReceiveCompletion(short macTCPRefNum, OSErr ioResult);
 static void HandleCloseCompletion(short macTCPRefNum, OSErr ioResult);
 static void HandleReleaseCompletion(short macTCPRefNum, OSErr ioResult);
+static int mac_tcp_add_or_update_peer(const char* ip, const char* username, void* platform_context) {
+    (void)platform_context;
+    int addResult = AddOrUpdatePeer(ip, username);
+    if (addResult > 0) {
+        log_message("Peer connected/updated via TCP: %s@%s", username, ip);
+        if (gMainWindow != NULL && gPeerListHandle != NULL) {
+            UpdatePeerDisplayList(true);
+        }
+    } else if (addResult < 0) {
+        log_message("Peer list full, could not add/update %s@%s from TCP connection", username, ip);
+    }
+    return addResult;
+}
+static void mac_tcp_display_text_message(const char* username, const char* ip, const char* message_content, void* platform_context) {
+    (void)platform_context;
+    (void)ip;
+    char displayMsg[BUFFER_SIZE + 100];
+    if (gMainWindow != NULL && gMessagesTE != NULL && gDialogTEInitialized) {
+        sprintf(displayMsg, "%s: %s", username ? username : "???", message_content ? message_content : "");
+        AppendToMessagesTE(displayMsg);
+        AppendToMessagesTE("\r");
+        log_message("Message from %s@%s: %s", username, ip, message_content);
+    } else {
+        log_message("Error (mac_tcp_display_text_message): Cannot display message, dialog not ready.");
+    }
+}
+static void mac_tcp_mark_peer_inactive(const char* ip, void* platform_context) {
+    (void)platform_context;
+    if (!ip) return;
+    log_message("Peer %s has sent QUIT notification via TCP.", ip);
+    if (MarkPeerInactive(ip)) {
+        if (gMainWindow != NULL && gPeerListHandle != NULL) {
+            UpdatePeerDisplayList(true);
+        }
+    }
+}
 OSErr InitTCPListener(short macTCPRefNum) {
     OSErr err;
     TCPiopb pbCreate;
@@ -108,10 +145,10 @@ void CleanupTCPListener(short macTCPRefNum) {
     log_message("Cleaning up TCP Listener (Single Stream Approach)...");
     StreamPtr listenStreamToRelease = gTCPListenStream;
     gTCPListenStream = NULL;
-    if (gTCPListenPending) PBKillIO((ParmBlkPtr)&gTCPListenPB, false);
-    if (gTCPRecvPending) PBKillIO((ParmBlkPtr)&gTCPRecvPB, false);
-    if (gTCPClosePending) PBKillIO((ParmBlkPtr)&gTCPClosePB, false);
-    if (gTCPReleasePending) PBKillIO((ParmBlkPtr)&gTCPReleasePB, false);
+    if (gTCPListenPending && gTCPListenPB.tcpStream == listenStreamToRelease) PBKillIO((ParmBlkPtr)&gTCPListenPB, false);
+    if (gTCPRecvPending && gTCPRecvPB.tcpStream == listenStreamToRelease) PBKillIO((ParmBlkPtr)&gTCPRecvPB, false);
+    if (gTCPClosePending && gTCPClosePB.tcpStream == listenStreamToRelease) PBKillIO((ParmBlkPtr)&gTCPClosePB, false);
+    if (gTCPReleasePending && gTCPReleasePB.tcpStream == listenStreamToRelease) PBKillIO((ParmBlkPtr)&gTCPReleasePB, false);
     gTCPListenPending = false;
     gTCPRecvPending = false;
     gTCPClosePending = false;
@@ -280,12 +317,14 @@ static void HandleReceiveCompletion(short macTCPRefNum, OSErr ioResult) {
                      (unsigned long)completedRecvStream, (unsigned long)gTCPListenStream);
          return;
     }
-    if (!gIsConnectionActive && ioResult == noErr) {
-         log_to_file_only("Warning (HandleReceiveCompletion): Receive completed successfully but connection no longer marked active. Data processed, not re-issuing receive.");
-         return;
-    }
-     if (!gIsConnectionActive && ioResult != noErr) {
-         log_to_file_only("Warning (HandleReceiveCompletion): Receive completed with error %d, connection already inactive.", ioResult);
+     if (!gIsConnectionActive) {
+         if (ioResult == noErr) {
+             log_to_file_only("Warning (HandleReceiveCompletion): Receive completed successfully but connection no longer marked active. Data processed, not re-issuing receive.");
+             ProcessTCPReceive(macTCPRefNum);
+         } else {
+             log_to_file_only("Warning (HandleReceiveCompletion): Receive completed with error %d, connection already inactive.", ioResult);
+         }
+         gNeedToReListen = true;
          return;
      }
     if (ioResult == noErr) {
@@ -302,7 +341,10 @@ static void HandleReceiveCompletion(short macTCPRefNum, OSErr ioResult) {
                  log_to_file_only("HandleReceiveCompletion: Successfully re-issued TCPRcv on stream 0x%lX.", (unsigned long)gTCPListenStream);
              }
         } else {
-             log_to_file_only("HandleReceiveCompletion: Connection stream closed/inactive during processing. Not starting new receive.");
+             log_to_file_only("HandleReceiveCompletion: Connection stream closed/inactive during processing or stream became NULL. Not starting new receive.");
+             if (gTCPListenStream != NULL) {
+                 gNeedToReListen = true;
+             }
         }
     } else if (ioResult == connectionClosing) {
          char senderIPStr[INET_ADDRSTRLEN];
@@ -368,7 +410,9 @@ static void HandleReleaseCompletion(short macTCPRefNum, OSErr ioResult) {
     if (releasedStream != gStreamBeingReleased || releasedStream == NULL) {
         log_message("Warning (HandleReleaseCompletion): Ignoring completion for unexpected/NULL stream 0x%lX (Expected: 0x%lX).",
                     (unsigned long)releasedStream, (unsigned long)gStreamBeingReleased);
-        gStreamBeingReleased = NULL;
+        if (gStreamBeingReleased != releasedStream) {
+             gStreamBeingReleased = NULL;
+        }
         return;
     }
     gStreamBeingReleased = NULL;
@@ -567,12 +611,17 @@ static void ProcessTCPReceive(short macTCPRefNum) {
     char msgType[32];
     char content[BUFFER_SIZE];
     unsigned short dataLength;
+    static tcp_platform_callbacks_t mac_callbacks = {
+        .add_or_update_peer = mac_tcp_add_or_update_peer,
+        .display_text_message = mac_tcp_display_text_message,
+        .mark_peer_inactive = mac_tcp_mark_peer_inactive
+    };
     if (!gIsConnectionActive || gTCPListenStream == NULL) {
         log_message("Warning (ProcessTCPReceive): Called when connection not active or listener stream is NULL.");
         return;
     }
     if (gTCPRecvPB.tcpStream != gTCPListenStream) {
-        log_message("CRITICAL Warning (ProcessTCPReceive): Received data for unexpected stream 0x%lX, expected 0x%lX. Ignoring.",
+        log_message("CRITICAL Warning (ProcessTCPReceive): Received data for unexpected stream 0x%lX, expected 0x%lX. Ignoring and closing.",
                     (unsigned long)gTCPRecvPB.tcpStream, (unsigned long)gTCPListenStream);
         gIsConnectionActive = false;
         gCurrentConnectionIP = 0;
@@ -591,38 +640,25 @@ static void ProcessTCPReceive(short macTCPRefNum) {
                          addrErr, (unsigned long)gCurrentConnectionIP, senderIPStrFromConnection);
         }
         if (parse_message(gTCPRecvBuffer, dataLength, senderIPStrFromPayload, senderUsername, msgType, content) == 0) {
-            log_to_file_only("ProcessTCPReceive: Parsed '%s' from %s@%s (Payload IP: %s). Content: '%.30s...'",
-                       msgType, senderUsername, senderIPStrFromConnection, senderIPStrFromPayload, content);
-            int addResult = AddOrUpdatePeer(senderIPStrFromConnection, senderUsername);
-             if (addResult > 0) {
-                 log_message("Peer connected/updated via TCP: %s@%s", senderUsername, senderIPStrFromConnection);
-                 UpdatePeerDisplayList(true);
-             } else if (addResult < 0) {
-                 log_message("Peer list full, could not add/update %s@%s from TCP connection", senderUsername, senderIPStrFromConnection);
-             }
+            log_to_file_only("ProcessTCPReceive: Calling shared handler for '%s' from %s@%s (Payload IP: %s).",
+                       msgType, senderUsername, senderIPStrFromConnection, senderIPStrFromPayload);
+            handle_received_tcp_message(senderIPStrFromConnection,
+                                        senderUsername,
+                                        msgType,
+                                        content,
+                                        &mac_callbacks,
+                                        NULL);
             if (strcmp(msgType, MSG_QUIT) == 0) {
-                log_message("Peer %s@%s has sent QUIT notification via TCP.", senderUsername, senderIPStrFromConnection);
-                if (MarkPeerInactive(senderIPStrFromConnection)) {
-                     UpdatePeerDisplayList(true);
-                }
-                log_message("Connection to %s finishing due to QUIT.", senderIPStrFromConnection);
-                gIsConnectionActive = false;
-                gCurrentConnectionIP = 0;
-                gCurrentConnectionPort = 0;
-                StartAsyncTCPClose(macTCPRefNum, gTCPListenStream, true);
-                if(gTCPRecvPending && gTCPRecvPB.tcpStream == gTCPListenStream) {
-                    log_to_file_only("ProcessTCPReceive (QUIT): Cancelling pending receive.");
-                    PBKillIO((ParmBlkPtr)&gTCPRecvPB, false);
-                    gTCPRecvPending = false;
-                }
-            } else if (strcmp(msgType, MSG_TEXT) == 0) {
-                char displayMsg[BUFFER_SIZE + 100];
-                 sprintf(displayMsg, "%s: %s", senderUsername, content);
-                 AppendToMessagesTE(displayMsg);
-                 AppendToMessagesTE("\r");
-                 log_message("Message from %s@%s: %s", senderUsername, senderIPStrFromConnection, content);
-            } else {
-                 log_message("Received unhandled TCP message type '%s' from %s@%s.", msgType, senderUsername, senderIPStrFromConnection);
+                 log_message("Connection to %s finishing due to QUIT.", senderIPStrFromConnection);
+                 gIsConnectionActive = false;
+                 gCurrentConnectionIP = 0;
+                 gCurrentConnectionPort = 0;
+                 StartAsyncTCPClose(macTCPRefNum, gTCPListenStream, true);
+                 if(gTCPRecvPending && gTCPRecvPB.tcpStream == gTCPListenStream) {
+                     log_to_file_only("ProcessTCPReceive (QUIT): Cancelling pending receive.");
+                     PBKillIO((ParmBlkPtr)&gTCPRecvPB, false);
+                     gTCPRecvPending = false;
+                 }
             }
         } else {
             log_message("Failed to parse TCP message from %s (%u bytes). Discarding.", senderIPStrFromConnection, dataLength);
