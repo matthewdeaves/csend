@@ -8,23 +8,23 @@
 #else
     #include <time.h>
 #endif
-void peer_shared_init_list(peer_t *peers, int max_peers) {
-    if (!peers) return;
-    memset(peers, 0, sizeof(peer_t) * max_peers);
+void peer_shared_init_list(peer_manager_t *manager) {
+    if (!manager) return;
+    memset(manager->peers, 0, sizeof(peer_t) * MAX_PEERS);
 }
-int peer_shared_find_by_ip(peer_t *peers, int max_peers, const char *ip) {
-    if (!peers || !ip) return -1;
-    for (int i = 0; i < max_peers; i++) {
-        if (peers[i].active && strcmp(peers[i].ip, ip) == 0) {
+int peer_shared_find_by_ip(peer_manager_t *manager, const char *ip) {
+    if (!manager || !ip) return -1;
+    for (int i = 0; i < MAX_PEERS; i++) {
+        if (manager->peers[i].active && strcmp(manager->peers[i].ip, ip) == 0) {
             return i;
         }
     }
     return -1;
 }
-int peer_shared_find_empty_slot(peer_t *peers, int max_peers) {
-     if (!peers) return -1;
-    for (int i = 0; i < max_peers; i++) {
-        if (!peers[i].active) {
+int peer_shared_find_empty_slot(peer_manager_t *manager) {
+     if (!manager) return -1;
+    for (int i = 0; i < MAX_PEERS; i++) {
+        if (!manager->peers[i].active) {
             return i;
         }
     }
@@ -42,16 +42,16 @@ void peer_shared_update_entry(peer_t *peer, const char *username) {
         peer->username[sizeof(peer->username) - 1] = '\0';
     }
 }
-int peer_shared_add_or_update(peer_t *peers, int max_peers, const char *ip, const char *username) {
-    if (!peers || !ip) return -1;
-    int existing_index = peer_shared_find_by_ip(peers, max_peers, ip);
+int peer_shared_add_or_update(peer_manager_t *manager, const char *ip, const char *username) {
+    if (!manager || !ip) return -1;
+    int existing_index = peer_shared_find_by_ip(manager, ip);
     if (existing_index != -1) {
-        peer_shared_update_entry(&peers[existing_index], username);
+        peer_shared_update_entry(&manager->peers[existing_index], username);
         return 0;
     }
-    int empty_slot = peer_shared_find_empty_slot(peers, max_peers);
+    int empty_slot = peer_shared_find_empty_slot(manager);
     if (empty_slot != -1) {
-        peer_t *new_peer = &peers[empty_slot];
+        peer_t *new_peer = &manager->peers[empty_slot];
         strncpy(new_peer->ip, ip, INET_ADDRSTRLEN - 1);
         new_peer->ip[INET_ADDRSTRLEN - 1] = '\0';
         new_peer->active = 1;
@@ -62,8 +62,8 @@ int peer_shared_add_or_update(peer_t *peers, int max_peers, const char *ip, cons
     log_message("Peer list is full. Cannot add peer %s@%s.", username ? username : "??", ip);
     return -1;
 }
-int peer_shared_prune_timed_out(peer_t *peers, int max_peers) {
-    if (!peers) return 0;
+int peer_shared_prune_timed_out(peer_manager_t *manager) {
+    if (!manager) return 0;
     int pruned_count = 0;
     unsigned long current_time;
     unsigned long timeout_duration;
@@ -74,9 +74,9 @@ int peer_shared_prune_timed_out(peer_t *peers, int max_peers) {
         current_time = (unsigned long)time(NULL);
         timeout_duration = (unsigned long)PEER_TIMEOUT;
     #endif
-    for (int i = 0; i < max_peers; i++) {
-        if (peers[i].active) {
-            unsigned long last_seen = peers[i].last_seen;
+    for (int i = 0; i < MAX_PEERS; i++) {
+        if (manager->peers[i].active) {
+            unsigned long last_seen = manager->peers[i].last_seen;
             unsigned long time_diff;
             if (current_time >= last_seen) {
                 time_diff = current_time - last_seen;
@@ -88,8 +88,8 @@ int peer_shared_prune_timed_out(peer_t *peers, int max_peers) {
                 #endif
             }
             if (time_diff > timeout_duration) {
-                log_message("Peer %s@%s timed out.", peers[i].username, peers[i].ip);
-                peers[i].active = 0;
+                log_message("Peer %s@%s timed out.", manager->peers[i].username, manager->peers[i].ip);
+                manager->peers[i].active = 0;
                 pruned_count++;
             }
         }

@@ -1,5 +1,4 @@
 #include "peer.h"
-#include "peer_shared.h"
 #include "discovery.h"
 #include "messaging.h"
 #include "ui_terminal.h"
@@ -18,7 +17,7 @@ void init_app_state(app_state_t *state, const char *username) {
     state->running = 1;
     state->tcp_socket = -1;
     state->udp_socket = -1;
-    peer_shared_init_list(state->peers, MAX_PEERS);
+    peer_shared_init_list(&state->peer_manager);
     strncpy(state->username, username, sizeof(state->username) - 1);
     state->username[sizeof(state->username) - 1] = '\0';
     pthread_mutex_init(&state->peers_mutex, NULL);
@@ -47,15 +46,17 @@ void cleanup_app_state(app_state_t *state) {
 }
 int add_peer(app_state_t *state, const char *ip, const char *username) {
     if (!state) return -1;
+    int result;
     pthread_mutex_lock(&state->peers_mutex);
-    int result = peer_shared_add_or_update(state->peers, MAX_PEERS, ip, username);
+    result = peer_shared_add_or_update(&state->peer_manager, ip, username);
     pthread_mutex_unlock(&state->peers_mutex);
     return result;
 }
 int prune_peers(app_state_t *state) {
     if (!state) return 0;
+    int count;
     pthread_mutex_lock(&state->peers_mutex);
-    int count = peer_shared_prune_timed_out(state->peers, MAX_PEERS);
+    count = peer_shared_prune_timed_out(&state->peer_manager);
     pthread_mutex_unlock(&state->peers_mutex);
     return count;
 }

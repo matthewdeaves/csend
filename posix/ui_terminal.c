@@ -11,7 +11,7 @@
 #include <sys/select.h>
 #include <unistd.h>
 #include <errno.h>
- void print_help_message(void) {
+void print_help_message(void) {
      printf("\nCommands:\n");
      printf("  /list                       - List all active peers\n");
      printf("  /send <peer_number> <msg> - Send <msg> to a specific peer from the list\n");
@@ -20,23 +20,25 @@
      printf("  /help                       - Show this help message\n\n");
      fflush(stdout);
  }
- void print_peers(app_state_t *state) {
+void print_peers(app_state_t *state) {
      pthread_mutex_lock(&state->peers_mutex);
      time_t now = time(NULL);
      int active_count = 0;
      printf("\n--- Active Peers ---\n");
      for (int i = 0; i < MAX_PEERS; i++) {
-         if (state->peers[i].active) {
-             if (difftime(now, state->peers[i].last_seen) > PEER_TIMEOUT) {
-                 log_message("Peer %s@%s timed out.", state->peers[i].username, state->peers[i].ip);
-                 state->peers[i].active = 0;
+         if (state->peer_manager.peers[i].active) {
+             if (difftime(now, state->peer_manager.peers[i].last_seen) > PEER_TIMEOUT) {
+                 log_message("Peer %s@%s timed out (detected in print_peers).",
+                             state->peer_manager.peers[i].username,
+                             state->peer_manager.peers[i].ip);
+                 state->peer_manager.peers[i].active = 0;
                  continue;
              }
              printf("%d. %s@%s (last seen %ld seconds ago)\n",
                     ++active_count,
-                    state->peers[i].username,
-                    state->peers[i].ip,
-                    (long)(now - state->peers[i].last_seen));
+                    state->peer_manager.peers[i].username,
+                    state->peer_manager.peers[i].ip,
+                    (long)(now - state->peer_manager.peers[i].last_seen));
          }
      }
      if (active_count == 0) {
@@ -46,7 +48,7 @@
      pthread_mutex_unlock(&state->peers_mutex);
      fflush(stdout);
  }
- int handle_command(app_state_t *state, const char *input) {
+int handle_command(app_state_t *state, const char *input) {
      if (strcmp(input, "/list") == 0) {
          print_peers(state);
          return 0;
@@ -78,10 +80,12 @@
          int found = 0;
          char target_ip[INET_ADDRSTRLEN];
          for (int i = 0; i < MAX_PEERS; i++) {
-             if (state->peers[i].active && (difftime(time(NULL), state->peers[i].last_seen) <= PEER_TIMEOUT)) {
+             if (state->peer_manager.peers[i].active &&
+                 (difftime(time(NULL), state->peer_manager.peers[i].last_seen) <= PEER_TIMEOUT))
+             {
                  current_peer_index++;
                  if (current_peer_index == peer_num_input) {
-                     strncpy(target_ip, state->peers[i].ip, INET_ADDRSTRLEN -1);
+                     strncpy(target_ip, state->peer_manager.peers[i].ip, INET_ADDRSTRLEN -1);
                      target_ip[INET_ADDRSTRLEN -1] = '\0';
                      found = 1;
                      break;
@@ -106,9 +110,11 @@
          pthread_mutex_lock(&state->peers_mutex);
          int sent_count = 0;
          for (int i = 0; i < MAX_PEERS; i++) {
-             if (state->peers[i].active && (difftime(time(NULL), state->peers[i].last_seen) <= PEER_TIMEOUT)) {
-                 if (send_message(state->peers[i].ip, message_content, MSG_TEXT, state->username) < 0) {
-                     log_message("Failed to send broadcast message to %s", state->peers[i].ip);
+             if (state->peer_manager.peers[i].active &&
+                 (difftime(time(NULL), state->peer_manager.peers[i].last_seen) <= PEER_TIMEOUT))
+             {
+                 if (send_message(state->peer_manager.peers[i].ip, message_content, MSG_TEXT, state->username) < 0) {
+                     log_message("Failed to send broadcast message to %s", state->peer_manager.peers[i].ip);
                  } else {
                      sent_count++;
                  }
@@ -124,9 +130,9 @@
          log_message("Sending QUIT notifications to peers...");
          int notify_count = 0;
          for (int i = 0; i < MAX_PEERS; i++) {
-             if (state->peers[i].active) {
-                 if (send_message(state->peers[i].ip, "", MSG_QUIT, state->username) < 0) {
-                     log_message("Failed to send quit notification to %s", state->peers[i].ip);
+             if (state->peer_manager.peers[i].active) {
+                 if (send_message(state->peer_manager.peers[i].ip, "", MSG_QUIT, state->username) < 0) {
+                     log_message("Failed to send quit notification to %s", state->peer_manager.peers[i].ip);
                  } else {
                      notify_count++;
                  }
@@ -147,7 +153,7 @@
          return 0;
      }
  }
- void *user_input_thread(void *arg) {
+void *user_input_thread(void *arg) {
     app_state_t *state = (app_state_t *)arg;
     char input[BUFFER_SIZE];
     fd_set readfds;
@@ -179,6 +185,7 @@
             if (state->running) {
                 if (feof(stdin)) {
                     log_message("EOF detected on stdin. Exiting input loop.");
+                    if (g_state) g_state->running = 0; else state->running = 0;
                 } else {
                     perror("Error reading input from stdin");
                 }
