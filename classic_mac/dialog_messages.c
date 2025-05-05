@@ -29,7 +29,6 @@
 TEHandle gMessagesTE = NULL;
 ControlHandle gMessagesScrollBar = NULL;
 pascal void MyScrollAction(ControlHandle theControl, short partCode) {
-    log_to_file_only("MyScrollAction called: Control=0x%lX, Part=%d", (unsigned long)theControl, partCode);
     if (theControl == gMessagesScrollBar) {
          if (partCode != 0) {
              HandleMessagesScrollClick(theControl, partCode);
@@ -49,9 +48,6 @@ Boolean InitMessagesTEAndScrollbar(DialogPtr dialog) {
     GetDialogItem(dialog, kMessagesTextEdit, &itemType, &itemHandle, &destRectMessages);
     if (itemType == userItem) {
         viewRectMessages = destRectMessages;
-        log_message("Calling TENew for Messages TE (Dest: T%d,L%d,B%d,R%d; View: T%d,L%d,B%d,R%d)",
-                    destRectMessages.top, destRectMessages.left, destRectMessages.bottom, destRectMessages.right,
-                    viewRectMessages.top, viewRectMessages.left, viewRectMessages.bottom, viewRectMessages.right);
         gMessagesTE = TENew(&destRectMessages, &viewRectMessages);
         if (gMessagesTE == NULL) {
             log_message("CRITICAL ERROR: TENew failed for Messages TE! Out of memory?");
@@ -102,7 +98,6 @@ void AppendToMessagesTE(const char *text) {
     GrafPtr oldPort;
     Boolean scrolledToBottom = false;
     if (gMessagesTE == NULL) {
-        log_to_file_only("Skipping AppendToMessagesTE: gMessagesTE is NULL.");
         return;
     }
     GetPort(&oldPort);
@@ -122,8 +117,6 @@ void AppendToMessagesTE(const char *text) {
             currentScrollVal = GetControlValue(gMessagesScrollBar);
             maxScroll = GetControlMaximum(gMessagesScrollBar);
             scrolledToBottom = (currentScrollVal >= maxScroll);
-             log_to_file_only("AppendToMessagesTE: Before insert - currentScroll=%d, maxScroll=%d, scrolledToBottom=%d",
-                             currentScrollVal, maxScroll, scrolledToBottom);
         }
         if (currentLength + textLen < 30000) {
             TESetSelect(currentLength, currentLength, gMessagesTE);
@@ -131,19 +124,16 @@ void AppendToMessagesTE(const char *text) {
             AdjustMessagesScrollbar();
             if (scrolledToBottom && gMessagesScrollBar != NULL) {
                 short newMaxScroll = GetControlMaximum(gMessagesScrollBar);
-                 log_to_file_only("AppendToMessagesTE: After insert - newMaxScroll=%d", newMaxScroll);
                 if (newMaxScroll > maxScroll || GetControlValue(gMessagesScrollBar) < newMaxScroll) {
                     short lineHeight = (**gMessagesTE).lineHeight;
                     if (lineHeight > 0) {
                         short currentTopLine = -(**gMessagesTE).destRect.top / lineHeight;
                         short scrollDeltaPixels = (currentTopLine - newMaxScroll) * lineHeight;
-                        log_to_file_only("AppendToMessagesTE: Auto-scrolling to new bottom. DeltaPixels=%d", scrollDeltaPixels);
                         ScrollMessagesTE(scrollDeltaPixels);
                         SetControlValue(gMessagesScrollBar, newMaxScroll);
                     }
                 }
             } else if (gMessagesScrollBar != NULL) {
-                 log_to_file_only("AppendToMessagesTE: Not auto-scrolling (wasn't at bottom or scrollbar NULL).");
             }
         } else {
              log_message("Warning: Messages TE field near full. Cannot append.");
@@ -156,8 +146,6 @@ void AppendToMessagesTE(const char *text) {
 }
 void AdjustMessagesScrollbar(void) {
     if (gMessagesTE == NULL || gMessagesScrollBar == NULL) {
-        log_to_file_only("AdjustMessagesScrollbar: Skipping, TE (0x%lX) or Scrollbar (0x%lX) is NULL.",
-                         (unsigned long)gMessagesTE, (unsigned long)gMessagesScrollBar);
         return;
     }
     SignedByte teState = HGetState((Handle)gMessagesTE);
@@ -181,25 +169,20 @@ void AdjustMessagesScrollbar(void) {
         if (linesInView < 1) linesInView = 1;
         maxScroll = totalLines - linesInView;
         if (maxScroll < 0) maxScroll = 0;
-        log_to_file_only("AdjustMessagesScrollbar: totalLines=%d, linesInView=%d, maxScroll=%d, firstVisibleLine=%d",
-                    totalLines, linesInView, maxScroll, firstVisibleLine);
         SetControlMaximum(gMessagesScrollBar, maxScroll);
         if (firstVisibleLine > maxScroll) {
-            log_to_file_only("AdjustMessagesScrollbar: Clamping firstVisibleLine from %d to %d.", firstVisibleLine, maxScroll);
             short scrollDeltaPixels = (firstVisibleLine - maxScroll) * lineHeight;
             ScrollMessagesTE(scrollDeltaPixels);
             firstVisibleLine = maxScroll;
         }
          if (firstVisibleLine < 0) firstVisibleLine = 0;
         SetControlValue(gMessagesScrollBar, firstVisibleLine);
-        log_to_file_only("AdjustMessagesScrollbar: Set Max=%d, Value=%d", maxScroll, firstVisibleLine);
         Boolean shouldBeVisible = (maxScroll > 0);
         Boolean isVisible = ((**gMessagesScrollBar).contrlVis != 0);
         Boolean windowIsActive = (gMainWindow != NULL && FrontWindow() == (WindowPtr)gMainWindow);
         short hiliteValue = 255;
         if (shouldBeVisible) {
             if (!isVisible) {
-                log_to_file_only("AdjustMessagesScrollbar: Showing scrollbar.");
                 ShowControl(gMessagesScrollBar);
             }
             if (windowIsActive) {
@@ -207,12 +190,9 @@ void AdjustMessagesScrollbar(void) {
             }
         } else {
             if (isVisible) {
-                log_to_file_only("AdjustMessagesScrollbar: Hiding scrollbar.");
                 HideControl(gMessagesScrollBar);
             }
         }
-        log_to_file_only("AdjustMessagesScrollbar: Setting scrollbar hilite to %d (shouldBeVisible=%d, windowIsActive=%d)",
-                         hiliteValue, shouldBeVisible, windowIsActive);
         HiliteControl(gMessagesScrollBar, hiliteValue);
     } else {
         log_message("AdjustMessagesScrollbar Error: gMessagesTE deref failed!");
@@ -220,9 +200,7 @@ void AdjustMessagesScrollbar(void) {
     HSetState((Handle)gMessagesTE, teState);
 }
 void HandleMessagesScrollClick(ControlHandle theControl, short partCode) {
-    log_to_file_only("HandleMessagesScrollClick called: PartCode=%d", partCode);
     if (gMessagesTE == NULL || partCode == 0 || partCode == inThumb) {
-        log_to_file_only("HandleMessagesScrollClick: Ignoring (TE NULL or partCode 0 or inThumb).");
         return;
     }
     short linesToScroll = 0;
@@ -240,24 +218,22 @@ void HandleMessagesScrollClick(ControlHandle theControl, short partCode) {
              if (pageScroll > 1) pageScroll -= 1;
              if (pageScroll < 1) pageScroll = 1;
         } else {
-            log_to_file_only("HandleMessagesScrollClick Warning: lineHeight is %d!", lineHeight);
+            log_message("HandleMessagesScrollClick Warning: lineHeight is %d!", lineHeight);
             HSetState((Handle)gMessagesTE, teState);
             return;
         }
     } else {
-         log_to_file_only("HandleMessagesScrollClick Error: gMessagesTE dereference failed!");
+         log_message("HandleMessagesScrollClick Error: gMessagesTE dereference failed!");
          HSetState((Handle)gMessagesTE, teState);
          return;
     }
     HSetState((Handle)gMessagesTE, teState);
     currentScroll = GetControlValue(theControl);
     maxScroll = GetControlMaximum(theControl);
-    log_to_file_only("HandleMessagesScrollClick: currentScroll=%d, maxScroll=%d, lineHeight=%d, pageScroll=%d",
-                currentScroll, maxScroll, lineHeight, pageScroll);
     switch (partCode) {
         case inUpButton: linesToScroll = -1; break;
         case inDownButton: linesToScroll = 1; break;
-        case inPageUp: linesToScroll = -pageScroll;break;
+        case inPageUp: linesToScroll = -pageScroll; break;
         case inPageDown: linesToScroll = pageScroll; break;
         default:
             log_to_file_only("HandleMessagesScrollClick: Ignoring unknown partCode %d", partCode);
@@ -266,13 +242,11 @@ void HandleMessagesScrollClick(ControlHandle theControl, short partCode) {
     short newScroll = currentScroll + linesToScroll;
     if (newScroll < 0) newScroll = 0;
     if (newScroll > maxScroll) newScroll = maxScroll;
-    log_to_file_only("HandleMessagesScrollClick: linesToScroll=%d, newScroll=%d (clamped)", linesToScroll, newScroll);
     if (newScroll != currentScroll) {
         short scrollDeltaPixels = (currentScroll - newScroll) * lineHeight;
         SetControlValue(theControl, newScroll);
         ScrollMessagesTE(scrollDeltaPixels);
     } else {
-         log_to_file_only("HandleMessagesScrollClick: newScroll == currentScroll, no action needed.");
     }
 }
 void HandleMessagesTEUpdate(DialogPtr dialog) {
@@ -296,10 +270,8 @@ void HandleMessagesTEUpdate(DialogPtr dialog) {
 void ActivateMessagesTEAndScrollbar(Boolean activating) {
     if (gMessagesTE != NULL) {
         if (activating) {
-             log_to_file_only("ActivateMessagesTEAndScrollbar: Activating TE (No-op for read-only).");
         } else {
             TEDeactivate(gMessagesTE);
-             log_to_file_only("ActivateMessagesTEAndScrollbar: Deactivating TE.");
         }
     }
     if (gMessagesScrollBar != NULL) {
@@ -308,8 +280,6 @@ void ActivateMessagesTEAndScrollbar(Boolean activating) {
         if (activating && maxScroll > 0) {
             hiliteValue = 0;
         }
-        log_to_file_only("ActivateMessagesTEAndScrollbar: Setting scrollbar hilite to %d (activating=%d, maxScroll=%d)",
-                         hiliteValue, activating, maxScroll);
         HiliteControl(gMessagesScrollBar, hiliteValue);
     }
 }
@@ -326,18 +296,13 @@ void ScrollMessagesTE(short deltaPixels) {
         HLock((Handle)gMessagesTE);
         if (*gMessagesTE != NULL) {
             Rect viewRectToInvalidate = (**gMessagesTE).viewRect;
-            log_to_file_only("ScrollMessagesTE: Scrolling TE content by %d pixels.", deltaPixels);
             TEScroll(0, deltaPixels, gMessagesTE);
             InvalRect(&viewRectToInvalidate);
-            log_to_file_only("ScrollMessagesTE: Invalidated TE viewRect (T%d,L%d,B%d,R%d).",
-                             viewRectToInvalidate.top, viewRectToInvalidate.left,
-                             viewRectToInvalidate.bottom, viewRectToInvalidate.right);
         } else {
-             log_to_file_only("ScrollMessagesTE Error: gMessagesTE dereference failed before TEScroll!");
+             log_message("ScrollMessagesTE Error: gMessagesTE dereference failed before TEScroll!");
         }
         HSetState((Handle)gMessagesTE, teState);
         SetPort(oldPort);
      } else if (deltaPixels == 0) {
-         log_to_file_only("ScrollMessagesTE: deltaPixels is 0, no scroll needed.");
      }
 }

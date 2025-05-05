@@ -7,6 +7,7 @@
 #include "dialog_messages.h"
 #include "dialog_input.h"
 #include "dialog_peerlist.h"
+#include "tcp.h"
 #include <MacTypes.h>
 #include <Dialogs.h>
 #include <TextEdit.h>
@@ -71,17 +72,17 @@ void CleanupDialog(void) {
 }
 void HandleDialogClick(DialogPtr dialog, short itemHit, EventRecord *theEvent) {
     if (dialog != gMainWindow) return;
-    log_to_file_only("HandleDialogClick called for item %d (Potentially redundant).", itemHit);
+    log_to_file_only("HandleDialogClick called for item %d (Potentially redundant if DialogSelect handled).", itemHit);
 }
 void HandleSendButtonClick(void) {
     char inputCStr[256];
-    char formattedMsg[BUFFER_SIZE];
     ControlHandle checkboxHandle;
     DialogItemType itemType;
     Handle itemHandle;
     Rect itemRect;
     Boolean isBroadcast;
     char displayMsg[BUFFER_SIZE + 100];
+    OSErr sendErr;
     if (!GetInputText(inputCStr, sizeof(inputCStr))) {
         log_message("Error: Could not get text from input field.");
         SysBeep(10);
@@ -100,26 +101,30 @@ void HandleSendButtonClick(void) {
         log_message("Warning: Broadcast item %d is not a checkbox! Assuming not broadcast.", kBroadcastCheckbox);
         isBroadcast = false;
     }
-    int formatResult = format_message(formattedMsg, BUFFER_SIZE, MSG_TEXT,
-                                      gMyUsername, gMyLocalIPStr, inputCStr);
-    if (formatResult <= 0) {
-        log_message("Error: Failed to format message for sending (format_message returned %d).", formatResult);
-        SysBeep(20);
-        return;
-    }
     if (isBroadcast) {
-        log_message("Broadcasting: %s (Network send not implemented yet)", inputCStr);
+        log_message("Broadcasting: '%s' (Broadcast send not implemented)", inputCStr);
         sprintf(displayMsg, "You (Broadcast): %s", inputCStr);
         AppendToMessagesTE(displayMsg);
         AppendToMessagesTE("\r");
     } else {
         peer_t targetPeer;
         if (GetSelectedPeerInfo(&targetPeer)) {
-            log_message("Sending to selected peer %s@%s: %s (Network send not implemented yet)",
+            log_message("Sending to selected peer %s@%s: '%s'",
                          targetPeer.username, targetPeer.ip, inputCStr);
-            sprintf(displayMsg, "You (to %s): %s", targetPeer.username, inputCStr);
-            AppendToMessagesTE(displayMsg);
-            AppendToMessagesTE("\r");
+            sendErr = TCP_SendTextMessageSync(targetPeer.ip, inputCStr, YieldTimeToSystem);
+            if (sendErr == noErr) {
+                sprintf(displayMsg, "You (to %s): %s", targetPeer.username, inputCStr);
+                AppendToMessagesTE(displayMsg);
+                AppendToMessagesTE("\r");
+            } else {
+                log_message("Error sending message to %s: %d", targetPeer.ip, sendErr);
+                if (sendErr == insufficientResources) {
+                     log_message("   (Sending may be disabled due to MacTCP stream limits)");
+                     SysBeep(20);
+                } else {
+                     SysBeep(10);
+                }
+            }
         } else {
              log_message("Error: Cannot send, no peer selected in the list or selection invalid.");
              SysBeep(10);
@@ -145,6 +150,5 @@ void UpdateDialogControls(void) {
     HandleMessagesTEUpdate(gMainWindow);
     HandleInputTEUpdate(gMainWindow);
     HandlePeerListUpdate(gMainWindow);
-    DrawControls(gMainWindow);
     SetPort(oldPort);
 }
