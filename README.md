@@ -19,7 +19,7 @@ You can watch a [demo video on YouTube](https://www.youtube.com/watch?v=_9iXCBZ_
 *   `Makefile.retro68`: Builds the Classic Mac version using Retro68.
 *   `MPW_resources/`: Contains `csend.r` (Rez input) and `csend.rsrc` (ResEdit output) for the Classic Mac GUI.
 *   `Dockerfile`, `docker-compose.yml`: Support files for running the POSIX version in Docker containers. (Run `./docker.sh start` to use these easily).
-*   `setup_retro68.sh` (in root, assumed): Script to download, build and setup your PATH for retro68.
+*   `setup_retro68.sh` Script to download, build and setup your PATH for retro68.
 *   `tools/`: Contains copy paste detection tools.
 *   `misc/`: Miscellaneous files for Retro68.
 *   `resedit.md`: Explanation of using ResEdit and resource conversion.
@@ -166,9 +166,8 @@ Open another terminal and run:
 They should discover each other if on the same network.
 
 ### POSIX Version With Docker (Recommended for Testing)
-The provided `docker.sh` script (if available, otherwise use `docker-compose`) simplifies running multiple POSIX peers in isolated containers.
+The provided `docker.sh` script simplifies running multiple POSIX peers in isolated containers.
 
-Assuming `docker.sh` script:
 Start the containers:
 ```bash
 ./docker.sh start
