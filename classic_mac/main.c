@@ -49,15 +49,14 @@ void MainEventLoop(void);
 void HandleEvent(EventRecord *event);
 void HandleMouseDownInContent(WindowPtr whichWindow, EventRecord *event);
 void HandleIdleTasks(void);
-// HandleSendButtonClick is now declared in dialog.h and defined in dialog.c
 
 int main(void) {
     OSErr networkErr;
     Boolean dialogOk;
 
     InitLogFile();
-    // Updated log message to reflect the new strategy
-    log_message("Starting application (Async Completion Routine Strategy)..."); // Updated strategy name
+    // *** UPDATED Log message for strategy ***
+    log_message("Starting application (Single Stream / Sync Poll Strategy)...");
 
     MaxApplZone();
     log_message("MaxApplZone called.");
@@ -88,10 +87,9 @@ int main(void) {
     log_message("Exited main event loop.");
 
     log_message("Initiating shutdown sequence...");
-    // Use the sync function for shutdown. Handle potential busy error.
     OSErr quitErr = TCP_SendQuitMessagesSync(YieldTimeToSystem);
     if (quitErr == streamBusyErr) {
-        log_message("Warning: TCP_SendQuitMessagesSync failed because stream was busy or kill failed during shutdown."); // Updated msg
+        log_message("Warning: TCP_SendQuitMessagesSync failed because stream was busy.");
     } else if (quitErr != noErr) {
         log_message("Warning: TCP_SendQuitMessagesSync reported last error: %d.", quitErr);
     } else {
@@ -104,7 +102,6 @@ int main(void) {
     return 0;
 }
 
-// InitializeToolbox remains unchanged
 void InitializeToolbox(void) {
     InitGraf(&qd.thePort);
     InitFonts();
@@ -115,143 +112,82 @@ void InitializeToolbox(void) {
     InitCursor();
 }
 
-// MainEventLoop remains unchanged
 void MainEventLoop(void) {
     EventRecord event;
     Boolean gotEvent;
-    long sleepTime = 1L; // Use 1 tick sleep for better responsiveness
+    long sleepTime = 1L; 
 
     while (!gDone) {
-        // Idle TextEdit fields
         if (gMessagesTE != NULL) TEIdle(gMessagesTE);
         if (gInputTE != NULL) TEIdle(gInputTE);
 
-        // Handle background network tasks and peer list pruning
         HandleIdleTasks(); // Calls PollTCP internally
 
-        // Wait for events, yielding time
         gotEvent = WaitNextEvent(everyEvent, &event, sleepTime, NULL);
 
         if (gotEvent) {
             Boolean eventHandled = false;
-
-            // --- Special handling for scrollbar clicks BEFORE DialogSelect ---
             if (event.what == mouseDown) {
                 WindowPtr whichWindow;
                 short windowPart = FindWindow(event.where, &whichWindow);
                 if (whichWindow == (WindowPtr)gMainWindow && windowPart == inContent) {
-                    Point localPt = event.where;
-                    ControlHandle foundControl;
-                    short foundControlPart;
-                    GrafPtr oldPort;
-                    GetPort(&oldPort);
-                    SetPort(GetWindowPort(gMainWindow));
-                    GlobalToLocal(&localPt);
-                    foundControlPart = FindControl(localPt, whichWindow, &foundControl);
-                    SetPort(oldPort);
-
+                    Point localPt = event.where; ControlHandle foundControl; short foundControlPart;
+                    GrafPtr oldPort; GetPort(&oldPort); SetPort(GetWindowPort(gMainWindow)); GlobalToLocal(&localPt);
+                    foundControlPart = FindControl(localPt, whichWindow, &foundControl); SetPort(oldPort);
                     if (foundControl == gMessagesScrollBar &&
                         (foundControlPart == inUpButton || foundControlPart == inDownButton ||
-                         foundControlPart == inPageUp || foundControlPart == inPageDown))
-                    {
-                        log_to_file_only("MainEventLoop: Handling mouseDown on Messages Scrollbar arrows/page (part %d) BEFORE DialogSelect.", foundControlPart);
-                        if ((**foundControl).contrlHilite == 0) {
-                            TrackControl(foundControl, localPt, &MyScrollAction);
-                        } else {
-                            log_to_file_only("MainEventLoop: Messages scrollbar clicked but inactive.");
-                        }
+                         foundControlPart == inPageUp || foundControlPart == inPageDown)) {
+                        if ((**foundControl).contrlHilite == 0) { TrackControl(foundControl, localPt, &MyScrollAction); }
                         eventHandled = true;
                     }
                 }
-            } // End scrollbar pre-handling
-
-            // --- Standard Event Handling ---
+            }
             if (!eventHandled) {
                 if (IsDialogEvent(&event)) {
-                    DialogPtr whichDialog;
-                    short itemHit;
+                    DialogPtr whichDialog; short itemHit;
                     if (DialogSelect(&event, &whichDialog, &itemHit)) {
                         if (whichDialog == gMainWindow && itemHit > 0) {
-                             log_to_file_only("DialogSelect returned TRUE for item %d.", itemHit);
                              switch (itemHit) {
-                                 case kSendButton:
-                                     HandleSendButtonClick();
-                                     break;
-                                 case kBroadcastCheckbox:
-                                     log_to_file_only("Broadcast checkbox state changed by DialogSelect.");
-                                     break;
-                                 case kMessagesScrollbar:
-                                      log_to_file_only("DialogSelect handled event for Messages Scrollbar (item %d). Assumed thumb drag.", itemHit);
+                                 case kSendButton: HandleSendButtonClick(); break;
+                                 case kMessagesScrollbar: {
                                       short newValue = GetControlValue(gMessagesScrollBar);
-                                      if (gMessagesTE != NULL) {
-                                            SignedByte teState = HGetState((Handle)gMessagesTE); HLock((Handle)gMessagesTE);
-                                            if (*gMessagesTE != NULL) {
-                                                short lineHeight = (**gMessagesTE).lineHeight;
-                                                if (lineHeight > 0) {
-                                                    short desiredTopPixel = -newValue * lineHeight;
-                                                    short currentTopPixel = (**gMessagesTE).destRect.top;
-                                                    short scrollDeltaPixels = desiredTopPixel - currentTopPixel;
-                                                    if (scrollDeltaPixels != 0) { ScrollMessagesTE(scrollDeltaPixels); }
-                                                }
-                                            } HSetState((Handle)gMessagesTE, teState);
-                                      }
-                                     break;
-                                 case kInputTextEdit:
-                                 case kMessagesTextEdit:
-                                     log_to_file_only("DialogSelect handled event in item %d (TE).", itemHit);
-                                     break;
-                                 case kPeerListUserItem:
-                                     log_to_file_only("DialogSelect handled event in item %d (List).", itemHit);
-                                     Cell tempCell = {0,-1};
-                                     if (LGetSelect(true, &tempCell, gPeerListHandle)) { gLastSelectedCell = tempCell; }
-                                     else { SetPt(&gLastSelectedCell, 0, -1); }
-                                     break;
-                                  default:
-                                     log_to_file_only("DialogSelect handled unknown item %d.", itemHit);
-                                     break;
+                                      if (gMessagesTE != NULL) { SignedByte teState = HGetState((Handle)gMessagesTE); HLock((Handle)gMessagesTE);
+                                          if (*gMessagesTE != NULL) { short lineHeight = (**gMessagesTE).lineHeight; if (lineHeight > 0) {
+                                                  short desiredTopPixel = -newValue * lineHeight; short currentTopPixel = (**gMessagesTE).destRect.top;
+                                                  short scrollDeltaPixels = desiredTopPixel - currentTopPixel; if (scrollDeltaPixels != 0) { ScrollMessagesTE(scrollDeltaPixels); } } }
+                                          HSetState((Handle)gMessagesTE, teState); } } break;
+                                 case kPeerListUserItem: { Cell tempCell = {0,-1}; if (LGetSelect(true, &tempCell, gPeerListHandle)) { gLastSelectedCell = tempCell; } else { SetPt(&gLastSelectedCell, 0, -1); } } break;
+                                 default: break;
                              }
                         }
                         eventHandled = true;
                     }
-                } // End IsDialogEvent
-
-                if (!eventHandled) {
-                     HandleEvent(&event);
                 }
-            } // End standard handling
-        } // End gotEvent
-    } // End while !gDone
+                if (!eventHandled) { HandleEvent(&event); }
+            }
+        }
+    }
 }
 
-// HandleIdleTasks - *** UPDATED call to PollTCP ***
 void HandleIdleTasks(void) {
     unsigned long currentTimeTicks = TickCount();
 
-    // Poll network listeners/state machines
     PollUDPListener(gMacTCPRefNum, gMyLocalIP);
-    PollTCP(); // <<< UPDATED: Call PollTCP with no arguments
+    // *** Call PollTCP with YieldTimeToSystem ***
+    PollTCP(YieldTimeToSystem);
 
-    // Send periodic discovery broadcast
     CheckSendBroadcast(gMacTCPRefNum, gMyUsername, gMyLocalIPStr);
 
-    // Prune and update peer list display periodically
     if (gLastPeerListUpdateTime == 0 ||
-        (currentTimeTicks < gLastPeerListUpdateTime) ||
-        (currentTimeTicks - gLastPeerListUpdateTime) >= kPeerListUpdateIntervalTicks)
-    {
-        if (gPeerListHandle != NULL) {
-            UpdatePeerDisplayList(false);
-        }
+        (currentTimeTicks < gLastPeerListUpdateTime) || // Handle TickCount wrap-around
+        (currentTimeTicks - gLastPeerListUpdateTime) >= kPeerListUpdateIntervalTicks) {
+        if (gPeerListHandle != NULL) { UpdatePeerDisplayList(false); }
         gLastPeerListUpdateTime = currentTimeTicks;
     }
 }
 
-// HandleEvent remains unchanged
 void HandleEvent(EventRecord *event) {
-    short windowPart;
-    WindowPtr whichWindow;
-    char theChar;
-
+    short windowPart; WindowPtr whichWindow; char theChar;
     switch (event->what) {
         case mouseDown:
             windowPart = FindWindow(event->where, &whichWindow);
@@ -260,20 +196,18 @@ void HandleEvent(EventRecord *event) {
                 case inSysWindow: SystemClick(event, whichWindow); break;
                 case inDrag: if (whichWindow == (WindowPtr)gMainWindow) { DragWindow(whichWindow, event->where, &qd.screenBits.bounds); } break;
                 case inGoAway: if (whichWindow == (WindowPtr)gMainWindow) { if (TrackGoAway(whichWindow, event->where)) { log_message("Close box clicked. Setting gDone = true."); gDone = true; } } break;
-                case inContent: if (whichWindow == (WindowPtr)gMainWindow) { log_to_file_only("HandleEvent: Click in content not handled by DS."); } else { SelectWindow(whichWindow); } break;
-                 case inZoomIn: case inZoomOut: break;
+                case inContent: if (whichWindow == (WindowPtr)gMainWindow) { /* Clicks in content not handled by DialogSelect might be handled here if needed */ } else { SelectWindow(whichWindow); } break;
                 default: break;
             }
             break;
-        case keyDown: case autoKey:
-             theChar = event->message & charCodeMask; if ((event->modifiers & cmdKey) != 0) { /* Handle menus */ } else { /* Delegate to DialogSelect/TEKey */ } break;
+        case keyDown: case autoKey: theChar = event->message & charCodeMask; if ((event->modifiers & cmdKey) != 0) { /* Menus */ } break;
         case updateEvt:
             whichWindow = (WindowPtr)event->message; BeginUpdate(whichWindow);
-             if (whichWindow == (WindowPtr)gMainWindow) { DrawDialog(whichWindow); UpdateDialogControls(); }
-             EndUpdate(whichWindow); break;
+            if (whichWindow == (WindowPtr)gMainWindow) { DrawDialog(whichWindow); UpdateDialogControls(); }
+            EndUpdate(whichWindow); break;
         case activateEvt:
             whichWindow = (WindowPtr)event->message; if (whichWindow == (WindowPtr)gMainWindow) {
-                Boolean becomingActive = ((event->modifiers & activeFlag) != 0); log_to_file_only("HandleEvent: ActivateEvt for gMainWindow -> BecomingActive=%d", becomingActive);
+                Boolean becomingActive = ((event->modifiers & activeFlag) != 0);
                 ActivateDialogTE(becomingActive); ActivatePeerList(becomingActive); ActivateMessagesTEAndScrollbar(becomingActive);
             } break;
         default: break;
