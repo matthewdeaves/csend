@@ -7,25 +7,30 @@
 #include <string.h>
 #include <stdlib.h>
 #include <Memory.h>
+#include <Events.h>
+extern OSErr OpenResolver(char *fileName);
+extern OSErr CloseResolver(void);
+extern OSErr AddrToStr(unsigned long addr, char *addrStr);
 short gMacTCPRefNum = 0;
 ip_addr gMyLocalIP = 0;
 char gMyLocalIPStr[INET_ADDRSTRLEN] = "0.0.0.0";
 char gMyUsername[32] = "MacUser";
 OSErr InitializeNetworking(void) {
     OSErr err;
-    ParamBlockRec pb;
+    ParamBlockRec pbOpen;
     CntrlParam cntrlPB;
     log_message("Initializing Networking...");
-    pb.ioParam.ioNamePtr = (StringPtr)kTCPDriverName;
-    pb.ioParam.ioPermssn = fsCurPerm;
+    memset(&pbOpen, 0, sizeof(ParamBlockRec));
+    pbOpen.ioParam.ioNamePtr = (StringPtr)kTCPDriverName;
+    pbOpen.ioParam.ioPermssn = fsCurPerm;
     log_message("Attempting PBOpenSync for .IPP driver...");
-    err = PBOpenSync(&pb);
+    err = PBOpenSync(&pbOpen);
     if (err != noErr) {
-        log_message("Error: PBOpenSync failed. Error: %d", err);
+        log_message("Error: PBOpenSync for MacTCP driver failed. Error: %d", err);
         gMacTCPRefNum = 0;
         return err;
     }
-    gMacTCPRefNum = pb.ioParam.ioRefNum;
+    gMacTCPRefNum = pbOpen.ioParam.ioRefNum;
     log_message("PBOpenSync succeeded (RefNum: %d).", gMacTCPRefNum);
     memset(&cntrlPB, 0, sizeof(CntrlParam));
     cntrlPB.ioCRefNum = gMacTCPRefNum;
@@ -34,17 +39,15 @@ OSErr InitializeNetworking(void) {
     err = PBControlSync((ParmBlkPtr)&cntrlPB);
     if (err != noErr) {
         log_message("Error: PBControlSync(ipctlGetAddr) failed. Error: %d", err);
-        PBCloseSync(&pb);
         gMacTCPRefNum = 0;
         return err;
     }
     log_message("PBControlSync(ipctlGetAddr) succeeded.");
-    gMyLocalIP = *((ip_addr *)(&cntrlPB.csParam[0]));
+    BlockMoveData(&cntrlPB.csParam[0], &gMyLocalIP, sizeof(ip_addr));
     log_message("Attempting OpenResolver...");
     err = OpenResolver(NULL);
     if (err != noErr) {
         log_message("Error: OpenResolver failed. Error: %d", err);
-        PBCloseSync(&pb);
         gMacTCPRefNum = 0;
         return err;
     } else {
@@ -55,8 +58,11 @@ OSErr InitializeNetworking(void) {
     if (err != noErr) {
          log_message("Warning: AddrToStr returned error %d. Result string: '%s'", err, gMyLocalIPStr);
          if (gMyLocalIP == 0 || gMyLocalIPStr[0] == '\0' || strcmp(gMyLocalIPStr, "0.0.0.0") == 0) {
-             log_message("Error: AddrToStr failed to get a valid IP string. Using fallback 127.0.0.1.");
+             log_message("Error: AddrToStr failed to get a valid IP string. Using fallback 127.0.0.1 for display/formatting.");
              strcpy(gMyLocalIPStr, "127.0.0.1");
+             if (gMyLocalIP == 0) {
+                ParseIPv4("127.0.0.1", &gMyLocalIP);
+             }
          }
     } else {
         log_message("AddrToStr finished. Local IP: '%s'", gMyLocalIPStr);
@@ -65,16 +71,14 @@ OSErr InitializeNetworking(void) {
      if (err != noErr) {
         log_message("Fatal: UDP Discovery initialization failed (%d). Cleaning up.", err);
         CloseResolver();
-        PBCloseSync(&pb);
         gMacTCPRefNum = 0;
         return err;
     }
-    err = InitTCPListener(gMacTCPRefNum);
+    err = InitTCP(gMacTCPRefNum);
     if (err != noErr) {
-        log_message("Fatal: TCP Listener initialization failed (%d). Cleaning up.", err);
+        log_message("Fatal: TCP initialization failed (%d). Cleaning up.", err);
         CleanupUDPDiscoveryEndpoint(gMacTCPRefNum);
         CloseResolver();
-        PBCloseSync(&pb);
         gMacTCPRefNum = 0;
         return err;
     }
@@ -83,9 +87,8 @@ OSErr InitializeNetworking(void) {
 }
 void CleanupNetworking(void) {
     OSErr err;
-    ParamBlockRec pb;
-    log_message("Cleaning up Networking...");
-    CleanupTCPListener(gMacTCPRefNum);
+    log_message("Cleaning up Networking (Streams, DNR, Driver)...");
+    CleanupTCP(gMacTCPRefNum);
     CleanupUDPDiscoveryEndpoint(gMacTCPRefNum);
     log_message("Attempting CloseResolver...");
     err = CloseResolver();
@@ -95,17 +98,44 @@ void CleanupNetworking(void) {
         log_message("CloseResolver succeeded.");
     }
     if (gMacTCPRefNum != 0) {
-         log_message("Closing MacTCP driver (RefNum: %d)...", gMacTCPRefNum);
-         pb.ioParam.ioRefNum = gMacTCPRefNum;
-         err = PBCloseSync(&pb);
-         if (err != noErr) {
-             log_message("Warning: PBCloseSync failed for MacTCP driver. Error: %d", err);
-         } else {
-             log_message("MacTCP driver closed.");
-         }
+         log_message("MacTCP driver (RefNum: %d) was opened by this application. It will remain open for the system.", gMacTCPRefNum);
         gMacTCPRefNum = 0;
     } else {
-        log_message("MacTCP driver was not open.");
+        log_message("MacTCP driver was not opened by this application or already cleaned up.");
     }
     log_message("Networking cleanup complete.");
+}
+void YieldTimeToSystem(void) {
+    EventRecord event;
+    WaitNextEvent(0, &event, 1L, NULL);
+}
+OSErr ParseIPv4(const char *ip_str, ip_addr *out_addr) {
+    unsigned long parts[4];
+    int i = 0;
+    char *token;
+    char *rest_of_string;
+    char buffer[INET_ADDRSTRLEN + 1];
+    if (ip_str == NULL || out_addr == NULL) {
+        return paramErr;
+    }
+    strncpy(buffer, ip_str, INET_ADDRSTRLEN);
+    buffer[INET_ADDRSTRLEN] = '\0';
+    rest_of_string = buffer;
+    while ((token = strtok_r(rest_of_string, ".", &rest_of_string)) != NULL && i < 4) {
+        char *endptr;
+        parts[i] = strtoul(token, &endptr, 10);
+        if (*endptr != '\0' || parts[i] > 255) {
+            log_message("ParseIPv4: Invalid part '%s' in IP string '%s'", token, ip_str);
+            *out_addr = 0;
+            return paramErr;
+        }
+        i++;
+    }
+    if (i != 4) {
+        log_message("ParseIPv4: Incorrect number of parts (%d) in IP string '%s'", i, ip_str);
+        *out_addr = 0;
+        return paramErr;
+    }
+    *out_addr = (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
+    return noErr;
 }

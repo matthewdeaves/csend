@@ -7,6 +7,7 @@
 #include "dialog_messages.h"
 #include "dialog_input.h"
 #include "dialog_peerlist.h"
+#include "tcp.h"
 #include <MacTypes.h>
 #include <Dialogs.h>
 #include <TextEdit.h>
@@ -21,6 +22,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <Errors.h>
 DialogPtr gMainWindow = NULL;
 Boolean gDialogTEInitialized = false;
 Boolean gDialogListInitialized = false;
@@ -57,9 +59,9 @@ Boolean InitDialog(void) {
 }
 void CleanupDialog(void) {
     log_message("Cleaning up Dialog...");
-    CleanupMessagesTEAndScrollbar();
-    CleanupInputTE();
     CleanupPeerListControl();
+    CleanupInputTE();
+    CleanupMessagesTEAndScrollbar();
     if (gMainWindow != NULL) {
         log_message("Disposing dialog window...");
         DisposeDialog(gMainWindow);
@@ -75,13 +77,13 @@ void HandleDialogClick(DialogPtr dialog, short itemHit, EventRecord *theEvent) {
 }
 void HandleSendButtonClick(void) {
     char inputCStr[256];
-    char formattedMsg[BUFFER_SIZE];
     ControlHandle checkboxHandle;
     DialogItemType itemType;
     Handle itemHandle;
     Rect itemRect;
     Boolean isBroadcast;
     char displayMsg[BUFFER_SIZE + 100];
+    OSErr sendErr = noErr;
     if (!GetInputText(inputCStr, sizeof(inputCStr))) {
         log_message("Error: Could not get text from input field.");
         SysBeep(10);
@@ -100,33 +102,40 @@ void HandleSendButtonClick(void) {
         log_message("Warning: Broadcast item %d is not a checkbox! Assuming not broadcast.", kBroadcastCheckbox);
         isBroadcast = false;
     }
-    int formatResult = format_message(formattedMsg, BUFFER_SIZE, MSG_TEXT,
-                                      gMyUsername, gMyLocalIPStr, inputCStr);
-    if (formatResult <= 0) {
-        log_message("Error: Failed to format message for sending (format_message returned %d).", formatResult);
-        SysBeep(20);
-        return;
-    }
     if (isBroadcast) {
-        log_message("Broadcasting: %s (Network send not implemented yet)", inputCStr);
+        log_message("Broadcasting: '%s' (Broadcast send not implemented)", inputCStr);
         sprintf(displayMsg, "You (Broadcast): %s", inputCStr);
         AppendToMessagesTE(displayMsg);
         AppendToMessagesTE("\r");
     } else {
         peer_t targetPeer;
         if (GetSelectedPeerInfo(&targetPeer)) {
-            log_message("Sending to selected peer %s@%s: %s (Network send not implemented yet)",
+            log_message("Attempting sync send to selected peer %s@%s: '%s'",
                          targetPeer.username, targetPeer.ip, inputCStr);
-            sprintf(displayMsg, "You (to %s): %s", targetPeer.username, inputCStr);
-            AppendToMessagesTE(displayMsg);
-            AppendToMessagesTE("\r");
+            sendErr = TCP_SendTextMessageSync(targetPeer.ip, inputCStr, YieldTimeToSystem);
+            if (sendErr == noErr) {
+                sprintf(displayMsg, "You (to %s): %s", targetPeer.username, inputCStr);
+                AppendToMessagesTE(displayMsg);
+                AppendToMessagesTE("\r");
+                log_message("Sync send completed successfully.");
+            }
+            else if (sendErr == streamBusyErr) {
+                log_message("Send failed: Stream is busy (receiving or sending). Please try again later.");
+                SysBeep(5);
+            }
+            else {
+                log_message("Error sending message to %s: %d", targetPeer.ip, sendErr);
+                SysBeep(10);
+            }
         } else {
              log_message("Error: Cannot send, no peer selected in the list or selection invalid.");
              SysBeep(10);
              return;
         }
     }
-    ClearInputText();
+    if (isBroadcast || sendErr == noErr) {
+        ClearInputText();
+    }
     ActivateInputTE(true);
 }
 void ActivateDialogTE(Boolean activating) {
@@ -145,6 +154,8 @@ void UpdateDialogControls(void) {
     HandleMessagesTEUpdate(gMainWindow);
     HandleInputTEUpdate(gMainWindow);
     HandlePeerListUpdate(gMainWindow);
-    DrawControls(gMainWindow);
+    if (gMessagesScrollBar != NULL) {
+        Draw1Control(gMessagesScrollBar);
+    }
     SetPort(oldPort);
 }

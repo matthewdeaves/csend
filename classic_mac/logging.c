@@ -20,7 +20,7 @@ void InitLogFile(void) {
         fclose(gLogFile);
         gLogFile = NULL;
     }
-    gLogFile = fopen(kLogFileName, "w");
+    gLogFile = fopen(kLogFileName, "a");
     if (gLogFile == NULL) {
         SysBeep(10);
     } else {
@@ -31,6 +31,7 @@ void InitLogFile(void) {
 void CloseLogFile(void) {
     if (gLogFile != NULL) {
         fprintf(gLogFile, "--- Log Ended ---\n");
+        fflush(gLogFile);
         fclose(gLogFile);
         gLogFile = NULL;
     }
