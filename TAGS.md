@@ -8,49 +8,75 @@ I'll be tagging various points of evolution of this code base with a write up of
 
 ## [v0.0.11](https://github.com/matthewdeaves/csend/tree/v0.0.11)
 
-This version focuses on debugging the UDP discovery mechanism on the Classic Mac target using MacTCP and the Retro68 toolchain. Significant progress was made in understanding a core structure alignment issue, although a critical problem remains and is [documented here](/bugs.md). The shared message protocol implementation was also refined with basic validation. The most likely course of action I'll take next is to compile the classic Mac version using the MPW on Mac OS 7.5.3.
+This version marks a major milestone, for the Classic Macintosh client, by fully implementing TCP message handling and integrating shared discovery and messaging logic. The Classic Mac client has the underpinnings of a functional peer-to-peer chat application capable of discovering, sending to, and receiving messages from other peers.
 
-**Key Changes & Findings:**
+1.  **Shared Discovery Logic Implementation & Integration:**
+    *   **v0.0.10 (Conceptual):** Classic Mac only sent UDP discovery broadcasts. Receiving and processing discovery packets was a TODO.
+    *   **v0.0.11:**
+        *   Introduces `shared/discovery_logic.c` and `shared/discovery_logic.h`. This C file contains the platform-independent logic for parsing incoming UDP packets (`MSG_DISCOVERY`, `MSG_DISCOVERY_RESPONSE`). It uses a `discovery_platform_callbacks_t` struct to allow platform-specific actions (sending responses, adding/updating peers, notifying UI).
+        *   **Classic Mac (`classic_mac/discovery.c`):**
+            *   Now implements asynchronous UDP receive polling (`StartAsyncUDPRead`, `PollUDPListener`, `ReturnUDPBufferAsync`).
+            *   When a UDP packet is received, it's passed to `discovery_logic_process_packet`.
+            *   Implements the Mac-specific callbacks:
+                *   `mac_send_discovery_response`: Uses `SendDiscoveryResponseSync` to send a `MSG_DISCOVERY_RESPONSE`.
+                *   `mac_add_or_update_peer`: Calls the existing `AddOrUpdatePeer` (which uses `peer_shared`).
+                *   `mac_notify_peer_list_updated`: Calls `UpdatePeerDisplayList` to refresh the GUI.
+        *   **POSIX (`posix/discovery.c`):**
+            *   Refactored to use the new `shared/discovery_logic.c`.
+            *   The `discovery_thread` now calls `discovery_logic_process_packet`.
+            *   Implements POSIX-specific callbacks:
+                *   `posix_send_discovery_response`: Sends UDP response using `sendto`.
+                *   `posix_add_or_update_peer`: Calls `add_peer` (which uses `peer_shared`).
+                *   `posix_notify_peer_list_updated`: Currently a no-op log message for the terminal UI.
+    *   **Benefit:** Peer discovery (both sending and receiving/processing) is now consistently handled across platforms using shared core logic, with platform-specifics neatly isolated in callbacks. Classic Mac can now fully participate in discovery.
 
-1.  **Classic Mac UDP Debugging & Alignment:**
-    *   **Compiler Flags:** Added GCC flag `-fpack-struct` to address issues where `PBControlSync` calls to MacTCP, specifically `udpCreate`, were not correctly returning the `StreamPtr`.
-    *   **`-fpack-struct`:** Adding this flag to the Classic Mac build (`Makefile.classicmac`) resolved the initial issue where `udpCreate` returned `0L` in `pb.udpStream`. The call now returns `noErr` and `pb.udpStream` receives a non-zero value.
-    *   **Incorrect `StreamPtr`:** Debugging revealed that the non-zero value returned in `pb.udpStream` by `udpCreate` (when compiled with Retro68 + `-fpack-struct`) is actually the memory address of the user-provided receive buffer (`gUDPRecvBuffer`), *not* the expected opaque pointer to MacTCP's internal stream control block.
-    *   **`udpRead` Success:** With the non-zero (though incorrect) stream identifier, `udpRead` calls now successfully receive incoming UDP packets.
-    *   **`udpBfrReturn` Failure Persists:**
-        *   **Critical Issue:** Despite `udpRead` succeeding, the necessary follow-up call to `udpBfrReturn` (to return the buffer segment to MacTCP) **consistently fails** with error `-23013` (`invalidBufPtr`).
-        *   **Reason:** This occurs because the `StreamPtr` value passed to `udpBfrReturn` (which is the buffer address obtained from `udpCreate`) is not the correct internal identifier MacTCP needs to manage its buffer queue for that stream. MacTCP essentially reports that the buffer doesn't belong to the stream identified by that specific pointer value.
-    *   **`udpRelease` Success:** The `udpRelease` call during cleanup *does* succeed when passed the buffer address as the `udpStream`. This might be because `udpRelease` also takes the buffer pointer and length as explicit parameters within the `csParam.create` part of the union, allowing it to identify the resources to free even with the incorrect stream pointer.
-    *   **Application Logic Updated:** The checking logic in `classic_mac/discovery.c` around the value of `gUDPStream` after `udpCreate` and before `udpRelease` was updated to reflect the current understanding (i.e., expecting the buffer address is incorrect, but non-NULL is required for release).
+2.  **Shared TCP Messaging Logic & Full Classic Mac TCP Implementation:**
+    *   **v0.0.10 (Conceptual):** Classic Mac had placeholder send logic (`DoSendAction`) but no actual TCP send/receive. POSIX had its own TCP handling.
+    *   **v0.0.11:**
+        *   Introduces `shared/messaging_logic.c` and `shared/messaging_logic.h`. This C file contains platform-independent logic for handling parsed TCP messages (`MSG_TEXT`, `MSG_QUIT`). It uses a `tcp_platform_callbacks_t` struct for platform-specific actions.
+        *   **Classic Mac (`classic_mac/tcp.c`):**
+            *   **Major rewrite and feature completion.** This file now implements a single-stream TCP management strategy for Classic Mac.
+            *   **Listening (Passive Open):** Uses `TCPPassiveOpen` asynchronously (polled in `PollTCP`) to listen for incoming connections.
+            *   **Receiving:** When a connection is established, `TCPRcv` (polled synchronously) reads data. The received data is parsed via `shared/protocol.c` and then passed to `handle_received_tcp_message` from `shared/messaging_logic.c`.
+            *   **Sending (Active Open):** `TCP_SendTextMessageSync` and `TCP_SendQuitMessagesSync` are now fully implemented.
+                *   If a passive listen is active, it's `TCPAbort`ed.
+                *   `TCPActiveOpen` (polled synchronously) connects to the peer.
+                *   `TCPSend` (polled synchronously) sends the formatted message.
+                *   `TCPAbort` closes the connection.
+                *   The system then returns to passive listening.
+            *   Implements the Mac-specific `tcp_platform_callbacks_t`:
+                *   `mac_tcp_add_or_update_peer`: Updates peer list via `AddOrUpdatePeer` & refreshes GUI.
+                *   `mac_tcp_display_text_message`: Appends the message to the `gMessagesTE` in the dialog.
+                *   `mac_tcp_mark_peer_inactive`: Marks the peer as inactive using `MarkPeerInactive` & refreshes GUI.
+        *   **POSIX (`posix/messaging.c`):**
+            *   Refactored to use the new `shared/messaging_logic.c`.
+            *   The `listener_thread` now calls `handle_received_tcp_message` after parsing an incoming TCP message.
+            *   Implements POSIX-specific callbacks (e.g., `posix_tcp_display_text_message` logs to console).
+    *   **Benefit:** TCP message handling is now shared. Classic Mac can send and receive TEXT and QUIT messages, making it a fully interactive chat client. The complex MacTCP stream management is encapsulated.
 
-2.  **Message Protocol Implementation Refinement:**
-    *   The shared protocol functions (`shared/protocol.c`) were updated.
-    *   **Magic Number:** Introduced `MSG_MAGIC_NUMBER` (`0x43534443UL` / `CSDC`) at the beginning of formatted messages (`format_message`). The `parse_message` function now checks for this magic number as a basic validation step before attempting to parse the rest of the message, helping to quickly discard unrelated UDP packets. CSDC was chosen for 'CSendChat'.
-    *   Used safer string handling (`snprintf`, `strncpy`, `strtok_r`) and more robust parsing logic for the `MAGIC|TYPE|SENDER@IP|CONTENT` format. [0]
-    *   Added error checking and logging within `format_message` and `parse_message` for better diagnostics.
+3.  **Classic Mac GUI and Integration Enhancements:**
+    *   **`classic_mac/dialog.c` (`HandleSendButtonClick`):**
+        *   Now correctly calls `TCP_SendTextMessageSync` to send messages to selected peers.
+        *   The "Broadcast" checkbox affects local display but currently *does not* implement network broadcast for TEXT messages (which would be iterative unicast TCP anyway).
+    *   **`classic_mac/dialog_peerlist.c`:** `UpdatePeerDisplayList` and `GetSelectedPeerInfo` are more robust in handling selections and updating the UI when peer list changes (e.g., due to discovery or QUIT messages).
+    *   **`classic_mac/main.c`:**
+        *   Now calls `PollTCP` in the main event loop to handle incoming TCP connections and process received data.
+        *   On quit (`gDone = true`), it now calls `TCP_SendQuitMessagesSync` to notify other peers.
+    *   **`classic_mac/peer_mac.c`:** `MarkPeerInactive` correctly interfaces with `shared/peer_shared.c` to set the peer's active flag to 0.
 
-**Current State:**
+4.  **Protocol Definition `MSG_MAGIC_NUMBER`:**
+    *   **v0.0.11:** A `MSG_MAGIC_NUMBER` (0x43534443UL, "CSDC") is added to `shared/protocol.h` and used in `shared/protocol.c` to prefix all messages.
+    *   `format_message` now prepends this magic number (network byte order).
+    *   `parse_message` now first checks for and validates this magic number before attempting to parse the rest of the message.
+    *   **Benefit:** Provides a simple way to quickly identify and discard packets that are not part of this application's protocol, improving robustness, especially for UDP where unrelated broadcasts might be received.
 
-*   **POSIX:** Mostly unchanged from v0.0.10, fully functional regarding peer discovery and basic TCP messaging, incorporating the magic number protocol change.
-*   **Classic Mac:**
-    *   Builds successfully with `-fpack-struct`.
-    *   TCP listener setup: Works.
-    *   UDP endpoint creation (`udpCreate`): Returns `noErr` but provides an incorrect `StreamPtr` (buffer address).
-    *   UDP discovery broadcast sending (`udpWrite`): Works (sends messages with magic number).
-    *   UDP packet reception (`udpRead`): Works (packets arrive).
-    *   UDP message parsing (`parse_message`): Works, including magic number check.
-    *   **UDP buffer return (`udpBfrReturn`): FAILS (-23013).** This is the critical blocker, preventing reliable UDP reception as buffers cannot be returned to MacTCP.
-    *   UDP endpoint release (`udpRelease`): Works.
-    *   Peer list management (shared logic): Integrated and functional based on available data.
-    *   Receiving/Processing `MSG_DISCOVERY_RESPONSE`: **Blocked** by the `udpBfrReturn` issue.
-    *   Sending `MSG_QUIT`: **Not implemented.**
+5.  **Build System & Makefile Updates:**
+    *   **`Makefile.retro68` (Classic Mac):**
+        *   Object file lists and dependencies adjusted.
+    *   **`Makefile` (POSIX):**
+        *   Object file lists and dependencies adjusted.
 
-**Next Steps:**
-
-1.  **Resolve `udpBfrReturn` Failure (-23013):** This remains the highest priority for the Classic Mac target. Potential avenues include further investigation into structure alignment, exploring alternative MacTCP UDP APIs, or attempting a build with MPW C for comparison. See [**Bugs.md**](./bugs.md) for details.
-2.  **Implement v0.0.12 TODOs (Classic Mac):** Once UDP receive/return is stable:
-    *   Implement the processing of received `MSG_DISCOVERY_RESPONSE` messages to populate the peer list using `AddOrUpdatePeer`.
-    *   Implement sending `MSG_QUIT` messages on application termination.
+v0.0.11 brings the Classic Macintosh version closer to feature-parity with the POSIX version in terms of core communication capabilities. Both platforms now utilize shared logic for discovery processing and TCP message handling. The Classic Mac version now fully supports sending and receiving chat messages and QUIT notifications. Key remaining differences lie in the UI (GUI vs. CLI) and threading models.
 
 ---
 
