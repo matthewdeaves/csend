@@ -25,7 +25,8 @@ static char gBroadcastBuffer[BUFFER_SIZE];
 static struct wdsEntry gBroadcastWDS[2];
 static char gResponseBuffer[BUFFER_SIZE];
 static struct wdsEntry gResponseWDS[2];
-static void mac_send_discovery_response(uint32_t dest_ip_addr_host, uint16_t dest_port_host, void* platform_context) {
+static void mac_send_discovery_response(uint32_t dest_ip_addr_host, uint16_t dest_port_host, void *platform_context)
+{
     (void)platform_context;
     ip_addr dest_ip_net = (ip_addr)dest_ip_addr_host;
     udp_port dest_port_mac = dest_port_host;
@@ -33,22 +34,25 @@ static void mac_send_discovery_response(uint32_t dest_ip_addr_host, uint16_t des
     if (sendErr != noErr) {
         log_message("Error sending sync discovery response: %d", sendErr);
     } else {
-         char tempIPStr[INET_ADDRSTRLEN];
-         AddrToStr(dest_ip_net, tempIPStr);
-         log_to_file_only("Sent DISCOVERY_RESPONSE to %s:%u", tempIPStr, dest_port_mac);
+        char tempIPStr[INET_ADDRSTRLEN];
+        AddrToStr(dest_ip_net, tempIPStr);
+        log_to_file_only("Sent DISCOVERY_RESPONSE to %s:%u", tempIPStr, dest_port_mac);
     }
 }
-static int mac_add_or_update_peer(const char* ip, const char* username, void* platform_context) {
+static int mac_add_or_update_peer(const char *ip, const char *username, void *platform_context)
+{
     (void)platform_context;
     return AddOrUpdatePeer(ip, username);
 }
-static void mac_notify_peer_list_updated(void* platform_context) {
+static void mac_notify_peer_list_updated(void *platform_context)
+{
     (void)platform_context;
     if (gMainWindow != NULL && gPeerListHandle != NULL) {
         UpdatePeerDisplayList(true);
     }
 }
-OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum) {
+OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum)
+{
     OSErr err;
     UDPiopb pbCreate;
     const unsigned short specificPort = PORT_UDP;
@@ -82,27 +86,29 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum) {
     StreamPtr returnedStreamPtr = pbCreate.udpStream;
     unsigned short assignedPort = pbCreate.csParam.create.localPort;
     log_message("DEBUG: After PBControlSync(UDPCreate): err=%d, StreamPtr=0x%lX, AssignedPort=%u",
-        err, (unsigned long)returnedStreamPtr, assignedPort);
+                err, (unsigned long)returnedStreamPtr, assignedPort);
     if (err != noErr) {
         log_message("Error (InitUDP): UDPCreate failed (Error: %d).", err);
-        DisposePtr(gUDPRecvBuffer); gUDPRecvBuffer = NULL;
+        DisposePtr(gUDPRecvBuffer);
+        gUDPRecvBuffer = NULL;
         return err;
     }
     if (returnedStreamPtr == NULL) {
         log_message("Error (InitUDP): UDPCreate succeeded but returned NULL stream pointer.");
-        DisposePtr(gUDPRecvBuffer); gUDPRecvBuffer = NULL;
+        DisposePtr(gUDPRecvBuffer);
+        gUDPRecvBuffer = NULL;
         return ioErr;
     }
-     if (assignedPort != specificPort && specificPort != 0) {
-         log_message("Warning (InitUDP): UDPCreate assigned port %u instead of requested %u.", assignedPort, specificPort);
-     }
+    if (assignedPort != specificPort && specificPort != 0) {
+        log_message("Warning (InitUDP): UDPCreate assigned port %u instead of requested %u.", assignedPort, specificPort);
+    }
     gUDPStream = returnedStreamPtr;
     log_message("UDP Endpoint created successfully (StreamPtr: 0x%lX) on assigned port %u.", (unsigned long)gUDPStream, assignedPort);
     gUDPReadPending = false;
     gUDPBfrReturnPending = false;
     gLastBroadcastTimeTicks = 0;
     err = StartAsyncUDPRead();
-    if (err != noErr && err != 1 ) {
+    if (err != noErr && err != 1) {
         log_message("Error (InitUDP): Failed to start initial async UDP read (polling). Error: %d", err);
         CleanupUDPDiscoveryEndpoint(macTCPRefNum);
         return err;
@@ -111,7 +117,8 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum) {
     }
     return noErr;
 }
-void CleanupUDPDiscoveryEndpoint(short macTCPRefNum) {
+void CleanupUDPDiscoveryEndpoint(short macTCPRefNum)
+{
     UDPiopb pbRelease;
     OSErr err;
     log_message("Cleaning up UDP Discovery Endpoint (Async)...");
@@ -137,16 +144,17 @@ void CleanupUDPDiscoveryEndpoint(short macTCPRefNum) {
         log_message("UDP Stream was not open or already cleaned up.");
     }
     if (gUDPRecvBuffer != NULL) {
-         log_message("Disposing UDP receive buffer at 0x%lX.", (unsigned long)gUDPRecvBuffer);
-         DisposePtr(gUDPRecvBuffer);
-         gUDPRecvBuffer = NULL;
+        log_message("Disposing UDP receive buffer at 0x%lX.", (unsigned long)gUDPRecvBuffer);
+        DisposePtr(gUDPRecvBuffer);
+        gUDPRecvBuffer = NULL;
     }
     gUDPReadPending = false;
     gUDPBfrReturnPending = false;
     gLastBroadcastTimeTicks = 0;
     log_message("UDP Discovery Endpoint cleanup finished.");
 }
-OSErr StartAsyncUDPRead(void) {
+OSErr StartAsyncUDPRead(void)
+{
     OSErr err;
     if (gUDPStream == NULL) return invalidStreamPtr;
     if (gUDPReadPending) {
@@ -181,9 +189,9 @@ OSErr StartAsyncUDPRead(void) {
     return 1;
 }
 static OSErr SendUDPSyncInternal(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr,
-                           const char *msgType, const char *content,
-                           ip_addr destIP, udp_port destPort,
-                           char *staticBuffer, struct wdsEntry *staticWDS)
+                                 const char *msgType, const char *content,
+                                 ip_addr destIP, udp_port destPort,
+                                 char *staticBuffer, struct wdsEntry *staticWDS)
 {
     OSErr err;
     int formatted_len;
@@ -196,7 +204,7 @@ static OSErr SendUDPSyncInternal(short macTCPRefNum, const char *myUsername, con
         log_message("Error (SendUDPSyncInternal): format_message failed for '%s'.", msgType);
         return paramErr;
     }
-    staticWDS[0].length = formatted_len -1;
+    staticWDS[0].length = formatted_len - 1;
     staticWDS[0].ptr = staticBuffer;
     staticWDS[1].length = 0;
     staticWDS[1].ptr = nil;
@@ -218,26 +226,29 @@ static OSErr SendUDPSyncInternal(short macTCPRefNum, const char *myUsername, con
     log_to_file_only("SendUDPSyncInternal: Sent '%s' to IP %lu:%u.", msgType, (unsigned long)destIP, destPort);
     return noErr;
 }
-OSErr SendDiscoveryBroadcastSync(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr) {
+OSErr SendDiscoveryBroadcastSync(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr)
+{
     log_to_file_only("Sending Discovery Broadcast...");
     return SendUDPSyncInternal(macTCPRefNum, myUsername, myLocalIPStr,
-                                MSG_DISCOVERY, "",
-                                BROADCAST_IP, PORT_UDP,
-                                gBroadcastBuffer, gBroadcastWDS);
+                               MSG_DISCOVERY, "",
+                               BROADCAST_IP, PORT_UDP,
+                               gBroadcastBuffer, gBroadcastWDS);
 }
-OSErr SendDiscoveryResponseSync(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr, ip_addr destIP, udp_port destPort) {
-     log_to_file_only("Sending Discovery Response to IP %lu:%u...", (unsigned long)destIP, destPort);
-     return SendUDPSyncInternal(macTCPRefNum, myUsername, myLocalIPStr,
-                                MSG_DISCOVERY_RESPONSE, "",
-                                destIP, destPort,
-                                gResponseBuffer, gResponseWDS);
+OSErr SendDiscoveryResponseSync(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr, ip_addr destIP, udp_port destPort)
+{
+    log_to_file_only("Sending Discovery Response to IP %lu:%u...", (unsigned long)destIP, destPort);
+    return SendUDPSyncInternal(macTCPRefNum, myUsername, myLocalIPStr,
+                               MSG_DISCOVERY_RESPONSE, "",
+                               destIP, destPort,
+                               gResponseBuffer, gResponseWDS);
 }
-OSErr ReturnUDPBufferAsync(Ptr dataPtr, unsigned short bufferSize) {
+OSErr ReturnUDPBufferAsync(Ptr dataPtr, unsigned short bufferSize)
+{
     OSErr err;
     if (gUDPStream == NULL) return invalidStreamPtr;
     if (gUDPBfrReturnPending) {
-         log_to_file_only("ReturnUDPBufferAsync: Buffer return already pending.");
-         return 1;
+        log_to_file_only("ReturnUDPBufferAsync: Buffer return already pending.");
+        return 1;
     }
     if (dataPtr == NULL) {
         log_message("Error (ReturnUDPBufferAsync): dataPtr is NULL.");
@@ -261,7 +272,8 @@ OSErr ReturnUDPBufferAsync(Ptr dataPtr, unsigned short bufferSize) {
     log_to_file_only("ReturnUDPBufferAsync: Async UDPBfrReturn initiated for buffer 0x%lX.", (unsigned long)dataPtr);
     return 1;
 }
-void CheckSendBroadcast(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr) {
+void CheckSendBroadcast(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr)
+{
     unsigned long currentTimeTicks = TickCount();
     const unsigned long intervalTicks = (unsigned long)DISCOVERY_INTERVAL * 60UL;
     if (gUDPStream == NULL || macTCPRefNum == 0) return;
@@ -278,7 +290,8 @@ void CheckSendBroadcast(short macTCPRefNum, const char *myUsername, const char *
         }
     }
 }
-void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP) {
+void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
+{
     OSErr ioResult;
     static discovery_platform_callbacks_t mac_callbacks = {
         .send_response_callback = mac_send_discovery_response,
@@ -303,7 +316,7 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP) {
                             log_to_file_only("PollUDPListener: AddrToStr failed (%d) for sender IP %lu. Using fallback '%s'.", addrErr, (unsigned long)senderIPNet, senderIPStr);
                         }
                         uint32_t sender_ip_addr_host_order_for_shared = (uint32_t)senderIPNet;
-                        discovery_logic_process_packet((const char*)dataPtr, dataLength,
+                        discovery_logic_process_packet((const char *)dataPtr, dataLength,
                                                        senderIPStr, sender_ip_addr_host_order_for_shared, senderPortHost,
                                                        &mac_callbacks,
                                                        NULL);
@@ -313,10 +326,10 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP) {
                         log_to_file_only("PollUDPListener: Ignored UDP packet from self (%s).", selfIPStr);
                     }
                     OSErr returnErr = ReturnUDPBufferAsync(dataPtr, kMinUDPBufSize);
-                    if (returnErr != noErr && returnErr != 1 ) {
+                    if (returnErr != noErr && returnErr != 1) {
                         log_message("CRITICAL Error (PollUDPListener): Failed to initiate async UDPBfrReturn (polling) using pointer 0x%lX after processing. Error: %d.", (unsigned long)dataPtr, returnErr);
                     } else {
-                         log_to_file_only("PollUDPListener: Initiated return for buffer 0x%lX.", (unsigned long)dataPtr);
+                        log_to_file_only("PollUDPListener: Initiated return for buffer 0x%lX.", (unsigned long)dataPtr);
                     }
                 } else {
                     log_to_file_only("DEBUG: Async UDPRead (polling) returned 0 bytes.");
@@ -335,10 +348,10 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP) {
             if (ioResult != noErr) {
                 log_message("CRITICAL Error (PollUDPListener): Polled async UDPBfrReturn completed with error: %d.", ioResult);
             } else {
-                 log_to_file_only("PollUDPListener: Async UDPBfrReturn completed successfully.");
-                 if (!gUDPReadPending) {
-                     StartAsyncUDPRead();
-                 }
+                log_to_file_only("PollUDPListener: Async UDPBfrReturn completed successfully.");
+                if (!gUDPReadPending) {
+                    StartAsyncUDPRead();
+                }
             }
         }
     }

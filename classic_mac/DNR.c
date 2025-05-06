@@ -21,101 +21,100 @@ UniversalProcPtr dnr = nil;
 TrapType GetTrapType(theTrap)
 unsigned long theTrap;
 {
- if (BitAnd(theTrap, 0x0800) > 0)
-  return(ToolTrap);
- else
-  return(OSTrap);
- }
+    if (BitAnd(theTrap, 0x0800) > 0)
+        return (ToolTrap);
+    else
+        return (OSTrap);
+}
 Boolean TrapAvailable(trap)
 unsigned long trap;
 {
-TrapType trapType = ToolTrap;
-unsigned long numToolBoxTraps;
- if (NGetTrapAddress(_InitGraf, ToolTrap) == NGetTrapAddress(0xAA6E, ToolTrap))
-  numToolBoxTraps = 0x200;
- else
-  numToolBoxTraps = 0x400;
- trapType = GetTrapType(trap);
- if (trapType == ToolTrap) {
-  trap = BitAnd(trap, 0x07FF);
-  if (trap >= numToolBoxTraps)
-   trap = _Unimplemented;
-  }
- return(NGetTrapAddress(trap, trapType) != NGetTrapAddress(_Unimplemented, ToolTrap));
+    TrapType trapType = ToolTrap;
+    unsigned long numToolBoxTraps;
+    if (NGetTrapAddress(_InitGraf, ToolTrap) == NGetTrapAddress(0xAA6E, ToolTrap))
+        numToolBoxTraps = 0x200;
+    else
+        numToolBoxTraps = 0x400;
+    trapType = GetTrapType(trap);
+    if (trapType == ToolTrap) {
+        trap = BitAnd(trap, 0x07FF);
+        if (trap >= numToolBoxTraps)
+            trap = _Unimplemented;
+    }
+    return (NGetTrapAddress(trap, trapType) != NGetTrapAddress(_Unimplemented, ToolTrap));
 }
 void GetSystemFolder(short *vRefNumP, long *dirIDP)
 {
- SysEnvRec info;
- long wdProcID;
- SysEnvirons(1, &info);
- if (GetWDInfo(info.sysVRefNum, vRefNumP, dirIDP, &wdProcID) != noErr) {
-  *vRefNumP = 0;
-  *dirIDP = 0;
-  }
- }
+    SysEnvRec info;
+    long wdProcID;
+    SysEnvirons(1, &info);
+    if (GetWDInfo(info.sysVRefNum, vRefNumP, dirIDP, &wdProcID) != noErr) {
+        *vRefNumP = 0;
+        *dirIDP = 0;
+    }
+}
 void GetCPanelFolder(short *vRefNumP, long *dirIDP)
 {
- Boolean hasFolderMgr = false;
- long feature;
- if (Gestalt(gestaltFindFolderAttr, &feature) == noErr)
-  hasFolderMgr = true;
- if (!hasFolderMgr) {
-  GetSystemFolder(vRefNumP, dirIDP);
-  return;
-  }
- else {
-  if (FindFolder(kOnSystemDisk, kControlPanelFolderType, kDontCreateFolder, vRefNumP, dirIDP) != noErr) {
-   *vRefNumP = 0;
-   *dirIDP = 0;
-   }
-  }
- }
+    Boolean hasFolderMgr = false;
+    long feature;
+    if (Gestalt(gestaltFindFolderAttr, &feature) == noErr)
+        hasFolderMgr = true;
+    if (!hasFolderMgr) {
+        GetSystemFolder(vRefNumP, dirIDP);
+        return;
+    } else {
+        if (FindFolder(kOnSystemDisk, kControlPanelFolderType, kDontCreateFolder, vRefNumP, dirIDP) != noErr) {
+            *vRefNumP = 0;
+            *dirIDP = 0;
+        }
+    }
+}
 short SearchFolderForDNRP(long targetType, long targetCreator, short vRefNum, long dirID)
 {
- HParamBlockRec fi;
- Str255 filename;
- short refnum;
- fi.fileParam.ioCompletion = nil;
- fi.fileParam.ioNamePtr = filename;
- fi.fileParam.ioVRefNum = vRefNum;
- fi.fileParam.ioDirID = dirID;
- fi.fileParam.ioFDirIndex = 1;
- while (PBHGetFInfo(&fi, false) == noErr) {
-  if (fi.fileParam.ioFlFndrInfo.fdType == targetType &&
-   fi.fileParam.ioFlFndrInfo.fdCreator == targetCreator) {
-   refnum = HOpenResFile(vRefNum, dirID, filename, fsRdPerm);
-   if (GetIndResource('dnrp', 1) == NULL)
-    CloseResFile(refnum);
-   else
-    return refnum;
-   }
-  fi.fileParam.ioFDirIndex++;
-  fi.fileParam.ioDirID = dirID;
-  }
- return(-1);
- }
+    HParamBlockRec fi;
+    Str255 filename;
+    short refnum;
+    fi.fileParam.ioCompletion = nil;
+    fi.fileParam.ioNamePtr = filename;
+    fi.fileParam.ioVRefNum = vRefNum;
+    fi.fileParam.ioDirID = dirID;
+    fi.fileParam.ioFDirIndex = 1;
+    while (PBHGetFInfo(&fi, false) == noErr) {
+        if (fi.fileParam.ioFlFndrInfo.fdType == targetType &&
+                fi.fileParam.ioFlFndrInfo.fdCreator == targetCreator) {
+            refnum = HOpenResFile(vRefNum, dirID, filename, fsRdPerm);
+            if (GetIndResource('dnrp', 1) == NULL)
+                CloseResFile(refnum);
+            else
+                return refnum;
+        }
+        fi.fileParam.ioFDirIndex++;
+        fi.fileParam.ioDirID = dirID;
+    }
+    return (-1);
+}
 short OpenOurRF()
 {
- short refnum;
- short vRefNum;
- long dirID;
- GetCPanelFolder(&vRefNum, &dirID);
- refnum = SearchFolderForDNRP('cdev', 'ztcp', vRefNum, dirID);
- if (refnum != -1) return(refnum);
- GetSystemFolder(&vRefNum, &dirID);
- refnum = SearchFolderForDNRP('cdev', 'mtcp', vRefNum, dirID);
- if (refnum != -1) return(refnum);
- GetCPanelFolder(&vRefNum, &dirID);
- refnum = SearchFolderForDNRP('cdev', 'mtcp', vRefNum, dirID);
- if (refnum != -1) return(refnum);
- return -1;
- }
-typedef OSErr (*OpenResolverProcPtr)(short selector, char* fileName);
+    short refnum;
+    short vRefNum;
+    long dirID;
+    GetCPanelFolder(&vRefNum, &dirID);
+    refnum = SearchFolderForDNRP('cdev', 'ztcp', vRefNum, dirID);
+    if (refnum != -1) return (refnum);
+    GetSystemFolder(&vRefNum, &dirID);
+    refnum = SearchFolderForDNRP('cdev', 'mtcp', vRefNum, dirID);
+    if (refnum != -1) return (refnum);
+    GetCPanelFolder(&vRefNum, &dirID);
+    refnum = SearchFolderForDNRP('cdev', 'mtcp', vRefNum, dirID);
+    if (refnum != -1) return (refnum);
+    return -1;
+}
+typedef OSErr(*OpenResolverProcPtr)(short selector, char *fileName);
 enum {
- uppOpenResolverProcInfo = kCStackBased
-   | RESULT_SIZE(SIZE_CODE(sizeof(short)))
-   | STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(short)))
-   | STACK_ROUTINE_PARAMETER(2, SIZE_CODE(sizeof(char *)))
+    uppOpenResolverProcInfo = kCStackBased
+                              | RESULT_SIZE(SIZE_CODE(sizeof(short)))
+                              | STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(short)))
+                              | STACK_ROUTINE_PARAMETER(2, SIZE_CODE(sizeof(char *)))
 };
 #if USESROUTINEDESCRIPTORS
 typedef UniversalProcPtr OpenResolverUPP;
@@ -133,35 +132,35 @@ typedef OpenResolverProcPtr OpenResolverUPP;
 OSErr OpenResolver(fileName)
 char *fileName;
 {
- short refnum;
- OSErr rc;
- if (dnr != nil)
-  return(noErr);
- refnum = OpenOurRF();
- codeHndl = GetIndResource('dnrp', 1);
- if (codeHndl == nil) {
-  return(ResError());
- }
- DetachResource(codeHndl);
- if (refnum != -1) {
-  CloseWD(refnum);
-  CloseResFile(refnum);
- }
- HLock(codeHndl);
- dnr = (UniversalProcPtr) *codeHndl;
- rc = CallOpenResolverProc(dnr, OPENRESOLVER, fileName);
- if (rc != noErr) {
-  HUnlock(codeHndl);
-  DisposeHandle(codeHndl);
-  dnr = nil;
- }
- return(rc);
+    short refnum;
+    OSErr rc;
+    if (dnr != nil)
+        return (noErr);
+    refnum = OpenOurRF();
+    codeHndl = GetIndResource('dnrp', 1);
+    if (codeHndl == nil) {
+        return (ResError());
+    }
+    DetachResource(codeHndl);
+    if (refnum != -1) {
+        CloseWD(refnum);
+        CloseResFile(refnum);
+    }
+    HLock(codeHndl);
+    dnr = (UniversalProcPtr) * codeHndl;
+    rc = CallOpenResolverProc(dnr, OPENRESOLVER, fileName);
+    if (rc != noErr) {
+        HUnlock(codeHndl);
+        DisposeHandle(codeHndl);
+        dnr = nil;
+    }
+    return (rc);
 }
-typedef OSErr (*CloseResolverProcPtr)(short selector);
+typedef OSErr(*CloseResolverProcPtr)(short selector);
 enum {
- uppCloseResolverProcInfo = kCStackBased
-   | RESULT_SIZE(SIZE_CODE(sizeof(short)))
-   | STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(short)))
+    uppCloseResolverProcInfo = kCStackBased
+                               | RESULT_SIZE(SIZE_CODE(sizeof(short)))
+                               | STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(short)))
 };
 #if USESROUTINEDESCRIPTORS
 typedef UniversalProcPtr CloseResolverUPP;
@@ -178,24 +177,24 @@ typedef CloseResolverProcPtr CloseResolverUPP;
 #endif
 OSErr CloseResolver()
 {
- if (dnr == nil)
-  return(notOpenErr);
- CallCloseResolverProc(dnr, CLOSERESOLVER);
- HUnlock(codeHndl);
- DisposeHandle(codeHndl);
- dnr = nil;
- return(noErr);
+    if (dnr == nil)
+        return (notOpenErr);
+    CallCloseResolverProc(dnr, CLOSERESOLVER);
+    HUnlock(codeHndl);
+    DisposeHandle(codeHndl);
+    dnr = nil;
+    return (noErr);
 }
-typedef OSErr (*StrToAddrProcPtr)(short selector, char* hostName, struct hostInfo* rtnStruct,
-         long resultProc, char* userData);
+typedef OSErr(*StrToAddrProcPtr)(short selector, char *hostName, struct hostInfo *rtnStruct,
+                                 long resultProc, char *userData);
 enum {
- uppStrToAddrProcInfo = kCStackBased
-   | RESULT_SIZE(SIZE_CODE(sizeof(short)))
-   | STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(short)))
-   | STACK_ROUTINE_PARAMETER(2, SIZE_CODE(sizeof(char *)))
-   | STACK_ROUTINE_PARAMETER(3, SIZE_CODE(sizeof(struct hostInfo *)))
-   | STACK_ROUTINE_PARAMETER(4, SIZE_CODE(sizeof(long)))
-   | STACK_ROUTINE_PARAMETER(5, SIZE_CODE(sizeof(char *)))
+    uppStrToAddrProcInfo = kCStackBased
+                           | RESULT_SIZE(SIZE_CODE(sizeof(short)))
+                           | STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(short)))
+                           | STACK_ROUTINE_PARAMETER(2, SIZE_CODE(sizeof(char *)))
+                           | STACK_ROUTINE_PARAMETER(3, SIZE_CODE(sizeof(struct hostInfo *)))
+                           | STACK_ROUTINE_PARAMETER(4, SIZE_CODE(sizeof(long)))
+                           | STACK_ROUTINE_PARAMETER(5, SIZE_CODE(sizeof(char *)))
 };
 #if USESROUTINEDESCRIPTORS
 typedef UniversalProcPtr StrToAddrUPP;
@@ -216,17 +215,17 @@ struct hostInfo *rtnStruct;
 long resultproc;
 char *userDataPtr;
 {
- if (dnr == nil)
-  return(notOpenErr);
- return(CallStrToAddrProc(dnr, STRTOADDR, hostName, rtnStruct, resultproc, userDataPtr));
+    if (dnr == nil)
+        return (notOpenErr);
+    return (CallStrToAddrProc(dnr, STRTOADDR, hostName, rtnStruct, resultproc, userDataPtr));
 }
-typedef OSErr (*AddrToStrProcPtr)(short selector, long address, char* hostName);
+typedef OSErr(*AddrToStrProcPtr)(short selector, long address, char *hostName);
 enum {
- uppAddrToStrProcInfo = kCStackBased
-   | RESULT_SIZE(SIZE_CODE(sizeof(short)))
-   | STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(short)))
-   | STACK_ROUTINE_PARAMETER(2, SIZE_CODE(sizeof(unsigned long)))
-   | STACK_ROUTINE_PARAMETER(3, SIZE_CODE(sizeof(char *)))
+    uppAddrToStrProcInfo = kCStackBased
+                           | RESULT_SIZE(SIZE_CODE(sizeof(short)))
+                           | STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(short)))
+                           | STACK_ROUTINE_PARAMETER(2, SIZE_CODE(sizeof(unsigned long)))
+                           | STACK_ROUTINE_PARAMETER(3, SIZE_CODE(sizeof(char *)))
 };
 #if USESROUTINEDESCRIPTORS
 typedef UniversalProcPtr AddrToStrUPP;
@@ -245,18 +244,18 @@ OSErr AddrToStr(addr, addrStr)
 unsigned long addr;
 char *addrStr;
 {
- if (dnr == nil)
-  return(notOpenErr);
- CallAddrToStrProc(dnr, ADDRTOSTR, addr, addrStr);
- return(noErr);
+    if (dnr == nil)
+        return (notOpenErr);
+    CallAddrToStrProc(dnr, ADDRTOSTR, addr, addrStr);
+    return (noErr);
 }
-typedef OSErr (*EnumCacheProcPtr)(short selector, long result, char* userData);
+typedef OSErr(*EnumCacheProcPtr)(short selector, long result, char *userData);
 enum {
- uppEnumCacheProcInfo = kCStackBased
-   | RESULT_SIZE(SIZE_CODE(sizeof(short)))
-   | STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(short)))
-   | STACK_ROUTINE_PARAMETER(2, SIZE_CODE(sizeof(long)))
-   | STACK_ROUTINE_PARAMETER(3, SIZE_CODE(sizeof(char *)))
+    uppEnumCacheProcInfo = kCStackBased
+                           | RESULT_SIZE(SIZE_CODE(sizeof(short)))
+                           | STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(short)))
+                           | STACK_ROUTINE_PARAMETER(2, SIZE_CODE(sizeof(long)))
+                           | STACK_ROUTINE_PARAMETER(3, SIZE_CODE(sizeof(char *)))
 };
 #if USESROUTINEDESCRIPTORS
 typedef UniversalProcPtr EnumCacheUPP;
@@ -275,20 +274,20 @@ OSErr EnumCache(resultproc, userDataPtr)
 long resultproc;
 char *userDataPtr;
 {
- if (dnr == nil)
-  return(notOpenErr);
- return(CallEnumCacheProc(dnr, ENUMCACHE, resultproc, userDataPtr));
+    if (dnr == nil)
+        return (notOpenErr);
+    return (CallEnumCacheProc(dnr, ENUMCACHE, resultproc, userDataPtr));
 }
-typedef OSErr (*AddrToNameProcPtr)(short selector, unsigned long addr, struct hostInfo* rtnStruct,
-         long resultProc, char* userData);
+typedef OSErr(*AddrToNameProcPtr)(short selector, unsigned long addr, struct hostInfo *rtnStruct,
+                                  long resultProc, char *userData);
 enum {
- uppAddrToNameProcInfo = kCStackBased
-   | RESULT_SIZE(SIZE_CODE(sizeof(short)))
-   | STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(short)))
-   | STACK_ROUTINE_PARAMETER(2, SIZE_CODE(sizeof(unsigned long)))
-   | STACK_ROUTINE_PARAMETER(3, SIZE_CODE(sizeof(struct hostInfo *)))
-   | STACK_ROUTINE_PARAMETER(4, SIZE_CODE(sizeof(long)))
-   | STACK_ROUTINE_PARAMETER(5, SIZE_CODE(sizeof(char *)))
+    uppAddrToNameProcInfo = kCStackBased
+                            | RESULT_SIZE(SIZE_CODE(sizeof(short)))
+                            | STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(short)))
+                            | STACK_ROUTINE_PARAMETER(2, SIZE_CODE(sizeof(unsigned long)))
+                            | STACK_ROUTINE_PARAMETER(3, SIZE_CODE(sizeof(struct hostInfo *)))
+                            | STACK_ROUTINE_PARAMETER(4, SIZE_CODE(sizeof(long)))
+                            | STACK_ROUTINE_PARAMETER(5, SIZE_CODE(sizeof(char *)))
 };
 #if USESROUTINEDESCRIPTORS
 typedef UniversalProcPtr AddrToNameUPP;
@@ -309,20 +308,20 @@ struct hostInfo *rtnStruct;
 long resultproc;
 char *userDataPtr;
 {
- if (dnr == nil)
-  return(notOpenErr);
- return(CallAddrToNameProc(dnr, ADDRTONAME, addr, rtnStruct, resultproc, userDataPtr));
+    if (dnr == nil)
+        return (notOpenErr);
+    return (CallAddrToNameProc(dnr, ADDRTONAME, addr, rtnStruct, resultproc, userDataPtr));
 }
-typedef OSErr (*HInfoProcPtr)(short selector, char* hostName, struct returnRec* returnRecPtr,
-        long resultProc, char* userData);
+typedef OSErr(*HInfoProcPtr)(short selector, char *hostName, struct returnRec *returnRecPtr,
+                             long resultProc, char *userData);
 enum {
- uppHInfoProcInfo = kCStackBased
-   | RESULT_SIZE(SIZE_CODE(sizeof(short)))
-   | STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(short)))
-   | STACK_ROUTINE_PARAMETER(2, SIZE_CODE(sizeof(char *)))
-   | STACK_ROUTINE_PARAMETER(3, SIZE_CODE(sizeof(struct returnRec *)))
-   | STACK_ROUTINE_PARAMETER(4, SIZE_CODE(sizeof(long)))
-   | STACK_ROUTINE_PARAMETER(5, SIZE_CODE(sizeof(char *)))
+    uppHInfoProcInfo = kCStackBased
+                       | RESULT_SIZE(SIZE_CODE(sizeof(short)))
+                       | STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(short)))
+                       | STACK_ROUTINE_PARAMETER(2, SIZE_CODE(sizeof(char *)))
+                       | STACK_ROUTINE_PARAMETER(3, SIZE_CODE(sizeof(struct returnRec *)))
+                       | STACK_ROUTINE_PARAMETER(4, SIZE_CODE(sizeof(long)))
+                       | STACK_ROUTINE_PARAMETER(5, SIZE_CODE(sizeof(char *)))
 };
 #if USESROUTINEDESCRIPTORS
 typedef UniversalProcPtr HInfoUPP;
@@ -343,20 +342,20 @@ struct returnRec *returnRecPtr;
 long resultProc;
 char *userDataPtr;
 {
- if (dnr == nil)
-  return(notOpenErr);
- return(CallHInfoProc(dnr, HINFO, hostName, returnRecPtr, resultProc, userDataPtr));
+    if (dnr == nil)
+        return (notOpenErr);
+    return (CallHInfoProc(dnr, HINFO, hostName, returnRecPtr, resultProc, userDataPtr));
 }
-typedef OSErr (*MXInfoProcPtr)(short selector, char* hostName, struct returnRec* returnRecPtr,
-        long resultProc, char* userData);
+typedef OSErr(*MXInfoProcPtr)(short selector, char *hostName, struct returnRec *returnRecPtr,
+                              long resultProc, char *userData);
 enum {
- uppMXInfoProcInfo = kCStackBased
-   | RESULT_SIZE(SIZE_CODE(sizeof(short)))
-   | STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(short)))
-   | STACK_ROUTINE_PARAMETER(2, SIZE_CODE(sizeof(char *)))
-   | STACK_ROUTINE_PARAMETER(3, SIZE_CODE(sizeof(struct returnRec *)))
-   | STACK_ROUTINE_PARAMETER(4, SIZE_CODE(sizeof(long)))
-   | STACK_ROUTINE_PARAMETER(5, SIZE_CODE(sizeof(char *)))
+    uppMXInfoProcInfo = kCStackBased
+                        | RESULT_SIZE(SIZE_CODE(sizeof(short)))
+                        | STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(short)))
+                        | STACK_ROUTINE_PARAMETER(2, SIZE_CODE(sizeof(char *)))
+                        | STACK_ROUTINE_PARAMETER(3, SIZE_CODE(sizeof(struct returnRec *)))
+                        | STACK_ROUTINE_PARAMETER(4, SIZE_CODE(sizeof(long)))
+                        | STACK_ROUTINE_PARAMETER(5, SIZE_CODE(sizeof(char *)))
 };
 #if USESROUTINEDESCRIPTORS
 typedef UniversalProcPtr MXInfoUPP;
@@ -377,7 +376,7 @@ struct returnRec *returnRecPtr;
 long resultProc;
 char *userDataPtr;
 {
- if (dnr == nil)
-  return(notOpenErr);
- return(CallMXInfoProc(dnr, MXINFO, hostName, returnRecPtr, resultProc, userDataPtr));
+    if (dnr == nil)
+        return (notOpenErr);
+    return (CallMXInfoProc(dnr, MXINFO, hostName, returnRecPtr, resultProc, userDataPtr));
 };

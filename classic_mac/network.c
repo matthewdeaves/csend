@@ -15,7 +15,8 @@ short gMacTCPRefNum = 0;
 ip_addr gMyLocalIP = 0;
 char gMyLocalIPStr[INET_ADDRSTRLEN] = "0.0.0.0";
 char gMyUsername[32] = "MacUser";
-OSErr InitializeNetworking(void) {
+OSErr InitializeNetworking(void)
+{
     OSErr err;
     ParamBlockRec pbOpen;
     CntrlParam cntrlPB;
@@ -56,19 +57,19 @@ OSErr InitializeNetworking(void) {
     log_message("Attempting AddrToStr for IP: %lu...", gMyLocalIP);
     err = AddrToStr(gMyLocalIP, gMyLocalIPStr);
     if (err != noErr) {
-         log_message("Warning: AddrToStr returned error %d. Result string: '%s'", err, gMyLocalIPStr);
-         if (gMyLocalIP == 0 || gMyLocalIPStr[0] == '\0' || strcmp(gMyLocalIPStr, "0.0.0.0") == 0) {
-             log_message("Error: AddrToStr failed to get a valid IP string. Using fallback 127.0.0.1 for display/formatting.");
-             strcpy(gMyLocalIPStr, "127.0.0.1");
-             if (gMyLocalIP == 0) {
+        log_message("Warning: AddrToStr returned error %d. Result string: '%s'", err, gMyLocalIPStr);
+        if (gMyLocalIP == 0 || gMyLocalIPStr[0] == '\0' || strcmp(gMyLocalIPStr, "0.0.0.0") == 0) {
+            log_message("Error: AddrToStr failed to get a valid IP string. Using fallback 127.0.0.1 for display/formatting.");
+            strcpy(gMyLocalIPStr, "127.0.0.1");
+            if (gMyLocalIP == 0) {
                 ParseIPv4("127.0.0.1", &gMyLocalIP);
-             }
-         }
+            }
+        }
     } else {
         log_message("AddrToStr finished. Local IP: '%s'", gMyLocalIPStr);
     }
     err = InitUDPDiscoveryEndpoint(gMacTCPRefNum);
-     if (err != noErr) {
+    if (err != noErr) {
         log_message("Fatal: UDP Discovery initialization failed (%d). Cleaning up.", err);
         CloseResolver();
         gMacTCPRefNum = 0;
@@ -85,7 +86,8 @@ OSErr InitializeNetworking(void) {
     log_message("Networking initialization complete.");
     return noErr;
 }
-void CleanupNetworking(void) {
+void CleanupNetworking(void)
+{
     OSErr err;
     log_message("Cleaning up Networking (Streams, DNR, Driver)...");
     CleanupTCP(gMacTCPRefNum);
@@ -98,18 +100,20 @@ void CleanupNetworking(void) {
         log_message("CloseResolver succeeded.");
     }
     if (gMacTCPRefNum != 0) {
-         log_message("MacTCP driver (RefNum: %d) was opened by this application. It will remain open for the system.", gMacTCPRefNum);
+        log_message("MacTCP driver (RefNum: %d) was opened by this application. It will remain open for the system.", gMacTCPRefNum);
         gMacTCPRefNum = 0;
     } else {
         log_message("MacTCP driver was not opened by this application or already cleaned up.");
     }
     log_message("Networking cleanup complete.");
 }
-void YieldTimeToSystem(void) {
+void YieldTimeToSystem(void)
+{
     EventRecord event;
     WaitNextEvent(0, &event, 1L, NULL);
 }
-OSErr ParseIPv4(const char *ip_str, ip_addr *out_addr) {
+OSErr ParseIPv4(const char *ip_str, ip_addr *out_addr)
+{
     unsigned long parts[4];
     int i = 0;
     char *token;

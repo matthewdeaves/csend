@@ -2,10 +2,10 @@
 #include "protocol.h"
 #include "logging.h"
 #include <string.h>
-void discovery_logic_process_packet(const char* buffer, int len,
-                                    const char* sender_ip_str, uint32_t sender_ip_addr, uint16_t sender_port,
-                                    const discovery_platform_callbacks_t* callbacks,
-                                    void* platform_context)
+void discovery_logic_process_packet(const char *buffer, int len,
+                                    const char *sender_ip_str, uint32_t sender_ip_addr, uint16_t sender_port,
+                                    const discovery_platform_callbacks_t *callbacks,
+                                    void *platform_context)
 {
     char sender_ip_from_payload[INET_ADDRSTRLEN];
     char sender_username[32];
@@ -28,7 +28,7 @@ void discovery_logic_process_packet(const char* buffer, int len,
             log_message("New peer added via DISCOVERY: %s@%s", sender_username, sender_ip_str);
             callbacks->notify_peer_list_updated_callback(platform_context);
         } else if (add_result == 0) {
-             log_message("Existing peer updated via DISCOVERY: %s@%s", sender_username, sender_ip_str);
+            log_message("Existing peer updated via DISCOVERY: %s@%s", sender_username, sender_ip_str);
         } else {
             log_message("Peer list full, could not add %s@%s from DISCOVERY", sender_username, sender_ip_str);
         }

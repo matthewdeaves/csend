@@ -7,7 +7,8 @@
 #include <string.h>
 #include <errno.h>
 #include <sys/time.h>
-int get_local_ip(char *buffer, size_t size) {
+int get_local_ip(char *buffer, size_t size)
+{
     struct ifaddrs *ifaddr, *ifa;
     int family;
     if (getifaddrs(&ifaddr) == -1) {
@@ -34,10 +35,11 @@ int get_local_ip(char *buffer, size_t size) {
     freeifaddrs(ifaddr);
     return -1;
 }
-void set_socket_timeout(int socket, int seconds) {
+void set_socket_timeout(int socket, int seconds)
+{
     struct timeval tv;
     tv.tv_sec = seconds;
     tv.tv_usec = 0;
-    setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
-    setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
+    setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
+    setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, (const char *)&tv, sizeof(tv));
 }

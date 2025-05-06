@@ -1,5 +1,5 @@
 #ifndef DIALOG_PEERLIST_H
-#define DIALOG_PEERLIST_H 
+#define DIALOG_PEERLIST_H
 #include <MacTypes.h>
 #include <Lists.h>
 #include <Dialogs.h>

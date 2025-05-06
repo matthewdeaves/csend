@@ -7,13 +7,16 @@
 #include <Lists.h>
 #include <Dialogs.h>
 peer_manager_t gPeerManager;
-void InitPeerList(void) {
+void InitPeerList(void)
+{
     peer_shared_init_list(&gPeerManager);
 }
-int AddOrUpdatePeer(const char *ip, const char *username) {
+int AddOrUpdatePeer(const char *ip, const char *username)
+{
     return peer_shared_add_or_update(&gPeerManager, ip, username);
 }
-Boolean MarkPeerInactive(const char *ip) {
+Boolean MarkPeerInactive(const char *ip)
+{
     if (!ip) return false;
     int index = peer_shared_find_by_ip(&gPeerManager, ip);
     if (index != -1) {
@@ -29,13 +32,15 @@ Boolean MarkPeerInactive(const char *ip) {
     log_to_file_only("MarkPeerInactive: Peer %s not found in list.", ip);
     return false;
 }
-void PruneTimedOutPeers(void) {
+void PruneTimedOutPeers(void)
+{
     int pruned_count = peer_shared_prune_timed_out(&gPeerManager);
     if (pruned_count > 0) {
         log_message("Pruned %d timed-out peer(s).", pruned_count);
     }
 }
-Boolean GetPeerByIndex(int active_index, peer_t *out_peer) {
+Boolean GetPeerByIndex(int active_index, peer_t *out_peer)
+{
     int current_active_count = 0;
     if (active_index <= 0 || out_peer == NULL) {
         return false;
@@ -51,14 +56,15 @@ Boolean GetPeerByIndex(int active_index, peer_t *out_peer) {
     }
     return false;
 }
-Boolean GetSelectedPeerInfo(peer_t *outPeer) {
+Boolean GetSelectedPeerInfo(peer_t *outPeer)
+{
     extern ListHandle gPeerListHandle;
     extern Cell gLastSelectedCell;
     if (gPeerListHandle == NULL || outPeer == NULL) {
         return false;
     }
     if (gLastSelectedCell.v < 0) {
-         log_to_file_only("GetSelectedPeerInfo: No peer selected (gLastSelectedCell.v = %d).", gLastSelectedCell.v);
+        log_to_file_only("GetSelectedPeerInfo: No peer selected (gLastSelectedCell.v = %d).", gLastSelectedCell.v);
         return false;
     }
     int selectedDisplayRow = gLastSelectedCell.v;

@@ -8,7 +8,8 @@
 #include <Memory.h>
 #include <string.h>
 TEHandle gInputTE = NULL;
-Boolean InitInputTE(DialogPtr dialog) {
+Boolean InitInputTE(DialogPtr dialog)
+{
     DialogItemType itemType;
     Handle itemHandle;
     Rect destRectInput, viewRectInput;
@@ -35,7 +36,8 @@ Boolean InitInputTE(DialogPtr dialog) {
         return false;
     }
 }
-void CleanupInputTE(void) {
+void CleanupInputTE(void)
+{
     log_message("Cleaning up Input TE...");
     if (gInputTE != NULL) {
         TEDispose(gInputTE);
@@ -43,7 +45,8 @@ void CleanupInputTE(void) {
     }
     log_message("Input TE cleanup finished.");
 }
-void HandleInputTEClick(DialogPtr dialog, EventRecord *theEvent) {
+void HandleInputTEClick(DialogPtr dialog, EventRecord *theEvent)
+{
     if (gInputTE != NULL) {
         Point localPt = theEvent->where;
         GrafPtr oldPort;
@@ -57,18 +60,19 @@ void HandleInputTEClick(DialogPtr dialog, EventRecord *theEvent) {
         if (*gInputTE != NULL) {
             clickedInside = PtInRect(localPt, &(**gInputTE).viewRect);
         } else {
-             log_message("HandleInputTEClick Error: gInputTE deref failed!");
+            log_message("HandleInputTEClick Error: gInputTE deref failed!");
         }
         HSetState((Handle)gInputTE, teState);
         if (clickedInside) {
             log_to_file_only("HandleInputTEClick: Click inside Input TE viewRect. Calling TEClick.");
             TEClick(localPt, (theEvent->modifiers & shiftKey) != 0, gInputTE);
         } else {
-             log_to_file_only("HandleInputTEClick: Click was outside Input TE viewRect.");
+            log_to_file_only("HandleInputTEClick: Click was outside Input TE viewRect.");
         }
     }
 }
-void HandleInputTEUpdate(DialogPtr dialog) {
+void HandleInputTEUpdate(DialogPtr dialog)
+{
     if (gInputTE != NULL) {
         Rect itemRect;
         DialogItemType itemTypeIgnored;
@@ -80,13 +84,14 @@ void HandleInputTEUpdate(DialogPtr dialog) {
         SignedByte teState = HGetState((Handle)gInputTE);
         HLock((Handle)gInputTE);
         if (*gInputTE != NULL) {
-             TEUpdate(&itemRect, gInputTE);
+            TEUpdate(&itemRect, gInputTE);
         }
         HSetState((Handle)gInputTE, teState);
         SetPort(oldPort);
     }
 }
-void ActivateInputTE(Boolean activating) {
+void ActivateInputTE(Boolean activating)
+{
     if (gInputTE != NULL) {
         if (activating) {
             TEActivate(gInputTE);
@@ -98,7 +103,8 @@ void ActivateInputTE(Boolean activating) {
         }
     }
 }
-Boolean GetInputText(char *buffer, short bufferSize) {
+Boolean GetInputText(char *buffer, short bufferSize)
+{
     if (gInputTE == NULL || buffer == NULL || bufferSize <= 0) {
         if (buffer && bufferSize > 0) buffer[0] = '\0';
         log_message("Error: GetInputText called with NULL TE/buffer or zero size.");
@@ -111,8 +117,8 @@ Boolean GetInputText(char *buffer, short bufferSize) {
         Size textLen = (**gInputTE).teLength;
         Size copyLen = textLen;
         if (copyLen >= bufferSize) {
-             copyLen = bufferSize - 1;
-             log_message("Warning: Input text truncated during GetInputText (buffer size %d, needed %ld).", bufferSize, (long)textLen + 1);
+            copyLen = bufferSize - 1;
+            log_message("Warning: Input text truncated during GetInputText (buffer size %d, needed %ld).", bufferSize, (long)textLen + 1);
         }
         SignedByte textHandleState = HGetState((**gInputTE).hText);
         HLock((**gInputTE).hText);
@@ -128,7 +134,8 @@ Boolean GetInputText(char *buffer, short bufferSize) {
     HSetState((Handle)gInputTE, teState);
     return success;
 }
-void ClearInputText(void) {
+void ClearInputText(void)
+{
     if (gInputTE != NULL) {
         SignedByte teState = HGetState((Handle)gInputTE);
         HLock((Handle)gInputTE);
@@ -136,7 +143,7 @@ void ClearInputText(void) {
             TESetText((Ptr)"", 0, gInputTE);
             TECalText(gInputTE);
         } else {
-             log_message("ClearInputText Error: gInputTE deref failed!");
+            log_message("ClearInputText Error: gInputTE deref failed!");
         }
         HSetState((Handle)gInputTE, teState);
         log_message("Input field cleared.");

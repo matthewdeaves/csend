@@ -1,10 +1,10 @@
 #ifndef PROTOCOL_H
-#define PROTOCOL_H 
+#define PROTOCOL_H
 #include "common_defs.h"
 #ifdef __MACOS__
-    #include <MacTypes.h>
+#include <MacTypes.h>
 #else
-    #include <stdint.h>
+#include <stdint.h>
 #endif
 #define MSG_MAGIC_NUMBER 0x43534443UL
 #define MSG_DISCOVERY "DISCOVERY"

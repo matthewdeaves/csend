@@ -1,7 +1,8 @@
 #include "signal_handler.h"
 #include "peer.h"
 #include "logging.h"
-void handle_signal(int sig) {
+void handle_signal(int sig)
+{
     if (g_state != NULL) {
         g_state->running = 0;
     } else {

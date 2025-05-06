@@ -3,17 +3,18 @@
 #include <stdio.h>
 #include <string.h>
 #ifdef __MACOS__
-    #define my_htonl(l) (l)
-    #define my_ntohl(l) (l)
-    typedef unsigned long uint32_t;
+#define my_htonl(l) (l)
+#define my_ntohl(l) (l)
+typedef unsigned long uint32_t;
 #else
-    #include <arpa/inet.h>
-    #include <stdint.h>
-    #define my_htonl(l) htonl(l)
-    #define my_ntohl(l) ntohl(l)
+#include <arpa/inet.h>
+#include <stdint.h>
+#define my_htonl(l) htonl(l)
+#define my_ntohl(l) ntohl(l)
 #endif
 int format_message(char *buffer, int buffer_size, const char *msg_type,
-                   const char *sender, const char *local_ip_str, const char *content) {
+                   const char *sender, const char *local_ip_str, const char *content)
+{
     char sender_with_ip[BUFFER_SIZE];
     const char *ip_to_use;
     uint32_t magic_net_order;
@@ -53,13 +54,14 @@ int format_message(char *buffer, int buffer_size, const char *msg_type,
     }
     total_len = sizeof(uint32_t) + text_part_len + 1;
     if (total_len > buffer_size) {
-         log_message("Error: format_message internal logic error - total_len > buffer_size.");
-         return 0;
+        log_message("Error: format_message internal logic error - total_len > buffer_size.");
+        return 0;
     }
     return total_len;
 }
 int parse_message(const char *buffer, int buffer_len, char *sender_ip, char *sender_username,
-                  char *msg_type, char *content) {
+                  char *msg_type, char *content)
+{
     char *token;
     char *rest;
     char temp_text_part[BUFFER_SIZE];

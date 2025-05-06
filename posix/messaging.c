@@ -13,7 +13,8 @@
 #include <arpa/inet.h>
 #include <sys/select.h>
 #include <sys/time.h>
-static int posix_tcp_add_or_update_peer(const char* ip, const char* username, void* platform_context) {
+static int posix_tcp_add_or_update_peer(const char *ip, const char *username, void *platform_context)
+{
     app_state_t *state = (app_state_t *)platform_context;
     if (!state) {
         log_message("Error (posix_tcp_add_or_update_peer): NULL platform_context.");
@@ -21,11 +22,13 @@ static int posix_tcp_add_or_update_peer(const char* ip, const char* username, vo
     }
     return add_peer(state, ip, username);
 }
-static void posix_tcp_display_text_message(const char* username, const char* ip, const char* message_content, void* platform_context) {
+static void posix_tcp_display_text_message(const char *username, const char *ip, const char *message_content, void *platform_context)
+{
     (void)platform_context;
     log_message("Message from %s@%s: %s", username, ip, message_content);
 }
-static void posix_tcp_mark_peer_inactive(const char* ip, void* platform_context) {
+static void posix_tcp_mark_peer_inactive(const char *ip, void *platform_context)
+{
     app_state_t *state = (app_state_t *)platform_context;
     if (!state || !ip) {
         log_message("Error (posix_tcp_mark_peer_inactive): NULL platform_context or IP.");
@@ -45,7 +48,8 @@ static void posix_tcp_mark_peer_inactive(const char* ip, void* platform_context)
     }
     pthread_mutex_unlock(&state->peers_mutex);
 }
-int init_listener(app_state_t *state) {
+int init_listener(app_state_t *state)
+{
     struct sockaddr_in address;
     int opt = 1;
     if ((state->tcp_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -76,7 +80,8 @@ int init_listener(app_state_t *state) {
     log_message("TCP listener initialized on port %d", PORT_TCP);
     return 0;
 }
-int send_message(const char *ip, const char *message, const char *msg_type, const char *sender_username) {
+int send_message(const char *ip, const char *message, const char *msg_type, const char *sender_username)
+{
     int sock;
     struct sockaddr_in server_addr;
     char buffer[BUFFER_SIZE];
@@ -118,7 +123,8 @@ int send_message(const char *ip, const char *message, const char *msg_type, cons
     close(sock);
     return 0;
 }
-void *listener_thread(void *arg) {
+void *listener_thread(void *arg)
+{
     app_state_t *state = (app_state_t *)arg;
     struct sockaddr_in client_addr;
     socklen_t addrlen = sizeof(client_addr);
@@ -174,7 +180,7 @@ void *listener_thread(void *arg) {
             log_message("Peer %s disconnected.", sender_ip);
         } else {
             if (state->running) {
-               perror("TCP read failed");
+                perror("TCP read failed");
             }
         }
         close(client_sock);

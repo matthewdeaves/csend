@@ -26,12 +26,13 @@
 DialogPtr gMainWindow = NULL;
 Boolean gDialogTEInitialized = false;
 Boolean gDialogListInitialized = false;
-Boolean InitDialog(void) {
+Boolean InitDialog(void)
+{
     Boolean messagesOk = false;
     Boolean inputOk = false;
     Boolean listOk = false;
     log_message("Loading dialog resource ID %d...", kBaseResID);
-    gMainWindow = GetNewDialog(kBaseResID, NULL, (WindowPtr)-1L);
+    gMainWindow = GetNewDialog(kBaseResID, NULL, (WindowPtr) - 1L);
     if (gMainWindow == NULL) {
         log_message("Fatal: GetNewDialog failed (Error: %d).", ResError());
         return false;
@@ -57,7 +58,8 @@ Boolean InitDialog(void) {
     log_message("InitDialog finished successfully.");
     return true;
 }
-void CleanupDialog(void) {
+void CleanupDialog(void)
+{
     log_message("Cleaning up Dialog...");
     CleanupPeerListControl();
     CleanupInputTE();
@@ -71,11 +73,13 @@ void CleanupDialog(void) {
     gDialogListInitialized = false;
     log_message("Dialog cleanup complete.");
 }
-void HandleDialogClick(DialogPtr dialog, short itemHit, EventRecord *theEvent) {
+void HandleDialogClick(DialogPtr dialog, short itemHit, EventRecord *theEvent)
+{
     if (dialog != gMainWindow) return;
     log_to_file_only("HandleDialogClick called for item %d (Potentially redundant).", itemHit);
 }
-void HandleSendButtonClick(void) {
+void HandleSendButtonClick(void)
+{
     char inputCStr[256];
     ControlHandle checkboxHandle;
     DialogItemType itemType;
@@ -111,26 +115,24 @@ void HandleSendButtonClick(void) {
         peer_t targetPeer;
         if (GetSelectedPeerInfo(&targetPeer)) {
             log_message("Attempting sync send to selected peer %s@%s: '%s'",
-                         targetPeer.username, targetPeer.ip, inputCStr);
+                        targetPeer.username, targetPeer.ip, inputCStr);
             sendErr = TCP_SendTextMessageSync(targetPeer.ip, inputCStr, YieldTimeToSystem);
             if (sendErr == noErr) {
                 sprintf(displayMsg, "You (to %s): %s", targetPeer.username, inputCStr);
                 AppendToMessagesTE(displayMsg);
                 AppendToMessagesTE("\r");
                 log_message("Sync send completed successfully.");
-            }
-            else if (sendErr == streamBusyErr) {
+            } else if (sendErr == streamBusyErr) {
                 log_message("Send failed: Stream is busy (receiving or sending). Please try again later.");
                 SysBeep(5);
-            }
-            else {
+            } else {
                 log_message("Error sending message to %s: %d", targetPeer.ip, sendErr);
                 SysBeep(10);
             }
         } else {
-             log_message("Error: Cannot send, no peer selected in the list or selection invalid.");
-             SysBeep(10);
-             return;
+            log_message("Error: Cannot send, no peer selected in the list or selection invalid.");
+            SysBeep(10);
+            return;
         }
     }
     if (isBroadcast || sendErr == noErr) {
@@ -138,11 +140,13 @@ void HandleSendButtonClick(void) {
     }
     ActivateInputTE(true);
 }
-void ActivateDialogTE(Boolean activating) {
+void ActivateDialogTE(Boolean activating)
+{
     ActivateMessagesTEAndScrollbar(activating);
     ActivateInputTE(activating);
 }
-void UpdateDialogControls(void) {
+void UpdateDialogControls(void)
+{
     GrafPtr oldPort;
     GrafPtr windowPort = GetWindowPort(gMainWindow);
     if (windowPort == NULL) {

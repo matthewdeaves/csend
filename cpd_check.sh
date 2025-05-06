@@ -4,7 +4,7 @@
 
 # --- Configuration ---
 PMD_VERSION="6.55.0"
-MIN_TOKENS=50
+MIN_TOKENS=35
 # Directories containing the C source code to scan (space-separated)
 SOURCE_DIRS="posix shared classic_mac"
 # Patterns for directories TO EXCLUDE. Use find's predicates, as array elements.

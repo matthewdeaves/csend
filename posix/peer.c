@@ -12,7 +12,8 @@
 #include <pthread.h>
 #include <time.h>
 app_state_t *g_state = NULL;
-void init_app_state(app_state_t *state, const char *username) {
+void init_app_state(app_state_t *state, const char *username)
+{
     memset(state, 0, sizeof(app_state_t));
     state->running = 1;
     state->tcp_socket = -1;
@@ -28,7 +29,8 @@ void init_app_state(app_state_t *state, const char *username) {
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
 }
-void cleanup_app_state(app_state_t *state) {
+void cleanup_app_state(app_state_t *state)
+{
     log_message("Starting POSIX cleanup...");
     if (state->tcp_socket >= 0) {
         log_message("Closing TCP socket %d", state->tcp_socket);
@@ -44,7 +46,8 @@ void cleanup_app_state(app_state_t *state) {
     pthread_mutex_destroy(&state->peers_mutex);
     log_message("POSIX cleanup complete");
 }
-int add_peer(app_state_t *state, const char *ip, const char *username) {
+int add_peer(app_state_t *state, const char *ip, const char *username)
+{
     if (!state) return -1;
     int result;
     pthread_mutex_lock(&state->peers_mutex);
@@ -52,7 +55,8 @@ int add_peer(app_state_t *state, const char *ip, const char *username) {
     pthread_mutex_unlock(&state->peers_mutex);
     return result;
 }
-int prune_peers(app_state_t *state) {
+int prune_peers(app_state_t *state)
+{
     if (!state) return 0;
     int count;
     pthread_mutex_lock(&state->peers_mutex);
@@ -60,7 +64,8 @@ int prune_peers(app_state_t *state) {
     pthread_mutex_unlock(&state->peers_mutex);
     return count;
 }
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
     app_state_t state;
     pthread_t listener_tid, discovery_tid, input_tid;
     char username[32] = "anonymous";

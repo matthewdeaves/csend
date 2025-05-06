@@ -2,7 +2,8 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <time.h>
-void log_message(const char *format, ...) {
+void log_message(const char *format, ...)
+{
     time_t now = time(NULL);
     char time_str[20];
     strftime(time_str, sizeof(time_str), "%H:%M:%S", localtime(&now));

@@ -2,12 +2,12 @@
 #include "protocol.h"
 #include "logging.h"
 #include <string.h>
-void handle_received_tcp_message(const char* sender_ip,
-                                 const char* sender_username,
-                                 const char* msg_type,
-                                 const char* content,
-                                 const tcp_platform_callbacks_t* callbacks,
-                                 void* platform_context)
+void handle_received_tcp_message(const char *sender_ip,
+                                 const char *sender_username,
+                                 const char *msg_type,
+                                 const char *content,
+                                 const tcp_platform_callbacks_t *callbacks,
+                                 void *platform_context)
 {
     int add_result;
     if (!callbacks || !callbacks->add_or_update_peer || !callbacks->display_text_message || !callbacks->mark_peer_inactive) {
