@@ -1,7 +1,3 @@
-//====================================
-// FILE: ./classic_mac/main.c
-//====================================
-
 #include <MacTypes.h>
 #include <Quickdraw.h>
 #include <Fonts.h>
@@ -15,14 +11,13 @@
 #include <Controls.h>
 #include <stdlib.h>
 #include "logging.h"
-#include "network.h" // Includes gMacTCPRefNum, gMyLocalIP, gMyLocalIPStr, YieldTimeToSystem
-#include "dialog.h"  // Includes HandleSendButtonClick declaration
+#include "network.h"
+#include "dialog.h"
 #include "peer_mac.h"
 #include "dialog_peerlist.h"
-#include "tcp.h"       // Includes PollTCP declaration, GetTCPState
-#include "discovery.h" // Includes PollUDPListener declaration
-#include <Sound.h>     // Include for SysBeep
-
+#include "tcp.h"
+#include "discovery.h"
+#include <Sound.h>
 #ifndef inThumb
 #define inThumb 129
 #endif
@@ -38,42 +33,31 @@
 #ifndef inPageDown
 #define inPageDown 23
 #endif
-
 Boolean gDone = false;
 unsigned long gLastPeerListUpdateTime = 0;
-const unsigned long kPeerListUpdateIntervalTicks = 5 * 60; // Update peer list every 5 seconds
-
-// Forward declarations
+const unsigned long kPeerListUpdateIntervalTicks = 5 * 60;
 void InitializeToolbox(void);
 void MainEventLoop(void);
 void HandleEvent(EventRecord *event);
 void HandleMouseDownInContent(WindowPtr whichWindow, EventRecord *event);
 void HandleIdleTasks(void);
-
 int main(void) {
     OSErr networkErr;
     Boolean dialogOk;
-
     InitLogFile();
-    // *** UPDATED Log message for strategy ***
     log_message("Starting application (Single Stream / Sync Poll Strategy)...");
-
     MaxApplZone();
     log_message("MaxApplZone called.");
-
     InitializeToolbox();
     log_message("Toolbox Initialized.");
-
     networkErr = InitializeNetworking();
     if (networkErr != noErr) {
         log_message("Fatal: Network initialization failed (%d). Exiting.", networkErr);
         CloseLogFile();
         return 1;
     }
-
     InitPeerList();
     log_message("Peer list initialized.");
-
     dialogOk = InitDialog();
     if (!dialogOk) {
         log_message("Fatal: Dialog initialization failed. Exiting.");
@@ -81,11 +65,9 @@ int main(void) {
         CloseLogFile();
         return 1;
     }
-
     log_message("Entering main event loop...");
     MainEventLoop();
     log_message("Exited main event loop.");
-
     log_message("Initiating shutdown sequence...");
     OSErr quitErr = TCP_SendQuitMessagesSync(YieldTimeToSystem);
     if (quitErr == streamBusyErr) {
@@ -95,13 +77,11 @@ int main(void) {
     } else {
         log_message("Finished sending shutdown notifications (or no peers).");
     }
-
     CleanupDialog();
     CleanupNetworking();
     CloseLogFile();
     return 0;
 }
-
 void InitializeToolbox(void) {
     InitGraf(&qd.thePort);
     InitFonts();
@@ -111,20 +91,15 @@ void InitializeToolbox(void) {
     InitDialogs(NULL);
     InitCursor();
 }
-
 void MainEventLoop(void) {
     EventRecord event;
     Boolean gotEvent;
-    long sleepTime = 1L; 
-
+    long sleepTime = 1L;
     while (!gDone) {
         if (gMessagesTE != NULL) TEIdle(gMessagesTE);
         if (gInputTE != NULL) TEIdle(gInputTE);
-
-        HandleIdleTasks(); // Calls PollTCP internally
-
+        HandleIdleTasks();
         gotEvent = WaitNextEvent(everyEvent, &event, sleepTime, NULL);
-
         if (gotEvent) {
             Boolean eventHandled = false;
             if (event.what == mouseDown) {
@@ -168,24 +143,18 @@ void MainEventLoop(void) {
         }
     }
 }
-
 void HandleIdleTasks(void) {
     unsigned long currentTimeTicks = TickCount();
-
     PollUDPListener(gMacTCPRefNum, gMyLocalIP);
-    // *** Call PollTCP with YieldTimeToSystem ***
     PollTCP(YieldTimeToSystem);
-
     CheckSendBroadcast(gMacTCPRefNum, gMyUsername, gMyLocalIPStr);
-
     if (gLastPeerListUpdateTime == 0 ||
-        (currentTimeTicks < gLastPeerListUpdateTime) || // Handle TickCount wrap-around
+        (currentTimeTicks < gLastPeerListUpdateTime) ||
         (currentTimeTicks - gLastPeerListUpdateTime) >= kPeerListUpdateIntervalTicks) {
         if (gPeerListHandle != NULL) { UpdatePeerDisplayList(false); }
         gLastPeerListUpdateTime = currentTimeTicks;
     }
 }
-
 void HandleEvent(EventRecord *event) {
     short windowPart; WindowPtr whichWindow; char theChar;
     switch (event->what) {
@@ -196,11 +165,11 @@ void HandleEvent(EventRecord *event) {
                 case inSysWindow: SystemClick(event, whichWindow); break;
                 case inDrag: if (whichWindow == (WindowPtr)gMainWindow) { DragWindow(whichWindow, event->where, &qd.screenBits.bounds); } break;
                 case inGoAway: if (whichWindow == (WindowPtr)gMainWindow) { if (TrackGoAway(whichWindow, event->where)) { log_message("Close box clicked. Setting gDone = true."); gDone = true; } } break;
-                case inContent: if (whichWindow == (WindowPtr)gMainWindow) { /* Clicks in content not handled by DialogSelect might be handled here if needed */ } else { SelectWindow(whichWindow); } break;
+                case inContent: if (whichWindow == (WindowPtr)gMainWindow) { } else { SelectWindow(whichWindow); } break;
                 default: break;
             }
             break;
-        case keyDown: case autoKey: theChar = event->message & charCodeMask; if ((event->modifiers & cmdKey) != 0) { /* Menus */ } break;
+        case keyDown: case autoKey: theChar = event->message & charCodeMask; if ((event->modifiers & cmdKey) != 0) { } break;
         case updateEvt:
             whichWindow = (WindowPtr)event->message; BeginUpdate(whichWindow);
             if (whichWindow == (WindowPtr)gMainWindow) { DrawDialog(whichWindow); UpdateDialogControls(); }
@@ -213,8 +182,6 @@ void HandleEvent(EventRecord *event) {
         default: break;
     }
 }
-
-// HandleMouseDownInContent remains unchanged
 void HandleMouseDownInContent(WindowPtr whichWindow, EventRecord *event) {
     Point localPt = event->where; GrafPtr oldPort; GetPort(&oldPort); SetPort(GetWindowPort(whichWindow));
     GlobalToLocal(&localPt); log_to_file_only("HandleMouseDownInContent: Processing click at local (%d, %d)", localPt.v, localPt.h); SetPort(oldPort);
