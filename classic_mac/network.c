@@ -1,7 +1,3 @@
-//====================================
-// FILE: ./classic_mac/network.c
-//====================================
-
 #include "network.h"
 #include "logging.h"
 #include "discovery.h" // For Init/Cleanup UDP
@@ -57,7 +53,10 @@ OSErr InitializeNetworking(void) {
     }
     log_message("PBControlSync(ipctlGetAddr) succeeded.");
     // Extract the IP address from the control parameter block
-    gMyLocalIP = *((ip_addr *)(&cntrlPB.csParam[0]));
+    // Ensure alignment: Use BlockMoveData for safety
+    // gMyLocalIP = *((ip_addr *)(&cntrlPB.csParam[0])); // Potential alignment issue
+    BlockMoveData(&cntrlPB.csParam[0], &gMyLocalIP, sizeof(ip_addr));
+
 
     // 3. Initialize DNR (Domain Name Resolver)
     log_message("Attempting OpenResolver...");
@@ -100,8 +99,8 @@ OSErr InitializeNetworking(void) {
         return err;
     }
 
-    // 6. Initialize TCP Listener and Sender Streams
-    err = InitTCP(gMacTCPRefNum); // <<< UPDATED CALL
+    // 6. Initialize TCP Listener and Sender Streams (Now just the single stream)
+    err = InitTCP(gMacTCPRefNum); // Call the refactored InitTCP
     if (err != noErr) {
         log_message("Fatal: TCP initialization failed (%d). Cleaning up.", err);
         CleanupUDPDiscoveryEndpoint(gMacTCPRefNum); // Clean up UDP if TCP fails
@@ -121,8 +120,8 @@ void CleanupNetworking(void) {
 
     log_message("Cleaning up Networking (Streams, DNR, Driver)...");
 
-    // 1. Cleanup TCP Listener and Sender Streams
-    CleanupTCP(gMacTCPRefNum); // <<< UPDATED CALL
+    // 1. Cleanup TCP Listener and Sender Streams (Now just the single stream)
+    CleanupTCP(gMacTCPRefNum); // Call the refactored CleanupTCP
 
     // 2. Cleanup UDP Endpoint (handles its own stream release)
     CleanupUDPDiscoveryEndpoint(gMacTCPRefNum);

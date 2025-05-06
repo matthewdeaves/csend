@@ -1,7 +1,3 @@
-//====================================
-// FILE: ./classic_mac/dialog.c
-//====================================
-
 #include "dialog.h"
 #include "logging.h"
 #include "network.h" // Includes YieldTimeToSystem, gMyUsername, gMyLocalIPStr
@@ -11,7 +7,7 @@
 #include "dialog_messages.h"
 #include "dialog_input.h"
 #include "dialog_peerlist.h"
-#include "tcp.h" // Includes TCP_SendTextMessageSync, GetTCPListenerState
+#include "tcp.h"       // Includes TCP_SendTextMessageSync, GetTCPState, streamBusyErr
 #include <MacTypes.h>
 #include <Dialogs.h>
 #include <TextEdit.h>
@@ -26,7 +22,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <Errors.h> // For inProgress error code
+#include <Errors.h> // For standard error codes
 
 DialogPtr gMainWindow = NULL;
 Boolean gDialogTEInitialized = false;
@@ -34,6 +30,7 @@ Boolean gDialogListInitialized = false;
 // gMyUsername is extern from network.h
 // gLastSelectedCell is extern from dialog_peerlist.h
 
+// InitDialog remains unchanged
 Boolean InitDialog(void) {
     Boolean messagesOk = false;
     Boolean inputOk = false;
@@ -49,10 +46,9 @@ Boolean InitDialog(void) {
 
     ShowWindow(gMainWindow);
     SelectWindow(gMainWindow);
-    SetPort((GrafPtr)gMainWindow); // Set current port for drawing
+    SetPort((GrafPtr)gMainWindow);
     log_message("Window shown, selected, port set.");
 
-    // Initialize dialog components
     messagesOk = InitMessagesTEAndScrollbar(gMainWindow);
     inputOk = InitInputTE(gMainWindow);
     listOk = InitPeerListControl(gMainWindow);
@@ -62,23 +58,23 @@ Boolean InitDialog(void) {
 
     if (!gDialogTEInitialized || !gDialogListInitialized) {
         log_message("Error: One or more dialog components failed to initialize. Cleaning up.");
-        CleanupDialog(); // Clean up partially initialized dialog
+        CleanupDialog();
         return false;
     }
 
-    UpdatePeerDisplayList(true); // Populate peer list initially
+    UpdatePeerDisplayList(true);
 
     log_message("Setting focus to input field (item %d)...", kInputTextEdit);
-    ActivateInputTE(true); // Activate input TE
+    ActivateInputTE(true);
 
     log_message("InitDialog finished successfully.");
     return true;
 }
 
+// CleanupDialog remains unchanged
 void CleanupDialog(void) {
     log_message("Cleaning up Dialog...");
 
-    // Cleanup components in reverse order of initialization
     CleanupPeerListControl();
     CleanupInputTE();
     CleanupMessagesTEAndScrollbar();
@@ -94,18 +90,13 @@ void CleanupDialog(void) {
     log_message("Dialog cleanup complete.");
 }
 
-// This function is called by DialogSelect for *any* click in the dialog,
-// but we only care about specific items handled *after* DialogSelect finishes.
-// Most item handling (buttons, checkboxes, TE activation, list selection)
-// is done within the MainEventLoop's DialogSelect handling logic.
+// HandleDialogClick remains unchanged
 void HandleDialogClick(DialogPtr dialog, short itemHit, EventRecord *theEvent) {
     if (dialog != gMainWindow) return;
-    // This log might be redundant if DialogSelect already logged the itemHit.
     log_to_file_only("HandleDialogClick called for item %d (Potentially redundant).", itemHit);
-    // Add specific logic here ONLY if DialogSelect doesn't fully handle an item's click behavior.
 }
 
-// Handles the logic when the Send button is clicked.
+// HandleSendButtonClick - UPDATED error handling
 void HandleSendButtonClick(void) {
     char inputCStr[256];
     ControlHandle checkboxHandle;
@@ -114,7 +105,7 @@ void HandleSendButtonClick(void) {
     Rect itemRect;
     Boolean isBroadcast;
     char displayMsg[BUFFER_SIZE + 100];
-    OSErr sendErr;
+    OSErr sendErr = noErr; // Initialize error status
 
     if (!GetInputText(inputCStr, sizeof(inputCStr))) {
         log_message("Error: Could not get text from input field.");
@@ -149,8 +140,8 @@ void HandleSendButtonClick(void) {
             log_message("Attempting sync send to selected peer %s@%s: '%s'",
                          targetPeer.username, targetPeer.ip, inputCStr);
 
-            // Use the SYNC send function now
-            sendErr = TCP_SendTextMessageSync(targetPeer.ip, inputCStr, YieldTimeToSystem); // <<< UPDATED CALL
+            // Use the SYNC send function that now uses the single stream
+            sendErr = TCP_SendTextMessageSync(targetPeer.ip, inputCStr, YieldTimeToSystem);
 
             if (sendErr == noErr) {
                 // Successfully SENT message
@@ -159,10 +150,13 @@ void HandleSendButtonClick(void) {
                 AppendToMessagesTE("\r");
                 log_message("Sync send completed successfully.");
             }
-            // NOTE: We removed the check for 'inProgress' here because the Sync function
-            // either succeeds (noErr) or fails with a specific error. It doesn't return inProgress.
+            // *** ADDED: Handle stream busy error specifically ***
+            else if (sendErr == streamBusyErr) {
+                log_message("Send failed: Stream is busy (receiving or sending). Please try again later.");
+                SysBeep(5); // Different beep? Or just log?
+            }
+            // Handle other errors
             else {
-                // Error during send attempt
                 log_message("Error sending message to %s: %d", targetPeer.ip, sendErr);
                 SysBeep(10);
             }
@@ -173,8 +167,7 @@ void HandleSendButtonClick(void) {
         }
     }
 
-    // Clear input field only if broadcast or send succeeded
-    // (Don't clear if send failed, user might want to retry)
+    // Clear input field only if broadcast or send succeeded (not if busy or error)
     if (isBroadcast || sendErr == noErr) {
         ClearInputText();
     }
@@ -182,13 +175,13 @@ void HandleSendButtonClick(void) {
     ActivateInputTE(true);
 }
 
-
+// ActivateDialogTE remains unchanged
 void ActivateDialogTE(Boolean activating) {
-    // Activate/Deactivate both TE fields
-    ActivateMessagesTEAndScrollbar(activating); // Handles message TE and its scrollbar
-    ActivateInputTE(activating);                // Handles input TE
+    ActivateMessagesTEAndScrollbar(activating);
+    ActivateInputTE(activating);
 }
 
+// UpdateDialogControls remains unchanged
 void UpdateDialogControls(void) {
     GrafPtr oldPort;
     GrafPtr windowPort = GetWindowPort(gMainWindow);
@@ -199,17 +192,15 @@ void UpdateDialogControls(void) {
     }
 
     GetPort(&oldPort);
-    SetPort(windowPort); // Set port to dialog's window
+    SetPort(windowPort);
 
-    // Update custom items that need redrawing
-    HandleMessagesTEUpdate(gMainWindow); // Update Messages TE content
-    HandleInputTEUpdate(gMainWindow);    // Update Input TE content
-    HandlePeerListUpdate(gMainWindow);   // Update Peer List content
+    HandleMessagesTEUpdate(gMainWindow);
+    HandleInputTEUpdate(gMainWindow);
+    HandlePeerListUpdate(gMainWindow);
 
-    // Standard controls are usually redrawn by DrawDialog, but ensure scrollbar is correct
     if (gMessagesScrollBar != NULL) {
-        Draw1Control(gMessagesScrollBar); // Redraw scrollbar explicitly if needed
+        Draw1Control(gMessagesScrollBar);
     }
 
-    SetPort(oldPort); // Restore original port
+    SetPort(oldPort);
 }
