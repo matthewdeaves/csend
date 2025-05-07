@@ -6,6 +6,48 @@ I'll be tagging various points of evolution of this code base with a write up of
 
 ---
 
+## [v0.0.12](https://github.com/matthewdeaves/csend/tree/v0.0.12)
+
+This release focuses on significant GUI bug fixes and usability enhancements for the Classic Macintosh client, addressing key interaction issues identified in v0.0.11. The core networking and shared logic remain stable. We have reached feature parity with the POSIX version.
+
+1.  **Classic Mac GUI - Checkbox Functionality Restored:**
+    *   **Previous State (v0.0.11):** The "Show Debug" and "Broadcast" checkboxes would log state changes internally but failed to update their visual appearance (i.e., the 'X' would not appear or disappear correctly).
+    *   **v0.0.12 Fix:**
+        *   Modified the `DialogSelect` event handling in `classic_mac/main.c`.
+        *   When a checkbox item is clicked, `SetControlValue` is now explicitly called to toggle the control's stored value *before* its new state is read for application logic.
+        *   `InvalRect` is then used on the checkbox's item rectangle to ensure the Dialog Manager correctly redraws the control with its updated visual state during the subsequent update event.
+    *   **Benefit:** Checkboxes now function as expected, providing clear visual feedback to the user and enabling reliable use of the "Show Debug" and "Broadcast" features.
+
+2.  **Classic Mac GUI - Input Text Field Visuals Corrected:**
+    *   **Previous State (v0.0.11):**
+        *   The border around the message input TextEdit field was not always visible immediately when the dialog appeared.
+        *   After sending a message, the input field's text content was cleared internally, but the old text often remained visually on screen until further interaction.
+    *   **v0.0.12 Fixes:**
+        *   **Initial Border:** Ensured the input field's border is drawn reliably upon dialog initialization by adding an explicit call to `UpdateDialogControls()` at the end of `InitDialog` in `classic_mac/dialog.c`. This forces an immediate draw of user items, including the input field's frame.
+        *   **Text Clearing:** Modified `ClearInputText` in `classic_mac/dialog_input.c` to call `HandleInputTEUpdate` after clearing the TextEdit content. `HandleInputTEUpdate` now explicitly calls `EraseRect` on the TextEdit field's view rectangle before `TEUpdate`, ensuring the old text is visually removed.
+        *   The input field continues to use an inset TextEdit view rectangle within a framed user item for robust border drawing.
+    *   **Benefit:** The message input field now has a consistent border from the moment the dialog appears and clears its visual content correctly after a message is sent, improving the user experience.
+
+3.  **Classic Mac GUI - Peer List Selection Robustness:**
+    *   **Previous State (v0.0.11):** Selecting a peer in the list was unreliable; the selection highlight could be lost, and sending messages to the selected peer often failed.
+    *   **v0.0.12 Fix:**
+        *   Refined `HandlePeerListClick` in `classic_mac/dialog_peerlist.c`. It now uses `LLastClick` to identify the cell targeted by the user's click and then `LGetSelect(false, ...)` to definitively confirm if that specific cell is indeed selected by the List Manager.
+        *   The internal tracking variable `gLastSelectedCell` is updated based on this confirmed selection.
+        *   `UpdatePeerDisplayList` was enhanced to better preserve and re-apply selections based on the underlying peer data when the list is rebuilt.
+    *   **Benefit:** Peer selection is now stable and reliable. Users can confidently select a peer, and the selection persists visually and functionally for sending messages.
+
+4.  **Classic Mac GUI - Messages Scrollbar Stability:**
+    *   **Previous State (v0.0.11 behavior after initial fixes):** A Type 1 Address Error (crash) occurred when dragging the thumb of the messages scrollbar.
+    *   **v0.0.12 Fix:**
+        *   Restructured the `mouseDown` event handling for the scrollbar in `classic_mac/main.c` to align with a previously stable approach.
+        *   Thumb drags are now handled directly: `TrackControl` is called with a `nil` action proc, and upon its return, the scrollbar's new value is immediately used to calculate and apply the text scrolling via `ScrollMessagesTE`.
+        *   Clicks on scrollbar arrows or page regions continue to use the `MyScrollAction` procedure.
+    *   **Benefit:** The messages scrollbar is now stable and functions correctly for all interaction types (arrows, page regions, and thumb dragging).
+
+This version significantly polishes the Classic Macintosh client's user interface, making it more reliable and intuitive to use for its core chat functionalities.
+
+---
+
 ## [v0.0.11](https://github.com/matthewdeaves/csend/tree/v0.0.11)
 
 This version marks a major milestone, for the Classic Macintosh client, by fully implementing TCP message handling and integrating shared discovery and messaging logic. The Classic Mac client has the underpinnings of a functional peer-to-peer chat application capable of discovering, sending to, and receiving messages from other peers.
