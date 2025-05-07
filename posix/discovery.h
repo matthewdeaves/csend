@@ -1,5 +1,5 @@
 #ifndef DISCOVERY_H
-#define DISCOVERY_H
+#define DISCOVERY_H 
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include "peer.h"

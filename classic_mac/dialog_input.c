@@ -1,5 +1,9 @@
+//====================================
+// FILE: ./classic_mac/dialog_input.c
+//====================================
+
 #include "dialog_input.h"
-#include "dialog.h"
+#include "dialog.h" // For kInputTextEdit and gMainWindow
 #include "logging.h"
 #include <MacTypes.h>
 #include <TextEdit.h>
@@ -7,35 +11,52 @@
 #include <Windows.h>
 #include <Memory.h>
 #include <string.h>
+#include <Quickdraw.h> // For FrameRect, InsetRect, EraseRect
+
 TEHandle gInputTE = NULL;
+
 Boolean InitInputTE(DialogPtr dialog)
 {
     DialogItemType itemType;
     Handle itemHandle;
-    Rect destRectInput, viewRectInput;
-    log_message("Initializing Input TE...");
-    GetDialogItem(dialog, kInputTextEdit, &itemType, &itemHandle, &destRectInput);
+    Rect itemRect; 
+
+    log_message("Initializing Input TE (as UserItem)...");
+    GetDialogItem(dialog, kInputTextEdit, &itemType, &itemHandle, &itemRect);
+
     if (itemType == userItem) {
-        viewRectInput = destRectInput;
-        InsetRect(&viewRectInput, 1, 1);
-        log_message("Calling TENew for Input TE (Dest: T%d,L%d,B%d,R%d; View: T%d,L%d,B%d,R%d)",
-                    destRectInput.top, destRectInput.left, destRectInput.bottom, destRectInput.right,
-                    viewRectInput.top, viewRectInput.left, viewRectInput.bottom, viewRectInput.right);
-        gInputTE = TENew(&destRectInput, &viewRectInput);
+        Rect teViewRect = itemRect; 
+        Rect teDestRect = itemRect;
+
+        InsetRect(&teViewRect, 1, 1);
+        InsetRect(&teDestRect, 1, 1);
+        
+        if (teViewRect.bottom <= teViewRect.top || teViewRect.right <= teViewRect.left) {
+            log_message("ERROR: Input TE itemRect too small after insetting for border. Original: (%d,%d,%d,%d)",
+                        itemRect.top, itemRect.left, itemRect.bottom, itemRect.right);
+            gInputTE = NULL;
+            return false;
+        }
+
+        gInputTE = TENew(&teDestRect, &teViewRect);
         if (gInputTE == NULL) {
             log_message("CRITICAL ERROR: TENew failed for Input TE! Out of memory?");
             return false;
         } else {
-            log_message("TENew succeeded for Input TE. Handle: 0x%lX", (unsigned long)gInputTE);
-            TEAutoView(true, gInputTE);
+            log_message("TENew succeeded for Input TE. Handle: 0x%lX. ViewRect for TE: (%d,%d,%d,%d)",
+                        (unsigned long)gInputTE, teViewRect.top, teViewRect.left, teViewRect.bottom, teViewRect.right);
+            TESetText((Ptr)"", 0, gInputTE);
+            TECalText(gInputTE);
+            TESetSelect(0, 0, gInputTE);
             return true;
         }
     } else {
-        log_message("ERROR: Item %d is NOT a UserItem (Type: %d)! Expected UserItem for TENew.", kInputTextEdit, itemType);
+        log_message("ERROR: Item %d (kInputTextEdit) is Type: %d. Expected userItem. Cannot initialize Input TE.", kInputTextEdit, itemType);
         gInputTE = NULL;
         return false;
     }
 }
+
 void CleanupInputTE(void)
 {
     log_message("Cleaning up Input TE...");
@@ -45,57 +66,76 @@ void CleanupInputTE(void)
     }
     log_message("Input TE cleanup finished.");
 }
+
 void HandleInputTEClick(DialogPtr dialog, EventRecord *theEvent)
 {
     if (gInputTE != NULL) {
         Point localPt = theEvent->where;
         GrafPtr oldPort;
+        Rect teViewRect = (**gInputTE).viewRect;
+
         GetPort(&oldPort);
         SetPort(GetWindowPort(dialog));
         GlobalToLocal(&localPt);
-        SetPort(oldPort);
-        SignedByte teState = HGetState((Handle)gInputTE);
-        HLock((Handle)gInputTE);
-        Boolean clickedInside = false;
-        if (*gInputTE != NULL) {
-            clickedInside = PtInRect(localPt, &(**gInputTE).viewRect);
-        } else {
-            log_message("HandleInputTEClick Error: gInputTE deref failed!");
-        }
-        HSetState((Handle)gInputTE, teState);
-        if (clickedInside) {
-            log_to_file_only("HandleInputTEClick: Click inside Input TE viewRect. Calling TEClick.");
+        
+        if (PtInRect(localPt, &teViewRect)) {
             TEClick(localPt, (theEvent->modifiers & shiftKey) != 0, gInputTE);
-        } else {
-            log_to_file_only("HandleInputTEClick: Click was outside Input TE viewRect.");
         }
+        SetPort(oldPort);
     }
 }
+
 void HandleInputTEUpdate(DialogPtr dialog)
 {
     if (gInputTE != NULL) {
-        Rect itemRect;
+        Rect userItemRect; 
         DialogItemType itemTypeIgnored;
         Handle itemHandleIgnored;
         GrafPtr oldPort;
+        Rect teActualViewRect;
+
         GetPort(&oldPort);
         SetPort(GetWindowPort(dialog));
-        GetDialogItem(dialog, kInputTextEdit, &itemTypeIgnored, &itemHandleIgnored, &itemRect);
+
+        GetDialogItem(dialog, kInputTextEdit, &itemTypeIgnored, &itemHandleIgnored, &userItemRect);
+        log_to_file_only("HandleInputTEUpdate: UserItemRect for kInputTextEdit is (%d,%d,%d,%d)",
+            userItemRect.top, userItemRect.left, userItemRect.bottom, userItemRect.right);
+
+        // 1. Draw the border around the original userItem rectangle
+        FrameRect(&userItemRect); 
+        log_to_file_only("HandleInputTEUpdate: FrameRect called.");
+
         SignedByte teState = HGetState((Handle)gInputTE);
         HLock((Handle)gInputTE);
-        if (*gInputTE != NULL) {
-            TEUpdate(&itemRect, gInputTE);
+
+        if (*gInputTE != NULL) { 
+            teActualViewRect = (**gInputTE).viewRect; // Get the TE's inset viewRect
+            
+            // 2. Erase the area *inside* the frame where text will be drawn
+            EraseRect(&teActualViewRect);
+            log_to_file_only("HandleInputTEUpdate: EraseRect called for TE's viewRect (%d,%d,%d,%d)",
+                teActualViewRect.top, teActualViewRect.left, teActualViewRect.bottom, teActualViewRect.right);
+
+            // 3. Call TEUpdate to draw the current text (or nothing if empty)
+            TEUpdate(&teActualViewRect, gInputTE);
+            log_to_file_only("HandleInputTEUpdate: TEUpdate called.");
+        } else {
+             log_message("HandleInputTEUpdate ERROR: gInputTE deref failed after HLock!");
         }
+
         HSetState((Handle)gInputTE, teState);
+
         SetPort(oldPort);
+    } else {
+        log_to_file_only("HandleInputTEUpdate: gInputTE is NULL, skipping update.");
     }
 }
+
 void ActivateInputTE(Boolean activating)
 {
     if (gInputTE != NULL) {
         if (activating) {
             TEActivate(gInputTE);
-            TESetSelect((**gInputTE).teLength, (**gInputTE).teLength, gInputTE);
             log_to_file_only("ActivateInputTE: Activating Input TE.");
         } else {
             TEDeactivate(gInputTE);
@@ -103,6 +143,7 @@ void ActivateInputTE(Boolean activating)
         }
     }
 }
+
 Boolean GetInputText(char *buffer, short bufferSize)
 {
     if (gInputTE == NULL || buffer == NULL || bufferSize <= 0) {
@@ -110,35 +151,45 @@ Boolean GetInputText(char *buffer, short bufferSize)
         log_message("Error: GetInputText called with NULL TE/buffer or zero size.");
         return false;
     }
+
     SignedByte teState = HGetState((Handle)gInputTE);
     HLock((Handle)gInputTE);
     Boolean success = false;
+
     if (*gInputTE != NULL && (**gInputTE).hText != NULL) {
+        Handle textH = (**gInputTE).hText;
         Size textLen = (**gInputTE).teLength;
         Size copyLen = textLen;
+
         if (copyLen >= bufferSize) {
             copyLen = bufferSize - 1;
             log_message("Warning: Input text truncated during GetInputText (buffer size %d, needed %ld).", bufferSize, (long)textLen + 1);
         }
-        SignedByte textHandleState = HGetState((**gInputTE).hText);
-        HLock((**gInputTE).hText);
-        BlockMoveData(*((**gInputTE).hText), buffer, copyLen);
-        HSetState((**gInputTE).hText, textHandleState);
+
+        SignedByte textHandleState = HGetState(textH);
+        HLock(textH);
+
+        BlockMoveData(*textH, buffer, copyLen);
+
+        HSetState(textH, textHandleState);
         buffer[copyLen] = '\0';
         success = true;
     } else {
-        log_message("Error: Cannot get text from Input TE (NULL handle/hText).");
+        log_message("Error: Cannot get text from Input TE (NULL TE record or hText).");
         buffer[0] = '\0';
         success = false;
     }
+
     HSetState((Handle)gInputTE, teState);
     return success;
 }
+
 void ClearInputText(void)
 {
     if (gInputTE != NULL) {
         SignedByte teState = HGetState((Handle)gInputTE);
         HLock((Handle)gInputTE);
+
         if (*gInputTE != NULL) {
             TESetText((Ptr)"", 0, gInputTE);
             TECalText(gInputTE);
@@ -147,5 +198,11 @@ void ClearInputText(void)
         }
         HSetState((Handle)gInputTE, teState);
         log_message("Input field cleared.");
+
+        // Ensure the visual update happens
+        if (gMainWindow != NULL) {
+            // Calling HandleInputTEUpdate will Frame, Erase, and TEUpdate
+            HandleInputTEUpdate(gMainWindow); 
+        }
     }
 }

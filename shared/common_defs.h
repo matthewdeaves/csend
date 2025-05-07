@@ -1,5 +1,5 @@
 #ifndef COMMON_DEFS_H
-#define COMMON_DEFS_H
+#define COMMON_DEFS_H 
 #define BUFFER_SIZE 1024
 #define INET_ADDRSTRLEN 16
 #define PORT_TCP 8080
