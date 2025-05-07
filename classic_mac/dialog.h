@@ -1,5 +1,5 @@
 #ifndef DIALOG_H
-#define DIALOG_H
+#define DIALOG_H 
 #include <MacTypes.h>
 #include <Dialogs.h>
 #include <TextEdit.h>
@@ -16,6 +16,7 @@
 #define kSendButton 4
 #define kBroadcastCheckbox 5
 #define kMessagesScrollbar 6
+#define kDebugCheckbox 7
 extern DialogPtr gMainWindow;
 extern Boolean gDialogTEInitialized;
 extern Boolean gDialogListInitialized;
@@ -23,7 +24,6 @@ extern char gMyUsername[32];
 extern Cell gLastSelectedCell;
 Boolean InitDialog(void);
 void CleanupDialog(void);
-void HandleDialogClick(DialogPtr dialog, short itemHit, EventRecord *theEvent);
 void HandleSendButtonClick(void);
 void ActivateDialogTE(Boolean activating);
 void UpdateDialogControls(void);

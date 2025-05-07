@@ -9,6 +9,7 @@
 #include <Fonts.h>
 #include <Memory.h>
 #include <Resources.h>
+#include <Controls.h>
 #include <stdio.h>
 #include <string.h>
 ListHandle gPeerListHandle = NULL;
@@ -72,7 +73,7 @@ void CleanupPeerListControl(void)
 }
 Boolean HandlePeerListClick(DialogPtr dialog, EventRecord *theEvent)
 {
-    Boolean listClickedHandled = false;
+    Boolean clickWasInContent = false;
     if (gPeerListHandle != NULL) {
         Point localClick = theEvent->where;
         GrafPtr oldPort;
@@ -82,53 +83,74 @@ Boolean HandlePeerListClick(DialogPtr dialog, EventRecord *theEvent)
         SetPort(oldPort);
         SignedByte listState = HGetState((Handle)gPeerListHandle);
         HLock((Handle)gPeerListHandle);
-        Boolean clickedInsideView = false;
-        if (*gPeerListHandle != NULL) {
-            clickedInsideView = PtInRect(localClick, &(**gPeerListHandle).rView);
-        } else {
-            log_message("HandlePeerListClick Error: gPeerListHandle deref failed!");
+        if (*gPeerListHandle == NULL) {
+            log_message("HandlePeerListClick Error: gPeerListHandle deref failed after HLock!");
+            HSetState((Handle)gPeerListHandle, listState);
+            return false;
         }
-        HSetState((Handle)gPeerListHandle, listState);
-        if (clickedInsideView) {
+        if (PtInRect(localClick, &(**gPeerListHandle).rView)) {
+            clickWasInContent = true;
             log_to_file_only("HandlePeerListClick: Click inside Peer List view rect. Calling LClick.");
-            listClickedHandled = LClick(localClick, theEvent->modifiers, gPeerListHandle);
-            Cell tempCell = {0, -1};
-            if (LGetSelect(true, &tempCell, gPeerListHandle)) {
-                gLastSelectedCell = tempCell;
-                log_to_file_only("HandlePeerListClick: Peer list item selected: Row %d, Col %d", gLastSelectedCell.v, gLastSelectedCell.h);
+            (void)LClick(localClick, theEvent->modifiers, gPeerListHandle);
+            Cell clickedCell = LLastClick(gPeerListHandle);
+            Cell cellToVerify = clickedCell;
+            if (clickedCell.v >= 0 && clickedCell.h >= 0) {
+                if (LGetSelect(false, &cellToVerify, gPeerListHandle)) {
+                    gLastSelectedCell = clickedCell;
+                    log_to_file_only("HandlePeerListClick: LLastClick cell (%d,%d) IS selected. Unchecking broadcast.", gLastSelectedCell.h, gLastSelectedCell.v);
+                    DialogItemType itemType;
+                    Handle itemHandle;
+                    Rect itemRect;
+                    ControlHandle broadcastCheckboxHandle;
+                    GrafPtr clickOldPort;
+                    GetPort(&clickOldPort);
+                    SetPort(GetWindowPort(gMainWindow));
+                    GetDialogItem(gMainWindow, kBroadcastCheckbox, &itemType, &itemHandle, &itemRect);
+                    if (itemHandle != NULL && itemType == (ctrlItem + chkCtrl)) {
+                        broadcastCheckboxHandle = (ControlHandle)itemHandle;
+                        SetControlValue(broadcastCheckboxHandle, 0);
+                    } else {
+                        log_message("HandlePeerListClick: Could not find/set broadcast checkbox (item %d).", kBroadcastCheckbox);
+                    }
+                    SetPort(clickOldPort);
+                } else {
+                    log_to_file_only("HandlePeerListClick: LLastClick cell (%d,%d) is NOT selected by LGetSelect(false,...). Clearing selection.", clickedCell.h, clickedCell.v);
+                    SetPt(&gLastSelectedCell, 0, -1);
+                }
             } else {
+                log_to_file_only("HandlePeerListClick: LLastClick returned invalid cell (%d,%d) after LClick. Clearing selection.", clickedCell.h, clickedCell.v);
                 SetPt(&gLastSelectedCell, 0, -1);
-                log_to_file_only("HandlePeerListClick: No selection after LClick.");
             }
         } else {
             log_to_file_only("HandlePeerListClick: Click was outside Peer List view rect.");
         }
+        HSetState((Handle)gPeerListHandle, listState);
     }
-    return listClickedHandled;
+    return clickWasInContent;
 }
 void UpdatePeerDisplayList(Boolean forceRedraw)
 {
     Cell theCell;
     char peerStr[INET_ADDRSTRLEN + 32 + 2];
-    int currentListLength;
+    int currentListLengthInRows;
     int activePeerCount = 0;
     SignedByte listState;
-    Boolean selectionStillValid = false;
-    Cell oldSelection = gLastSelectedCell;
+    Boolean oldSelectionStillValidAndFound = false;
     peer_t oldSelectedPeerData;
-    Boolean hadOldSelection = false;
+    Boolean hadOldSelectionData = false;
     if (gPeerListHandle == NULL) {
         log_message("Skipping UpdatePeerDisplayList: List not initialized.");
         return;
     }
-    if (oldSelection.v >= 0) {
-        hadOldSelection = GetSelectedPeerInfo(&oldSelectedPeerData);
-        if (!hadOldSelection) {
-            log_to_file_only("UpdatePeerDisplayList: Old selection row %d was invalid before update.", oldSelection.v);
-            SetPt(&oldSelection, 0, -1);
+    if (gLastSelectedCell.v >= 0) {
+        hadOldSelectionData = GetSelectedPeerInfo(&oldSelectedPeerData);
+        if (hadOldSelectionData) {
+            log_to_file_only("UpdatePeerDisplayList: Attempting to preserve selection for peer %s@%s (was display row %d).", oldSelectedPeerData.username, oldSelectedPeerData.ip, gLastSelectedCell.v);
         } else {
-            log_to_file_only("UpdatePeerDisplayList: Old selection was row %d ('%s').", oldSelection.v, oldSelectedPeerData.ip);
+            log_to_file_only("UpdatePeerDisplayList: gLastSelectedCell.v was %d, but GetSelectedPeerInfo failed. No specific peer to preserve.", gLastSelectedCell.v);
         }
+    } else {
+         log_to_file_only("UpdatePeerDisplayList: No prior selection (gLastSelectedCell.v = %d).", gLastSelectedCell.v);
     }
     PruneTimedOutPeers();
     listState = HGetState((Handle)gPeerListHandle);
@@ -138,12 +160,12 @@ void UpdatePeerDisplayList(Boolean forceRedraw)
         HSetState((Handle)gPeerListHandle, listState);
         return;
     }
-    currentListLength = (**gPeerListHandle).dataBounds.bottom;
-    if (currentListLength > 0) {
-        LDelRow(currentListLength, 0, gPeerListHandle);
-        log_to_file_only("UpdatePeerDisplayList: Deleted %d rows from List Manager.", currentListLength);
+    currentListLengthInRows = (**gPeerListHandle).dataBounds.bottom;
+    if (currentListLengthInRows > 0) {
+        LDelRow(currentListLengthInRows, 0, gPeerListHandle);
+        log_to_file_only("UpdatePeerDisplayList: Deleted %d rows from List Manager.", currentListLengthInRows);
     }
-    int newSelectionIndex = -1;
+    Cell tempNewSelectedCell = {0, -1};
     for (int i = 0; i < MAX_PEERS; i++) {
         if (gPeerManager.peers[i].active) {
             const char *displayName = (gPeerManager.peers[i].username[0] != '\0') ? gPeerManager.peers[i].username : "???";
@@ -151,35 +173,31 @@ void UpdatePeerDisplayList(Boolean forceRedraw)
             LAddRow(1, activePeerCount, gPeerListHandle);
             SetPt(&theCell, 0, activePeerCount);
             LSetCell(peerStr, strlen(peerStr), theCell, gPeerListHandle);
-            if (hadOldSelection && strcmp(gPeerManager.peers[i].ip, oldSelectedPeerData.ip) == 0) {
-                newSelectionIndex = activePeerCount;
-                selectionStillValid = true;
+            if (hadOldSelectionData && strcmp(gPeerManager.peers[i].ip, oldSelectedPeerData.ip) == 0 &&
+                strcmp(gPeerManager.peers[i].username, oldSelectedPeerData.username) == 0) {
+                tempNewSelectedCell = theCell;
+                oldSelectionStillValidAndFound = true;
             }
             activePeerCount++;
         }
     }
     (**gPeerListHandle).dataBounds.bottom = activePeerCount;
-    if (selectionStillValid && newSelectionIndex >= 0) {
-        SetPt(&theCell, 0, newSelectionIndex);
-        LSetSelect(true, theCell, gPeerListHandle);
-        gLastSelectedCell = theCell;
-        log_to_file_only("UpdatePeerDisplayList: Reselected peer '%s' at new row %d.", oldSelectedPeerData.ip, newSelectionIndex);
+    if (oldSelectionStillValidAndFound) {
+        LSetSelect(true, tempNewSelectedCell, gPeerListHandle);
+        gLastSelectedCell = tempNewSelectedCell;
+        log_to_file_only("UpdatePeerDisplayList: Reselected peer '%s@%s' at new display row %d.", oldSelectedPeerData.username, oldSelectedPeerData.ip, gLastSelectedCell.v);
     } else {
-        if (gLastSelectedCell.v >= 0) {
-            log_to_file_only("UpdatePeerDisplayList: Selection invalidated or no previous selection.");
+        if (hadOldSelectionData) {
+             log_to_file_only("UpdatePeerDisplayList: Previous selection '%s@%s' not found/reselected or became inactive.", oldSelectedPeerData.username, oldSelectedPeerData.ip);
         }
         SetPt(&gLastSelectedCell, 0, -1);
-        if (activePeerCount > 0) {
-            Cell firstCell = {0, 0};
-            LSetSelect(false, firstCell, gPeerListHandle);
-        }
     }
     HSetState((Handle)gPeerListHandle, listState);
-    if (forceRedraw || activePeerCount != currentListLength) {
+    if (forceRedraw || activePeerCount != currentListLengthInRows || oldSelectionStillValidAndFound || (hadOldSelectionData && !oldSelectionStillValidAndFound) ) {
         GrafPtr windowPort = GetWindowPort(gMainWindow);
         if (windowPort != NULL) {
-            GrafPtr oldPort;
-            GetPort(&oldPort);
+            GrafPtr oldPortForDrawing;
+            GetPort(&oldPortForDrawing);
             SetPort(windowPort);
             listState = HGetState((Handle)gPeerListHandle);
             HLock((Handle)gPeerListHandle);
@@ -187,13 +205,13 @@ void UpdatePeerDisplayList(Boolean forceRedraw)
                 InvalRect(&(**gPeerListHandle).rView);
             }
             HSetState((Handle)gPeerListHandle, listState);
-            SetPort(oldPort);
+            SetPort(oldPortForDrawing);
             log_message("Peer list updated. Active peers: %d. Invalidating list rect.", activePeerCount);
         } else {
             log_message("Peer list updated, but cannot invalidate rect (window port is NULL).");
         }
     } else {
-        log_to_file_only("UpdatePeerDisplayList: No change in active peer count (%d), redraw not forced.", activePeerCount);
+        log_to_file_only("UpdatePeerDisplayList: No significant change detected for redraw. Active: %d, OldRows: %d.", activePeerCount, currentListLengthInRows);
     }
 }
 void HandlePeerListUpdate(DialogPtr dialog)
@@ -201,7 +219,11 @@ void HandlePeerListUpdate(DialogPtr dialog)
     if (gPeerListHandle != NULL) {
         GrafPtr windowPort = GetWindowPort(dialog);
         if (windowPort != NULL) {
+            GrafPtr oldPort;
+            GetPort(&oldPort);
+            SetPort(windowPort);
             LUpdate(windowPort->visRgn, gPeerListHandle);
+            SetPort(oldPort);
         } else {
             log_message("HandlePeerListUpdate Error: Cannot update list, window port is NULL.");
         }

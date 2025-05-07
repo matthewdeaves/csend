@@ -2,6 +2,7 @@
 #include "network.h"
 #include "logging.h"
 #include "../shared/protocol.h"
+#include "../shared/logging_shared.h"
 #include "messaging.h"
 #include <stdio.h>
 #include <string.h>
@@ -17,6 +18,7 @@ void print_help_message(void)
     printf("  /list                       - List all active peers\n");
     printf("  /send <peer_number> <msg> - Send <msg> to a specific peer from the list\n");
     printf("  /broadcast <message>        - Send <message> to all active peers\n");
+    printf("  /debug                      - Toggle detailed debug message visibility\n");
     printf("  /quit                       - Send quit notification and exit the application\n");
     printf("  /help                       - Show this help message\n\n");
     fflush(stdout);
@@ -58,6 +60,11 @@ int handle_command(app_state_t *state, const char *input)
     } else if (strcmp(input, "/help") == 0) {
         print_help_message();
         return 0;
+    } else if (strcmp(input, "/debug") == 0) {
+        Boolean current_debug_state = is_debug_output_enabled();
+        set_debug_output_enabled(!current_debug_state);
+        display_user_message("Debug output %s.", is_debug_output_enabled() ? "ENABLED" : "DISABLED");
+        return 0;
     } else if (strncmp(input, "/send ", 6) == 0) {
         int peer_num_input;
         char *msg_start;
@@ -66,14 +73,14 @@ int handle_command(app_state_t *state, const char *input)
         input_copy[BUFFER_SIZE - 1] = '\0';
         msg_start = strchr(input_copy + 6, ' ');
         if (msg_start == NULL) {
-            printf("Usage: /send <peer_number> <message>\n");
+            display_user_message("Usage: /send <peer_number> <message>");
             return 0;
         }
         *msg_start = '\0';
         peer_num_input = atoi(input_copy + 6);
         msg_start++;
         if (peer_num_input <= 0) {
-            printf("Invalid peer number. Use /list to see active peers.\n");
+            display_user_message("Invalid peer number. Use /list to see active peers.");
             return 0;
         }
         pthread_mutex_lock(&state->peers_mutex);
@@ -97,15 +104,15 @@ int handle_command(app_state_t *state, const char *input)
             if (send_message(target_ip, msg_start, MSG_TEXT, state->username) < 0) {
                 log_message("Failed to send message to %s", target_ip);
             } else {
-                log_message("Message sent to peer %d (%s)", peer_num_input, target_ip);
+                display_user_message("Message sent to peer %d (%s)", peer_num_input, target_ip);
             }
         } else {
-            log_message("Invalid peer number '%d'. Use /list to see active peers.", peer_num_input);
+            display_user_message("Invalid peer number '%d'. Use /list to see active peers.", peer_num_input);
         }
         return 0;
     } else if (strncmp(input, "/broadcast ", 11) == 0) {
         const char *message_content = input + 11;
-        log_message("Broadcasting message: %s", message_content);
+        display_user_message("Broadcasting message: %s", message_content);
         pthread_mutex_lock(&state->peers_mutex);
         int sent_count = 0;
         for (int i = 0; i < MAX_PEERS; i++) {
@@ -119,7 +126,7 @@ int handle_command(app_state_t *state, const char *input)
             }
         }
         pthread_mutex_unlock(&state->peers_mutex);
-        log_message("Broadcast message sent to %d active peer(s).", sent_count);
+        display_user_message("Broadcast message sent to %d active peer(s).", sent_count);
         return 0;
     } else if (strcmp(input, "/quit") == 0) {
         log_message("Initiating quit sequence...");
@@ -142,10 +149,10 @@ int handle_command(app_state_t *state, const char *input)
         } else {
             state->running = 0;
         }
-        log_message("Exiting application...");
+        log_message("Exiting application via /quit command...");
         return 1;
     } else {
-        log_message("Unknown command: '%s'. Type /help for available commands.", input);
+        display_user_message("Unknown command: '%s'. Type /help for available commands.", input);
         return 0;
     }
 }

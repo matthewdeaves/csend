@@ -1,5 +1,5 @@
 #ifndef PROTOCOL_H
-#define PROTOCOL_H
+#define PROTOCOL_H 
 #include "common_defs.h"
 #ifdef __MACOS__
 #include <MacTypes.h>

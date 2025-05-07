@@ -25,7 +25,7 @@ static int posix_tcp_add_or_update_peer(const char *ip, const char *username, vo
 static void posix_tcp_display_text_message(const char *username, const char *ip, const char *message_content, void *platform_context)
 {
     (void)platform_context;
-    log_message("Message from %s@%s: %s", username, ip, message_content);
+    display_user_message("%s@%s: %s", username, ip, message_content);
 }
 static void posix_tcp_mark_peer_inactive(const char *ip, void *platform_context)
 {
@@ -167,6 +167,7 @@ void *listener_thread(void *arg)
             continue;
         }
         inet_ntop(AF_INET, &client_addr.sin_addr, sender_ip, INET_ADDRSTRLEN);
+        log_message("Accepted connection from %s", sender_ip);
         memset(buffer, 0, BUFFER_SIZE);
         bytes_read = read(client_sock, buffer, BUFFER_SIZE - 1);
         if (bytes_read > 0) {

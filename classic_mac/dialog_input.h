@@ -1,5 +1,5 @@
 #ifndef DIALOG_INPUT_H
-#define DIALOG_INPUT_H
+#define DIALOG_INPUT_H 
 #include <MacTypes.h>
 #include <TextEdit.h>
 #include <Dialogs.h>
