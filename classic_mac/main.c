@@ -13,13 +13,13 @@
 #include "logging.h"
 #include "network.h"
 #include "dialog.h"
-#include "peer_mac.h"
+#include "peer.h"
 #include "dialog_peerlist.h"
 #include "dialog_input.h"
 #include "dialog_messages.h"
-#include "tcp.h"
+#include "./mactcp_messaging.h"
 #include "discovery.h"
-#include "../shared/logging_shared.h"
+#include "../shared/logging.h"
 #include <Sound.h>
 #ifndef inThumb
 #define inThumb 129

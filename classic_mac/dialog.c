@@ -1,9 +1,9 @@
 #include "dialog.h"
 #include "logging.h"
 #include "network.h"
-#include "peer_mac.h"
-#include "tcp.h"
-#include "../shared/logging_shared.h"
+#include "peer.h"
+#include "./mactcp_messaging.h"
+#include "../shared/logging.h"
 #include "../shared/protocol.h"
 #include <MacTypes.h>
 #include <Dialogs.h>

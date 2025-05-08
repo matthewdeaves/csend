@@ -1,11 +1,11 @@
-#include "tcp.h"
+#include "./mactcp_messaging.h"
 #include "logging.h"
 #include "protocol.h"
-#include "peer_mac.h"
+#include "peer.h"
 #include "dialog.h"
 #include "dialog_peerlist.h"
 #include "network.h"
-#include "../shared/messaging_logic.h"
+#include "../shared/messaging.h"
 #include <Devices.h>
 #include <Errors.h>
 #include <MacTypes.h>

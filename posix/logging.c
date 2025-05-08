@@ -1,5 +1,4 @@
 #include "logging.h"
-#include "../shared/logging_shared.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <time.h>

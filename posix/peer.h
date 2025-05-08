@@ -4,7 +4,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include "../shared/common_defs.h"
-#include "../shared/peer_shared.h"
+#include "../shared/peer.h"
 typedef struct app_state_t {
     volatile sig_atomic_t running;
     peer_manager_t peer_manager;

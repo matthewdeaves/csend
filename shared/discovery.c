@@ -1,4 +1,4 @@
-#include "discovery_logic.h"
+#include "discovery.h"
 #include "protocol.h"
 #include "logging.h"
 #include <string.h>

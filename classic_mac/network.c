@@ -1,7 +1,7 @@
 #include "network.h"
 #include "logging.h"
 #include "discovery.h"
-#include "tcp.h"
+#include "./mactcp_messaging.h"
 #include <Devices.h>
 #include <Errors.h>
 #include <string.h>

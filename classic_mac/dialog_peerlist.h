@@ -4,7 +4,7 @@
 #include <Lists.h>
 #include <Dialogs.h>
 #include <Events.h>
-#include "peer_mac.h"
+#include "peer.h"
 extern DialogPtr gMainWindow;
 extern ListHandle gPeerListHandle;
 extern Cell gLastSelectedCell;
