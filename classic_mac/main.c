@@ -21,7 +21,7 @@
 #include "dialog_input.h"
 #include "dialog_messages.h"
 #include "./mactcp_messaging.h"
-#include "discovery.h"
+#include "mactcp_discovery.h"
 #include "../shared/protocol.h"
 Boolean gDone = false;
 unsigned long gLastPeerListUpdateTime = 0;

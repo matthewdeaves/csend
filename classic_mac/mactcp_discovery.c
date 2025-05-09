@@ -1,4 +1,4 @@
-#include "discovery.h"
+#include "mactcp_discovery.h"
 #include "logging.h"
 #include "protocol.h"
 #include "../shared/discovery.h"
