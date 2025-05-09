@@ -3,8 +3,10 @@
 #include "common_defs.h"
 #ifdef __MACOS__
 #include <MacTypes.h>
+typedef UInt32 csend_uint32_t;
 #else
 #include <stdint.h>
+typedef uint32_t csend_uint32_t;
 #endif
 #define MSG_MAGIC_NUMBER 0x43534443UL
 #define MSG_DISCOVERY "DISCOVERY"
