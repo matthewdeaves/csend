@@ -159,7 +159,7 @@ void HandleSendButtonClick(void)
                     sent_count++;
                 } else {
                     log_debug("Broadcast send to %s@%s failed: %d",
-                                         gPeerManager.peers[i].username, gPeerManager.peers[i].ip, sendErr);
+                              gPeerManager.peers[i].username, gPeerManager.peers[i].ip, sendErr);
                 }
             }
         }
@@ -172,7 +172,7 @@ void HandleSendButtonClick(void)
         peer_t targetPeer;
         if (DialogPeerList_GetSelectedPeer(&targetPeer)) {
             log_debug("Attempting sync send to selected peer %s@%s: '%s'",
-                                 targetPeer.username, targetPeer.ip, inputCStr);
+                      targetPeer.username, targetPeer.ip, inputCStr);
             sendErr = MacTCP_SendMessageSync(targetPeer.ip,
                                              inputCStr,
                                              MSG_TEXT,

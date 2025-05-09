@@ -86,7 +86,7 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum)
     StreamPtr returnedStreamPtr = pbCreate.udpStream;
     unsigned short assignedPort = pbCreate.csParam.create.localPort;
     log_debug("DEBUG: After PBControlSync(UDPCreate): err=%d, StreamPtr=0x%lX, AssignedPort=%u",
-                         err, (unsigned long)returnedStreamPtr, assignedPort);
+              err, (unsigned long)returnedStreamPtr, assignedPort);
     if (err != noErr) {
         log_debug("Error (InitUDP): UDPCreate failed (Error: %d).", err);
         DisposePtr(gUDPRecvBuffer);

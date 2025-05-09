@@ -34,8 +34,8 @@ void print_peers(app_state_t *state)
         if (state->peer_manager.peers[i].active) {
             if (difftime(now, state->peer_manager.peers[i].last_seen) > PEER_TIMEOUT) {
                 log_debug("Peer %s@%s timed out (detected in print_peers).",
-                                     state->peer_manager.peers[i].username,
-                                     state->peer_manager.peers[i].ip);
+                          state->peer_manager.peers[i].username,
+                          state->peer_manager.peers[i].ip);
                 state->peer_manager.peers[i].active = 0;
                 continue;
             }

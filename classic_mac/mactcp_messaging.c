@@ -426,7 +426,7 @@ static void ProcessTCPReceive(unsigned short dataLength)
         else gTCPRecvBuffer[kTCPRecvBufferSize - 1] = '\0';
         if (parse_message(gTCPRecvBuffer, dataLength, senderIPStrFromPayload, senderUsername, msgType, content) == 0) {
             log_debug("ProcessTCPReceive: Calling shared handler for '%s' from %s@%s (payload IP: %s).",
-                             msgType, senderUsername, senderIPStrFromConnection, senderIPStrFromPayload);
+                      msgType, senderUsername, senderIPStrFromConnection, senderIPStrFromPayload);
             handle_received_tcp_message(senderIPStrFromConnection,
                                         senderUsername,
                                         msgType,

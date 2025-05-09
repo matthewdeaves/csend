@@ -26,7 +26,7 @@ Boolean InitPeerListControl(DialogPtr dialog)
     GetDialogItem(dialog, kPeerListUserItem, &itemType, &itemHandle, &destRectList);
     if (itemType == userItem) {
         log_debug("Item %d is UserItem. Rect: (%d,%d,%d,%d)", kPeerListUserItem,
-                             destRectList.top, destRectList.left, destRectList.bottom, destRectList.right);
+                  destRectList.top, destRectList.left, destRectList.bottom, destRectList.right);
         GrafPtr oldPort;
         GetPort(&oldPort);
         SetPort(GetWindowPort(dialog));
@@ -249,14 +249,14 @@ Boolean DialogPeerList_GetSelectedPeer(peer_t *outPeer)
             if (current_active_peer_index == selectedDisplayRow) {
                 *outPeer = gPeerManager.peers[i];
                 log_debug("DialogPeerList_GetSelectedPeer: Found selected peer '%s'@'%s' at display row %d (data index %d).",
-                                 (outPeer->username[0] ? outPeer->username : "???"), outPeer->ip, selectedDisplayRow, i);
+                          (outPeer->username[0] ? outPeer->username : "???"), outPeer->ip, selectedDisplayRow, i);
                 return true;
             }
             current_active_peer_index++;
         }
     }
     log_debug("DialogPeerList_GetSelectedPeer Warning: Selected row %d is out of bounds or peer became inactive (current active peers: %d).",
-                         selectedDisplayRow, current_active_peer_index);
+              selectedDisplayRow, current_active_peer_index);
     SetPt(&gLastSelectedCell, 0, -1);
     return false;
 }
@@ -285,6 +285,6 @@ void ActivatePeerList(Boolean activating)
     if (gPeerListHandle != NULL) {
         LActivate(activating, gPeerListHandle);
         log_debug("ActivatePeerList: List 0x%lX %s.",
-                         (unsigned long)gPeerListHandle, activating ? "activated" : "deactivated");
+                  (unsigned long)gPeerListHandle, activating ? "activated" : "deactivated");
     }
 }
