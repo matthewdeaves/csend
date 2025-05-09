@@ -33,13 +33,13 @@ Boolean InitDialog(void)
     Handle itemHandle;
     Rect itemRect;
     GrafPtr oldPort;
-    log_message("Loading dialog resource ID %d...", kBaseResID);
+    log_internal_message("Loading dialog resource ID %d...", kBaseResID);
     gMainWindow = GetNewDialog(kBaseResID, NULL, (WindowPtr) - 1L);
     if (gMainWindow == NULL) {
-        log_message("Fatal: GetNewDialog failed (Error: %d). Check DLOG resource ID %d.", ResError(), kBaseResID);
+        log_internal_message("Fatal: GetNewDialog failed (Error: %d). Check DLOG resource ID %d.", ResError(), kBaseResID);
         return false;
     }
-    log_message("Dialog loaded successfully (gMainWindow: 0x%lX).", (unsigned long)gMainWindow);
+    log_internal_message("Dialog loaded successfully (gMainWindow: 0x%lX).", (unsigned long)gMainWindow);
     GetPort(&oldPort);
     SetPort(GetWindowPort(gMainWindow));
     messagesOk = InitMessagesTEAndScrollbar(gMainWindow);
@@ -48,7 +48,7 @@ Boolean InitDialog(void)
     gDialogTEInitialized = (messagesOk && inputOk);
     gDialogListInitialized = listOk;
     if (!gDialogTEInitialized || !gDialogListInitialized) {
-        log_message("Error: One or more dialog components (TEs, List) failed to initialize. Cleaning up.");
+        log_internal_message("Error: One or more dialog components (TEs, List) failed to initialize. Cleaning up.");
         if (listOk) CleanupPeerListControl();
         if (inputOk) CleanupInputTE();
         if (messagesOk) CleanupMessagesTEAndScrollbar();
@@ -62,48 +62,48 @@ Boolean InitDialog(void)
         if (itemType == (ctrlItem + chkCtrl)) {
             ctrlHandle = (ControlHandle)itemHandle;
             SetControlValue(ctrlHandle, is_debug_output_enabled() ? 1 : 0);
-            log_message("Debug checkbox (Item %d) initialized to: %s", kDebugCheckbox, is_debug_output_enabled() ? "ON" : "OFF");
+            log_internal_message("Debug checkbox (Item %d) initialized to: %s", kDebugCheckbox, is_debug_output_enabled() ? "ON" : "OFF");
         } else {
-            log_message("Warning: Item %d (kDebugCheckbox) is not a checkbox (Type: %d)! Cannot set initial debug state.", kDebugCheckbox, itemType);
+            log_internal_message("Warning: Item %d (kDebugCheckbox) is not a checkbox (Type: %d)! Cannot set initial debug state.", kDebugCheckbox, itemType);
         }
     } else {
-        log_message("Warning: Item %d (kDebugCheckbox) handle is NULL! Cannot set initial state.", kDebugCheckbox);
+        log_internal_message("Warning: Item %d (kDebugCheckbox) handle is NULL! Cannot set initial state.", kDebugCheckbox);
     }
     GetDialogItem(gMainWindow, kBroadcastCheckbox, &itemType, &itemHandle, &itemRect);
     if (itemHandle != NULL) {
         if (itemType == (ctrlItem + chkCtrl)) {
             ctrlHandle = (ControlHandle)itemHandle;
             SetControlValue(ctrlHandle, 0);
-            log_message("Broadcast checkbox (Item %d) initialized to: OFF", kBroadcastCheckbox);
+            log_internal_message("Broadcast checkbox (Item %d) initialized to: OFF", kBroadcastCheckbox);
         } else {
-            log_message("Warning: Item %d (kBroadcastCheckbox) is not a checkbox (Type: %d)! Cannot set initial state.", kBroadcastCheckbox, itemType);
+            log_internal_message("Warning: Item %d (kBroadcastCheckbox) is not a checkbox (Type: %d)! Cannot set initial state.", kBroadcastCheckbox, itemType);
         }
     } else {
-        log_message("Warning: Item %d (kBroadcastCheckbox) handle is NULL! Cannot set initial state.", kBroadcastCheckbox);
+        log_internal_message("Warning: Item %d (kBroadcastCheckbox) handle is NULL! Cannot set initial state.", kBroadcastCheckbox);
     }
     UpdatePeerDisplayList(true);
-    log_message("Setting focus to input field (item %d)...", kInputTextEdit);
+    log_internal_message("Setting focus to input field (item %d)...", kInputTextEdit);
     ActivateInputTE(true);
     UpdateDialogControls();
-    log_message("Initial UpdateDialogControls() called from InitDialog.");
+    log_internal_message("Initial UpdateDialogControls() called from InitDialog.");
     SetPort(oldPort);
-    log_message("InitDialog finished successfully.");
+    log_internal_message("InitDialog finished successfully.");
     return true;
 }
 void CleanupDialog(void)
 {
-    log_message("Cleaning up Dialog...");
+    log_internal_message("Cleaning up Dialog...");
     CleanupPeerListControl();
     CleanupInputTE();
     CleanupMessagesTEAndScrollbar();
     if (gMainWindow != NULL) {
-        log_message("Disposing dialog window...");
+        log_internal_message("Disposing dialog window...");
         DisposeDialog(gMainWindow);
         gMainWindow = NULL;
     }
     gDialogTEInitialized = false;
     gDialogListInitialized = false;
-    log_message("Dialog cleanup complete.");
+    log_internal_message("Dialog cleanup complete.");
 }
 void HandleSendButtonClick(void)
 {
@@ -117,18 +117,18 @@ void HandleSendButtonClick(void)
     OSErr sendErr = noErr;
     int i;
     if (!gDialogTEInitialized || gInputTE == NULL) {
-        log_message("Error (HandleSendButtonClick): Input TE not initialized.");
+        log_internal_message("Error (HandleSendButtonClick): Input TE not initialized.");
         SysBeep(10);
         return;
     }
     if (!GetInputText(inputCStr, sizeof(inputCStr))) {
-        log_message("Error: Could not get text from input field for sending.");
+        log_internal_message("Error: Could not get text from input field for sending.");
         SysBeep(10);
         ActivateInputTE(true);
         return;
     }
     if (strlen(inputCStr) == 0) {
-        log_message("Send Action: Input field is empty. No action taken.");
+        log_internal_message("Send Action: Input field is empty. No action taken.");
         ActivateInputTE(true);
         return;
     }
@@ -139,11 +139,11 @@ void HandleSendButtonClick(void)
         isBroadcast = (GetControlValue(broadcastCheckboxHandle) == 1);
         log_to_file_only("Broadcast checkbox state: %s", isBroadcast ? "Checked" : "Unchecked");
     } else {
-        log_message("Warning: Broadcast item %d is not a checkbox or handle is NULL! Assuming not broadcast.", kBroadcastCheckbox);
+        log_internal_message("Warning: Broadcast item %d is not a checkbox or handle is NULL! Assuming not broadcast.", kBroadcastCheckbox);
     }
     if (isBroadcast) {
         int sent_count = 0;
-        log_message("Attempting broadcast of: '%s'", inputCStr);
+        log_internal_message("Attempting broadcast of: '%s'", inputCStr);
         sprintf(displayMsg, "You (Broadcast): %s", inputCStr);
         AppendToMessagesTE(displayMsg);
         AppendToMessagesTE("\r");
@@ -158,21 +158,21 @@ void HandleSendButtonClick(void)
                 if (sendErr == noErr) {
                     sent_count++;
                 } else {
-                    log_message("Broadcast send to %s@%s failed: %d",
-                                gPeerManager.peers[i].username, gPeerManager.peers[i].ip, sendErr);
+                    log_internal_message("Broadcast send to %s@%s failed: %d",
+                                         gPeerManager.peers[i].username, gPeerManager.peers[i].ip, sendErr);
                 }
             }
         }
         sprintf(displayMsg, "Broadcast sent to %d active peer(s).", sent_count);
         AppendToMessagesTE(displayMsg);
         AppendToMessagesTE("\r");
-        log_message("Broadcast of '%s' completed. Sent to %d peers.", inputCStr, sent_count);
+        log_internal_message("Broadcast of '%s' completed. Sent to %d peers.", inputCStr, sent_count);
         ClearInputText();
     } else {
         peer_t targetPeer;
         if (DialogPeerList_GetSelectedPeer(&targetPeer)) {
-            log_message("Attempting sync send to selected peer %s@%s: '%s'",
-                        targetPeer.username, targetPeer.ip, inputCStr);
+            log_internal_message("Attempting sync send to selected peer %s@%s: '%s'",
+                                 targetPeer.username, targetPeer.ip, inputCStr);
             sendErr = MacTCP_SendMessageSync(targetPeer.ip,
                                              inputCStr,
                                              MSG_TEXT,
@@ -183,7 +183,7 @@ void HandleSendButtonClick(void)
                 sprintf(displayMsg, "You (to %s): %s", targetPeer.username, inputCStr);
                 AppendToMessagesTE(displayMsg);
                 AppendToMessagesTE("\r");
-                log_message("Sync send completed successfully.");
+                log_internal_message("Sync send completed successfully.");
                 ClearInputText();
             } else {
                 if (sendErr == streamBusyErr) {
@@ -193,11 +193,11 @@ void HandleSendButtonClick(void)
                 }
                 AppendToMessagesTE(displayMsg);
                 AppendToMessagesTE("\r");
-                log_message("Error sending message to %s: %d", targetPeer.ip, sendErr);
+                log_internal_message("Error sending message to %s: %d", targetPeer.ip, sendErr);
                 SysBeep(10);
             }
         } else {
-            log_message("Error: Cannot send, no peer selected in the list or selection invalid.");
+            log_internal_message("Error: Cannot send, no peer selected in the list or selection invalid.");
             AppendToMessagesTE("Please select a peer to send to, or check Broadcast.\r");
             SysBeep(10);
         }
@@ -214,7 +214,7 @@ void UpdateDialogControls(void)
     GrafPtr oldPort;
     GrafPtr windowPort = GetWindowPort(gMainWindow);
     if (windowPort == NULL) {
-        log_message("UpdateDialogControls Error: Window port is NULL for gMainWindow!");
+        log_internal_message("UpdateDialogControls Error: Window port is NULL for gMainWindow!");
         return;
     }
     GetPort(&oldPort);

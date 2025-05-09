@@ -22,11 +22,11 @@ Boolean InitPeerListControl(DialogPtr dialog)
     Point cellSize;
     FontInfo fontInfo;
     Boolean listOk = false;
-    log_message("Initializing Peer List Control...");
+    log_internal_message("Initializing Peer List Control...");
     GetDialogItem(dialog, kPeerListUserItem, &itemType, &itemHandle, &destRectList);
     if (itemType == userItem) {
-        log_message("Item %d is UserItem. Rect: (%d,%d,%d,%d)", kPeerListUserItem,
-                    destRectList.top, destRectList.left, destRectList.bottom, destRectList.right);
+        log_internal_message("Item %d is UserItem. Rect: (%d,%d,%d,%d)", kPeerListUserItem,
+                             destRectList.top, destRectList.left, destRectList.bottom, destRectList.right);
         GrafPtr oldPort;
         GetPort(&oldPort);
         SetPort(GetWindowPort(dialog));
@@ -34,28 +34,28 @@ Boolean InitPeerListControl(DialogPtr dialog)
         SetPort(oldPort);
         cellSize.v = fontInfo.ascent + fontInfo.descent + fontInfo.leading;
         if (cellSize.v <= 0) {
-            log_message("Warning: Calculated cell height is %d, using default 12.", cellSize.v);
+            log_internal_message("Warning: Calculated cell height is %d, using default 12.", cellSize.v);
             cellSize.v = 12;
         }
         cellSize.h = destRectList.right - destRectList.left;
         SetRect(&dataBounds, 0, 0, 1, 0);
-        log_message("Calling LNew for Peer List (Cell Size: H%d, V%d)...", cellSize.h, cellSize.v);
+        log_internal_message("Calling LNew for Peer List (Cell Size: H%d, V%d)...", cellSize.h, cellSize.v);
         gPeerListHandle = LNew(&destRectList, &dataBounds, cellSize, 0, (WindowPtr)dialog,
                                true,
                                false,
                                false,
                                true);
         if (gPeerListHandle == NULL) {
-            log_message("CRITICAL ERROR: LNew failed for Peer List! (Error: %d)", ResError());
+            log_internal_message("CRITICAL ERROR: LNew failed for Peer List! (Error: %d)", ResError());
             listOk = false;
         } else {
-            log_message("LNew succeeded for Peer List. Handle: 0x%lX", (unsigned long)gPeerListHandle);
+            log_internal_message("LNew succeeded for Peer List. Handle: 0x%lX", (unsigned long)gPeerListHandle);
             (*gPeerListHandle)->selFlags = lOnlyOne;
             LActivate(true, gPeerListHandle);
             listOk = true;
         }
     } else {
-        log_message("ERROR: Item %d is NOT a UserItem (Type: %d)! Expected UserItem for LNew.", kPeerListUserItem, itemType);
+        log_internal_message("ERROR: Item %d is NOT a UserItem (Type: %d)! Expected UserItem for LNew.", kPeerListUserItem, itemType);
         gPeerListHandle = NULL;
         listOk = false;
     }
@@ -63,14 +63,14 @@ Boolean InitPeerListControl(DialogPtr dialog)
 }
 void CleanupPeerListControl(void)
 {
-    log_message("Cleaning up Peer List Control...");
+    log_internal_message("Cleaning up Peer List Control...");
     if (gPeerListHandle != NULL) {
         LActivate(false, gPeerListHandle);
         LDispose(gPeerListHandle);
         gPeerListHandle = NULL;
     }
     gLastSelectedCell.v = -1;
-    log_message("Peer List Control cleanup finished.");
+    log_internal_message("Peer List Control cleanup finished.");
 }
 Boolean HandlePeerListClick(DialogPtr dialog, EventRecord *theEvent)
 {
@@ -85,7 +85,7 @@ Boolean HandlePeerListClick(DialogPtr dialog, EventRecord *theEvent)
         SignedByte listState = HGetState((Handle)gPeerListHandle);
         HLock((Handle)gPeerListHandle);
         if (*gPeerListHandle == NULL) {
-            log_message("HandlePeerListClick Error: gPeerListHandle deref failed after HLock!");
+            log_internal_message("HandlePeerListClick Error: gPeerListHandle deref failed after HLock!");
             HSetState((Handle)gPeerListHandle, listState);
             return false;
         }
@@ -111,7 +111,7 @@ Boolean HandlePeerListClick(DialogPtr dialog, EventRecord *theEvent)
                         broadcastCheckboxHandle = (ControlHandle)itemHandle;
                         SetControlValue(broadcastCheckboxHandle, 0);
                     } else {
-                        log_message("HandlePeerListClick: Could not find/set broadcast checkbox (item %d).", kBroadcastCheckbox);
+                        log_internal_message("HandlePeerListClick: Could not find/set broadcast checkbox (item %d).", kBroadcastCheckbox);
                     }
                     SetPort(clickOldPort);
                 } else {
@@ -140,7 +140,7 @@ void UpdatePeerDisplayList(Boolean forceRedraw)
     peer_t oldSelectedPeerData;
     Boolean hadOldSelectionData = false;
     if (gPeerListHandle == NULL) {
-        log_message("Skipping UpdatePeerDisplayList: List not initialized.");
+        log_internal_message("Skipping UpdatePeerDisplayList: List not initialized.");
         return;
     }
     if (gLastSelectedCell.v >= 0) {
@@ -157,7 +157,7 @@ void UpdatePeerDisplayList(Boolean forceRedraw)
     listState = HGetState((Handle)gPeerListHandle);
     HLock((Handle)gPeerListHandle);
     if (*gPeerListHandle == NULL) {
-        log_message("UpdatePeerDisplayList Error: gPeerListHandle deref failed after HLock!");
+        log_internal_message("UpdatePeerDisplayList Error: gPeerListHandle deref failed after HLock!");
         HSetState((Handle)gPeerListHandle, listState);
         return;
     }
@@ -210,9 +210,9 @@ void UpdatePeerDisplayList(Boolean forceRedraw)
             }
             HSetState((Handle)gPeerListHandle, listState);
             SetPort(oldPortForDrawing);
-            log_message("Peer list updated. Active peers: %d. Invalidating list rect.", activePeerCount);
+            log_internal_message("Peer list updated. Active peers: %d. Invalidating list rect.", activePeerCount);
         } else {
-            log_message("Peer list updated, but cannot invalidate rect (window port is NULL).");
+            log_internal_message("Peer list updated, but cannot invalidate rect (window port is NULL).");
         }
     } else {
         log_to_file_only("UpdatePeerDisplayList: No significant change detected for redraw. Active: %d, OldRows: %d.", activePeerCount, currentListLengthInRows);
@@ -229,7 +229,7 @@ void HandlePeerListUpdate(DialogPtr dialog)
             LUpdate(windowPort->visRgn, gPeerListHandle);
             SetPort(oldPort);
         } else {
-            log_message("HandlePeerListUpdate Error: Cannot update list, window port is NULL.");
+            log_internal_message("HandlePeerListUpdate Error: Cannot update list, window port is NULL.");
         }
     }
 }
@@ -255,8 +255,8 @@ Boolean DialogPeerList_GetSelectedPeer(peer_t *outPeer)
             current_active_peer_index++;
         }
     }
-    log_message("DialogPeerList_GetSelectedPeer Warning: Selected row %d is out of bounds or peer became inactive (current active peers: %d).",
-                selectedDisplayRow, current_active_peer_index);
+    log_internal_message("DialogPeerList_GetSelectedPeer Warning: Selected row %d is out of bounds or peer became inactive (current active peers: %d).",
+                         selectedDisplayRow, current_active_peer_index);
     SetPt(&gLastSelectedCell, 0, -1);
     return false;
 }

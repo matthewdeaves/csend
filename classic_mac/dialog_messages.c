@@ -34,12 +34,12 @@ pascal void MyScrollAction(ControlHandle theControl, short partCode)
         if (partCode != 0 && partCode != kControlIndicatorPart) {
             HandleMessagesScrollClick(theControl, partCode);
         } else if (partCode == kControlIndicatorPart) {
-            log_message("MyScrollAction: WARNING - Called with inThumb (part %d) for control 0x%lX. Main.c should handle this.",
-                        partCode, (unsigned long)theControl);
+            log_internal_message("MyScrollAction: WARNING - Called with inThumb (part %d) for control 0x%lX. Main.c should handle this.",
+                                 partCode, (unsigned long)theControl);
         }
     } else {
-        log_message("MyScrollAction: Called for unexpected control 0x%lX, part %d",
-                    (unsigned long)theControl, partCode);
+        log_internal_message("MyScrollAction: Called for unexpected control 0x%lX, part %d",
+                             (unsigned long)theControl, partCode);
     }
 }
 Boolean InitMessagesTEAndScrollbar(DialogPtr dialog)
@@ -50,30 +50,30 @@ Boolean InitMessagesTEAndScrollbar(DialogPtr dialog)
     Rect scrollBarRect;
     Boolean teOk = false;
     Boolean scrollBarOk = false;
-    log_message("Initializing Messages TE...");
+    log_internal_message("Initializing Messages TE...");
     GetDialogItem(dialog, kMessagesTextEdit, &itemType, &itemHandle, &destRectMessages);
     if (itemType == userItem) {
         viewRectMessages = destRectMessages;
         gMessagesTE = TENew(&destRectMessages, &viewRectMessages);
         if (gMessagesTE == NULL) {
-            log_message("CRITICAL ERROR: TENew failed for Messages TE! Out of memory?");
+            log_internal_message("CRITICAL ERROR: TENew failed for Messages TE! Out of memory?");
             teOk = false;
         } else {
-            log_message("TENew succeeded for Messages TE. Handle: 0x%lX", (unsigned long)gMessagesTE);
+            log_internal_message("TENew succeeded for Messages TE. Handle: 0x%lX", (unsigned long)gMessagesTE);
             TEAutoView(false, gMessagesTE);
             teOk = true;
         }
     } else {
-        log_message("ERROR: Item %d is NOT a UserItem (Type: %d)! Expected UserItem for TENew.", kMessagesTextEdit, itemType);
+        log_internal_message("ERROR: Item %d is NOT a UserItem (Type: %d)! Expected UserItem for TENew.", kMessagesTextEdit, itemType);
         gMessagesTE = NULL;
         teOk = false;
     }
     if (teOk) {
-        log_message("Initializing Messages Scrollbar...");
+        log_internal_message("Initializing Messages Scrollbar...");
         GetDialogItem(dialog, kMessagesScrollbar, &itemType, &itemHandle, &scrollBarRect);
         if (itemHandle != NULL) {
             gMessagesScrollBar = (ControlHandle)itemHandle;
-            log_message("Scrollbar handle obtained: 0x%lX (ItemType was %d).", (unsigned long)gMessagesScrollBar, itemType);
+            log_internal_message("Scrollbar handle obtained: 0x%lX (ItemType was %d).", (unsigned long)gMessagesScrollBar, itemType);
             SetControlMinimum(gMessagesScrollBar, 0);
             SetControlMaximum(gMessagesScrollBar, 0);
             SetControlValue(gMessagesScrollBar, 0);
@@ -81,7 +81,7 @@ Boolean InitMessagesTEAndScrollbar(DialogPtr dialog)
             HiliteControl(gMessagesScrollBar, 255);
             scrollBarOk = true;
         } else {
-            log_message("ERROR: Item %d (Messages Scrollbar) handle is NULL! Check DITL resource.", kMessagesScrollbar);
+            log_internal_message("ERROR: Item %d (Messages Scrollbar) handle is NULL! Check DITL resource.", kMessagesScrollbar);
             gMessagesScrollBar = NULL;
             scrollBarOk = false;
             TEDispose(gMessagesTE);
@@ -93,20 +93,20 @@ Boolean InitMessagesTEAndScrollbar(DialogPtr dialog)
 }
 void CleanupMessagesTEAndScrollbar(void)
 {
-    log_message("Cleaning up Messages TE...");
+    log_internal_message("Cleaning up Messages TE...");
     if (gMessagesTE != NULL) {
         TEDispose(gMessagesTE);
         gMessagesTE = NULL;
     }
     gMessagesScrollBar = NULL;
-    log_message("Messages TE cleanup finished.");
+    log_internal_message("Messages TE cleanup finished.");
 }
 void AppendToMessagesTE(const char *text)
 {
     GrafPtr oldPort;
     Boolean scrolledToBottom = false;
     if (gMessagesTE == NULL) {
-        log_message("AppendToMessagesTE: gMessagesTE is NULL. Cannot append.");
+        log_internal_message("AppendToMessagesTE: gMessagesTE is NULL. Cannot append.");
         return;
     }
     if (text == NULL || text[0] == '\0') {
@@ -116,7 +116,7 @@ void AppendToMessagesTE(const char *text)
     if (gMainWindow != NULL) {
         SetPort(GetWindowPort(gMainWindow));
     } else {
-        log_message("AppendToMessagesTE Warning: gMainWindow is NULL! Port not set.");
+        log_internal_message("AppendToMessagesTE Warning: gMainWindow is NULL! Port not set.");
     }
     SignedByte teState = HGetState((Handle)gMessagesTE);
     HLock((Handle)gMessagesTE);
@@ -140,10 +140,10 @@ void AppendToMessagesTE(const char *text)
                 ScrollMessagesTEToValue(newMaxScroll);
             }
         } else {
-            log_message("Warning: Messages TE field near full. Cannot append.");
+            log_internal_message("Warning: Messages TE field near full. Cannot append.");
         }
     } else {
-        log_message("ERROR in AppendToMessagesTE: *gMessagesTE is NULL after HLock!");
+        log_internal_message("ERROR in AppendToMessagesTE: *gMessagesTE is NULL after HLock!");
     }
     HSetState((Handle)gMessagesTE, teState);
     SetPort(oldPort);
@@ -192,7 +192,7 @@ void AdjustMessagesScrollbar(void)
         }
         HiliteControl(gMessagesScrollBar, hiliteValue);
     } else {
-        log_message("AdjustMessagesScrollbar Error: gMessagesTE deref failed!");
+        log_internal_message("AdjustMessagesScrollbar Error: gMessagesTE deref failed!");
     }
     HSetState((Handle)gMessagesTE, teState);
 }
@@ -212,7 +212,7 @@ void HandleMessagesScrollClick(ControlHandle theControl, short partCode)
     SignedByte teState = HGetState((Handle)gMessagesTE);
     HLock((Handle)gMessagesTE);
     if (*gMessagesTE == NULL) {
-        log_message("HandleMessagesScrollClick Error: gMessagesTE dereference failed!");
+        log_internal_message("HandleMessagesScrollClick Error: gMessagesTE dereference failed!");
         HSetState((Handle)gMessagesTE, teState);
         return;
     }
@@ -220,7 +220,7 @@ void HandleMessagesScrollClick(ControlHandle theControl, short partCode)
     viewHeight = (**gMessagesTE).viewRect.bottom - (**gMessagesTE).viewRect.top;
     HSetState((Handle)gMessagesTE, teState);
     if (lineHeight <= 0) {
-        log_message("HandleMessagesScrollClick Warning: lineHeight is %d! Cannot scroll.", lineHeight);
+        log_internal_message("HandleMessagesScrollClick Warning: lineHeight is %d! Cannot scroll.", lineHeight);
         return;
     }
     pageScroll = viewHeight / lineHeight;
@@ -260,13 +260,13 @@ void ScrollMessagesTEToValue(short newScrollValue)
     SignedByte teState = HGetState((Handle)gMessagesTE);
     HLock((Handle)gMessagesTE);
     if (*gMessagesTE == NULL) {
-        log_message("ScrollMessagesTEToValue Error: gMessagesTE deref failed!");
+        log_internal_message("ScrollMessagesTEToValue Error: gMessagesTE deref failed!");
         HSetState((Handle)gMessagesTE, teState);
         return;
     }
     short lineHeight = (**gMessagesTE).lineHeight;
     if (lineHeight <= 0) {
-        log_message("ScrollMessagesTEToValue Warning: lineHeight is %d! Cannot scroll.", lineHeight);
+        log_internal_message("ScrollMessagesTEToValue Warning: lineHeight is %d! Cannot scroll.", lineHeight);
         HSetState((Handle)gMessagesTE, teState);
         return;
     }
@@ -322,7 +322,7 @@ void ScrollMessagesTE(short deltaPixels)
         if (gMainWindow != NULL) {
             SetPort(GetWindowPort(gMainWindow));
         } else {
-            log_message("ScrollMessagesTE Warning: gMainWindow is NULL! Port not set.");
+            log_internal_message("ScrollMessagesTE Warning: gMainWindow is NULL! Port not set.");
         }
         SignedByte teState = HGetState((Handle)gMessagesTE);
         HLock((Handle)gMessagesTE);
@@ -331,7 +331,7 @@ void ScrollMessagesTE(short deltaPixels)
             TEScroll(0, deltaPixels, gMessagesTE);
             InvalRect(&viewRectToInvalidate);
         } else {
-            log_message("ScrollMessagesTE Error: gMessagesTE dereference failed before TEScroll!");
+            log_internal_message("ScrollMessagesTE Error: gMessagesTE dereference failed before TEScroll!");
         }
         HSetState((Handle)gMessagesTE, teState);
         SetPort(oldPort);
