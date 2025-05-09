@@ -10,6 +10,7 @@
 #define ipctlGetAddr 15
 extern short gMacTCPRefNum;
 extern ip_addr gMyLocalIP;
+extern char gMyUsername[32];
 extern char gMyLocalIPStr[INET_ADDRSTRLEN];
 extern char gMyUsername[32];
 OSErr InitializeNetworking(void);
