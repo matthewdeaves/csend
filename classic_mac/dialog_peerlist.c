@@ -148,10 +148,10 @@ void UpdatePeerDisplayList(Boolean forceRedraw)
         if (hadOldSelectionData) {
             log_to_file_only("UpdatePeerDisplayList: Attempting to preserve selection for peer %s@%s (was display row %d).", oldSelectedPeerData.username, oldSelectedPeerData.ip, gLastSelectedCell.v);
         } else {
-            log_to_file_only("UpdatePeerDisplayList: gLastSelectedCell.v was %d, but DialogPeerList_GetSelectedPeer failed. No specific peer to preserve.", gLastSelectedCell.v );
+            log_to_file_only("UpdatePeerDisplayList: gLastSelectedCell.v was %d, but DialogPeerList_GetSelectedPeer failed. No specific peer to preserve.", gLastSelectedCell.v);
         }
     } else {
-         log_to_file_only("UpdatePeerDisplayList: No prior selection (gLastSelectedCell.v = %d).", gLastSelectedCell.v);
+        log_to_file_only("UpdatePeerDisplayList: No prior selection (gLastSelectedCell.v = %d).", gLastSelectedCell.v);
     }
     PruneTimedOutPeers();
     listState = HGetState((Handle)gPeerListHandle);
@@ -175,8 +175,8 @@ void UpdatePeerDisplayList(Boolean forceRedraw)
             SetPt(&theCell, 0, activePeerCount);
             LSetCell(peerStr, strlen(peerStr), theCell, gPeerListHandle);
             if (hadOldSelectionData &&
-                strcmp(gPeerManager.peers[i].ip, oldSelectedPeerData.ip) == 0 &&
-                strcmp(gPeerManager.peers[i].username, oldSelectedPeerData.username) == 0) {
+                    strcmp(gPeerManager.peers[i].ip, oldSelectedPeerData.ip) == 0 &&
+                    strcmp(gPeerManager.peers[i].username, oldSelectedPeerData.username) == 0) {
                 tempNewSelectedCell = theCell;
                 oldSelectionStillValidAndFound = true;
             }
@@ -190,14 +190,14 @@ void UpdatePeerDisplayList(Boolean forceRedraw)
         log_to_file_only("UpdatePeerDisplayList: Reselected peer '%s@%s' at new display row %d.", oldSelectedPeerData.username, oldSelectedPeerData.ip, gLastSelectedCell.v);
     } else {
         if (hadOldSelectionData) {
-             log_to_file_only("UpdatePeerDisplayList: Previous selection '%s@%s' not found/reselected or became inactive.", oldSelectedPeerData.username, oldSelectedPeerData.ip);
+            log_to_file_only("UpdatePeerDisplayList: Previous selection '%s@%s' not found/reselected or became inactive.", oldSelectedPeerData.username, oldSelectedPeerData.ip);
         }
         if (!oldSelectionStillValidAndFound) {
-             SetPt(&gLastSelectedCell, 0, -1);
+            SetPt(&gLastSelectedCell, 0, -1);
         }
     }
     HSetState((Handle)gPeerListHandle, listState);
-    if (forceRedraw || activePeerCount != currentListLengthInRows || oldSelectionStillValidAndFound || (hadOldSelectionData && !oldSelectionStillValidAndFound) ) {
+    if (forceRedraw || activePeerCount != currentListLengthInRows || oldSelectionStillValidAndFound || (hadOldSelectionData && !oldSelectionStillValidAndFound)) {
         GrafPtr windowPort = GetWindowPort(gMainWindow);
         if (windowPort != NULL) {
             GrafPtr oldPortForDrawing;
@@ -260,7 +260,8 @@ Boolean DialogPeerList_GetSelectedPeer(peer_t *outPeer)
     SetPt(&gLastSelectedCell, 0, -1);
     return false;
 }
-void DialogPeerList_DeselectAll(void) {
+void DialogPeerList_DeselectAll(void)
+{
     if (gPeerListHandle != NULL && gLastSelectedCell.v >= 0) {
         GrafPtr oldPortForList;
         GetPort(&oldPortForList);

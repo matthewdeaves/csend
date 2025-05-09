@@ -1,5 +1,5 @@
 #ifndef DIALOG_INPUT_H
-#define DIALOG_INPUT_H 
+#define DIALOG_INPUT_H
 #include <MacTypes.h>
 #include <TextEdit.h>
 #include <Dialogs.h>
@@ -13,4 +13,6 @@ void HandleInputTEUpdate(DialogPtr dialog);
 void ActivateInputTE(Boolean activating);
 Boolean GetInputText(char *buffer, short bufferSize);
 void ClearInputText(void);
+void IdleInputTE(void);
+Boolean HandleInputTEKeyDown(EventRecord *theEvent);
 #endif

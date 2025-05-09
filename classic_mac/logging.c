@@ -7,7 +7,8 @@
 #include <MacTypes.h>
 FILE *gLogFile = NULL;
 static Boolean gLoggingToTEInProgress = false;
-static void _write_to_log_file(const char *format, va_list args) {
+static void _write_to_log_file(const char *format, va_list args)
+{
     char buffer[512];
     if (gLogFile == NULL) {
         gLogFile = fopen(kLogFileName, "a");
@@ -19,7 +20,8 @@ static void _write_to_log_file(const char *format, va_list args) {
     fprintf(gLogFile, "%s\n", buffer);
     fflush(gLogFile);
 }
-static void _write_to_messages_te(const char *text_to_append) {
+static void _write_to_messages_te(const char *text_to_append)
+{
     if (gMainWindow != NULL && gMessagesTE != NULL && gDialogTEInitialized && !gLoggingToTEInProgress) {
         gLoggingToTEInProgress = true;
         AppendToMessagesTE(text_to_append);
@@ -27,7 +29,8 @@ static void _write_to_messages_te(const char *text_to_append) {
         gLoggingToTEInProgress = false;
     }
 }
-void InitLogFile(void) {
+void InitLogFile(void)
+{
     if (gLogFile != NULL) {
         fclose(gLogFile);
         gLogFile = NULL;
@@ -40,7 +43,8 @@ void InitLogFile(void) {
         fflush(gLogFile);
     }
 }
-void CloseLogFile(void) {
+void CloseLogFile(void)
+{
     if (gLogFile != NULL) {
         fprintf(gLogFile, "--- Log Session Ended ---\n\n");
         fflush(gLogFile);
@@ -48,7 +52,8 @@ void CloseLogFile(void) {
         gLogFile = NULL;
     }
 }
-void log_message(const char *format, ...) {
+void log_message(const char *format, ...)
+{
     va_list args_for_file, args_for_te;
     char buffer_for_te[512];
     va_start(args_for_file, format);
@@ -61,7 +66,8 @@ void log_message(const char *format, ...) {
         _write_to_messages_te(buffer_for_te);
     }
 }
-void display_user_message(const char *format, ...) {
+void display_user_message(const char *format, ...)
+{
     va_list args_for_file, args_for_te;
     char buffer_for_te_and_file[512];
     va_start(args_for_te, format);
@@ -72,7 +78,8 @@ void display_user_message(const char *format, ...) {
     va_end(args_for_file);
     _write_to_messages_te(buffer_for_te_and_file);
 }
-void log_to_file_only(const char *format, ...) {
+void log_to_file_only(const char *format, ...)
+{
     va_list args;
     va_start(args, format);
     _write_to_log_file(format, args);

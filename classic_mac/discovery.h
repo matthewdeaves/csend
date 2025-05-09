@@ -1,5 +1,5 @@
 #ifndef DISCOVERY_H
-#define DISCOVERY_H 
+#define DISCOVERY_H
 #include <MacTypes.h>
 #include <Devices.h>
 #include <MacTCP.h>

@@ -200,7 +200,7 @@ void HandleMessagesScrollClick(ControlHandle theControl, short partCode)
 {
     if (gMessagesTE == NULL || partCode == 0 || partCode == kControlIndicatorPart) {
         if (partCode == kControlIndicatorPart) {
-             log_to_file_only("HandleMessagesScrollClick: Received inThumb (part %d), ignoring as main.c handles it.", partCode);
+            log_to_file_only("HandleMessagesScrollClick: Received inThumb (part %d), ignoring as main.c handles it.", partCode);
         }
         return;
     }
@@ -229,13 +229,21 @@ void HandleMessagesScrollClick(ControlHandle theControl, short partCode)
     currentScroll = GetControlValue(theControl);
     maxScroll = GetControlMaximum(theControl);
     switch (partCode) {
-        case inUpButton: linesToScroll = -1; break;
-        case inDownButton: linesToScroll = 1; break;
-        case inPageUp: linesToScroll = -pageScroll; break;
-        case inPageDown: linesToScroll = pageScroll; break;
-        default:
-            log_to_file_only("HandleMessagesScrollClick: Ignoring unknown partCode %d", partCode);
-            return;
+    case inUpButton:
+        linesToScroll = -1;
+        break;
+    case inDownButton:
+        linesToScroll = 1;
+        break;
+    case inPageUp:
+        linesToScroll = -pageScroll;
+        break;
+    case inPageDown:
+        linesToScroll = pageScroll;
+        break;
+    default:
+        log_to_file_only("HandleMessagesScrollClick: Ignoring unknown partCode %d", partCode);
+        return;
     }
     newScroll = currentScroll + linesToScroll;
     if (newScroll < 0) newScroll = 0;
@@ -246,7 +254,8 @@ void HandleMessagesScrollClick(ControlHandle theControl, short partCode)
         ScrollMessagesTE(scrollDeltaPixels);
     }
 }
-void ScrollMessagesTEToValue(short newScrollValue) {
+void ScrollMessagesTEToValue(short newScrollValue)
+{
     if (gMessagesTE == NULL) return;
     SignedByte teState = HGetState((Handle)gMessagesTE);
     HLock((Handle)gMessagesTE);

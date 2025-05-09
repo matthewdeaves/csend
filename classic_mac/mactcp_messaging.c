@@ -185,124 +185,128 @@ void PollTCP(GiveTimePtr giveTime)
         return;
     }
     switch (gTCPState) {
-        case TCP_STATE_IDLE:
-            log_to_file_only("PollTCP: State IDLE. Attempting ASYNC Passive Open (ULP: %ds)...", kTCPPassiveOpenULPTimeoutSeconds);
-            if (!gPassiveOpenPBInitialized) {
-                log_message("PollTCP CRITICAL: gTCPPassiveOpenPB not initialized!");
-                gTCPState = TCP_STATE_ERROR;
-                break;
-            }
-            gTCPPassiveOpenPB.csCode = TCPPassiveOpen;
-            gTCPPassiveOpenPB.csParam.open.ulpTimeoutValue = kTCPPassiveOpenULPTimeoutSeconds;
-            gTCPPassiveOpenPB.csParam.open.ulpTimeoutAction = AbortTrue;
-            gTCPPassiveOpenPB.csParam.open.validityFlags = timeoutValue | timeoutAction;
-            gTCPPassiveOpenPB.csParam.open.localPort = PORT_TCP;
-            gTCPPassiveOpenPB.csParam.open.localHost = 0L;
-            gTCPPassiveOpenPB.csParam.open.remoteHost = 0L;
-            gTCPPassiveOpenPB.csParam.open.remotePort = 0;
-            gTCPPassiveOpenPB.csParam.open.tosFlags = 0;
-            gTCPPassiveOpenPB.csParam.open.precedence = 0;
-            gTCPPassiveOpenPB.csParam.open.dontFrag = false;
-            gTCPPassiveOpenPB.csParam.open.timeToLive = 0;
-            gTCPPassiveOpenPB.csParam.open.security = 0;
-            gTCPPassiveOpenPB.csParam.open.optionCnt = 0;
-            gTCPPassiveOpenPB.csParam.open.commandTimeoutValue = 0;
-            gTCPPassiveOpenPB.ioResult = 1;
-            err = PBControlAsync((ParmBlkPtr)&gTCPPassiveOpenPB);
-            if (err == noErr) {
-                log_to_file_only("PollTCP: Async TCPPassiveOpen initiated.");
-                gTCPState = TCP_STATE_PASSIVE_OPEN_PENDING;
-            } else {
-                log_message("PollTCP: PBControlAsync(TCPPassiveOpen) failed immediately: %d. Retrying after delay.", err);
-                gTCPState = TCP_STATE_IDLE;
-                Delay(kErrorRetryDelayTicks, &dummyTimer);
-            }
+    case TCP_STATE_IDLE:
+        log_to_file_only("PollTCP: State IDLE. Attempting ASYNC Passive Open (ULP: %ds)...", kTCPPassiveOpenULPTimeoutSeconds);
+        if (!gPassiveOpenPBInitialized) {
+            log_message("PollTCP CRITICAL: gTCPPassiveOpenPB not initialized!");
+            gTCPState = TCP_STATE_ERROR;
             break;
-        case TCP_STATE_PASSIVE_OPEN_PENDING:
-            giveTime();
-            if (gTCPPassiveOpenPB.ioResult == 1) {
-                return;
-            }
-            if (gTCPPassiveOpenPB.ioResult == noErr) {
-                gPeerIP = gTCPPassiveOpenPB.csParam.open.remoteHost;
-                gPeerPort = gTCPPassiveOpenPB.csParam.open.remotePort;
-                char senderIPStr[INET_ADDRSTRLEN];
-                AddrToStr(gPeerIP, senderIPStr);
-                log_message("PollTCP: Incoming connection from %s:%u.", senderIPStr, gPeerPort);
-                gTCPState = TCP_STATE_CONNECTED_IN;
-                goto CheckConnectedInData;
+        }
+        gTCPPassiveOpenPB.csCode = TCPPassiveOpen;
+        gTCPPassiveOpenPB.csParam.open.ulpTimeoutValue = kTCPPassiveOpenULPTimeoutSeconds;
+        gTCPPassiveOpenPB.csParam.open.ulpTimeoutAction = AbortTrue;
+        gTCPPassiveOpenPB.csParam.open.validityFlags = timeoutValue | timeoutAction;
+        gTCPPassiveOpenPB.csParam.open.localPort = PORT_TCP;
+        gTCPPassiveOpenPB.csParam.open.localHost = 0L;
+        gTCPPassiveOpenPB.csParam.open.remoteHost = 0L;
+        gTCPPassiveOpenPB.csParam.open.remotePort = 0;
+        gTCPPassiveOpenPB.csParam.open.tosFlags = 0;
+        gTCPPassiveOpenPB.csParam.open.precedence = 0;
+        gTCPPassiveOpenPB.csParam.open.dontFrag = false;
+        gTCPPassiveOpenPB.csParam.open.timeToLive = 0;
+        gTCPPassiveOpenPB.csParam.open.security = 0;
+        gTCPPassiveOpenPB.csParam.open.optionCnt = 0;
+        gTCPPassiveOpenPB.csParam.open.commandTimeoutValue = 0;
+        gTCPPassiveOpenPB.ioResult = 1;
+        err = PBControlAsync((ParmBlkPtr)&gTCPPassiveOpenPB);
+        if (err == noErr) {
+            log_to_file_only("PollTCP: Async TCPPassiveOpen initiated.");
+            gTCPState = TCP_STATE_PASSIVE_OPEN_PENDING;
+        } else {
+            log_message("PollTCP: PBControlAsync(TCPPassiveOpen) failed immediately: %d. Retrying after delay.", err);
+            gTCPState = TCP_STATE_IDLE;
+            Delay(kErrorRetryDelayTicks, &dummyTimer);
+        }
+        break;
+    case TCP_STATE_PASSIVE_OPEN_PENDING:
+        giveTime();
+        if (gTCPPassiveOpenPB.ioResult == 1) {
+            return;
+        }
+        if (gTCPPassiveOpenPB.ioResult == noErr) {
+            gPeerIP = gTCPPassiveOpenPB.csParam.open.remoteHost;
+            gPeerPort = gTCPPassiveOpenPB.csParam.open.remotePort;
+            char senderIPStr[INET_ADDRSTRLEN];
+            AddrToStr(gPeerIP, senderIPStr);
+            log_message("PollTCP: Incoming connection from %s:%u.", senderIPStr, gPeerPort);
+            gTCPState = TCP_STATE_CONNECTED_IN;
+            goto CheckConnectedInData;
+        } else {
+            err = gTCPPassiveOpenPB.ioResult;
+            if (err == kRequestAbortedErr) {
+                log_message("PollTCP: Async Passive Open was aborted (err %d), likely by a send operation. Returning to IDLE.", err);
             } else {
-                err = gTCPPassiveOpenPB.ioResult;
-                if (err == kRequestAbortedErr) {
-                     log_message("PollTCP: Async Passive Open was aborted (err %d), likely by a send operation. Returning to IDLE.", err);
-                } else {
-                    log_message("PollTCP: Async Passive Open failed: %d.", err);
-                }
-                if (err == kDuplicateSocketErr || err == kConnectionExistsErr) {
-                    log_message("PollTCP: Attempting Abort to clear stream after Passive Open failure (%d).", err);
-                    LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
-                }
-                gTCPState = TCP_STATE_IDLE;
-                Delay(kErrorRetryDelayTicks, &dummyTimer);
+                log_message("PollTCP: Async Passive Open failed: %d.", err);
             }
-            break;
-        case TCP_STATE_CONNECTED_IN:
-        CheckConnectedInData:
-            log_to_file_only("PollTCP: State CONNECTED_IN. Checking status...");
-            err = LowTCPStatusSyncPoll(kTCPStatusPollTimeoutTicks, giveTime, &amountUnread, &connectionState);
-            if (err != noErr) {
-                log_message("PollTCP: Error getting status while CONNECTED_IN: %d. Aborting.", err);
+            if (err == kDuplicateSocketErr || err == kConnectionExistsErr) {
+                log_message("PollTCP: Attempting Abort to clear stream after Passive Open failure (%d).", err);
                 LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
-                gTCPState = TCP_STATE_IDLE;
-                break;
             }
-            if (connectionState != 8 && connectionState != 10 && connectionState != 12 && connectionState != 14 ) {
-                char peerIPStr[INET_ADDRSTRLEN];
-                AddrToStr(gPeerIP, peerIPStr);
-                log_message("PollTCP: Connection state is %d (not Established/Closing) for %s. Aborting and returning to IDLE.", connectionState, peerIPStr);
-                LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
-                gTCPState = TCP_STATE_IDLE;
-                break;
-            }
-            log_to_file_only("PollTCP: Status OK (State %d). Unread data: %u bytes.", connectionState, amountUnread);
-            if (amountUnread > 0) {
-                unsigned short bytesToRead = kTCPRecvBufferSize;
-                Boolean markFlag = false, urgentFlag = false;
-                log_to_file_only("PollTCP: Attempting synchronous Rcv poll...");
-                err = LowTCPRcvSyncPoll(kTCPRecvPollTimeoutTicks, gTCPRecvBuffer, &bytesToRead, &markFlag, &urgentFlag, giveTime);
-                if (err == noErr) {
-                    log_to_file_only("PollTCP: Rcv poll got %u bytes.", bytesToRead);
-                    ProcessTCPReceive(bytesToRead);
-                } else if (err == kConnectionClosingErr) {
-                    char peerIPStr[INET_ADDRSTRLEN]; AddrToStr(gPeerIP, peerIPStr);
-                    log_message("PollTCP: Rcv poll indicated connection closing by peer %s. Processing final %u bytes.", peerIPStr, bytesToRead);
-                    if (bytesToRead > 0) ProcessTCPReceive(bytesToRead);
-                    LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
-                    gTCPState = TCP_STATE_IDLE;
-                } else if (err == commandTimeout) {
-                    log_to_file_only("PollTCP: Rcv poll timed out despite status showing data? Odd. Will retry status.");
-                } else {
-                    char peerIPStr[INET_ADDRSTRLEN]; AddrToStr(gPeerIP, peerIPStr);
-                    log_message("PollTCP: Rcv poll failed for %s: %d. Aborting.", peerIPStr, err);
-                    LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
-                    gTCPState = TCP_STATE_IDLE;
-                }
-            } else {
-                if (connectionState == 14 ) {
-                    char peerIPStr[INET_ADDRSTRLEN]; AddrToStr(gPeerIP, peerIPStr);
-                    log_message("PollTCP: Peer %s has closed (State: CLOSE_WAIT). Aborting to clean up. Returning to IDLE.", peerIPStr);
-                    LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
-                    gTCPState = TCP_STATE_IDLE;
-                } else if (connectionState != 8) {
-                     char peerIPStr[INET_ADDRSTRLEN]; AddrToStr(gPeerIP, peerIPStr);
-                     log_to_file_only("PollTCP: Peer %s in closing state %d with no data. Waiting for MacTCP.", peerIPStr, connectionState);
-                }
-            }
-            break;
-        default:
-            log_message("PollTCP: In unexpected state %d.", gTCPState);
+            gTCPState = TCP_STATE_IDLE;
+            Delay(kErrorRetryDelayTicks, &dummyTimer);
+        }
+        break;
+    case TCP_STATE_CONNECTED_IN:
+CheckConnectedInData:
+        log_to_file_only("PollTCP: State CONNECTED_IN. Checking status...");
+        err = LowTCPStatusSyncPoll(kTCPStatusPollTimeoutTicks, giveTime, &amountUnread, &connectionState);
+        if (err != noErr) {
+            log_message("PollTCP: Error getting status while CONNECTED_IN: %d. Aborting.", err);
+            LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
             gTCPState = TCP_STATE_IDLE;
             break;
+        }
+        if (connectionState != 8 && connectionState != 10 && connectionState != 12 && connectionState != 14) {
+            char peerIPStr[INET_ADDRSTRLEN];
+            AddrToStr(gPeerIP, peerIPStr);
+            log_message("PollTCP: Connection state is %d (not Established/Closing) for %s. Aborting and returning to IDLE.", connectionState, peerIPStr);
+            LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
+            gTCPState = TCP_STATE_IDLE;
+            break;
+        }
+        log_to_file_only("PollTCP: Status OK (State %d). Unread data: %u bytes.", connectionState, amountUnread);
+        if (amountUnread > 0) {
+            unsigned short bytesToRead = kTCPRecvBufferSize;
+            Boolean markFlag = false, urgentFlag = false;
+            log_to_file_only("PollTCP: Attempting synchronous Rcv poll...");
+            err = LowTCPRcvSyncPoll(kTCPRecvPollTimeoutTicks, gTCPRecvBuffer, &bytesToRead, &markFlag, &urgentFlag, giveTime);
+            if (err == noErr) {
+                log_to_file_only("PollTCP: Rcv poll got %u bytes.", bytesToRead);
+                ProcessTCPReceive(bytesToRead);
+            } else if (err == kConnectionClosingErr) {
+                char peerIPStr[INET_ADDRSTRLEN];
+                AddrToStr(gPeerIP, peerIPStr);
+                log_message("PollTCP: Rcv poll indicated connection closing by peer %s. Processing final %u bytes.", peerIPStr, bytesToRead);
+                if (bytesToRead > 0) ProcessTCPReceive(bytesToRead);
+                LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
+                gTCPState = TCP_STATE_IDLE;
+            } else if (err == commandTimeout) {
+                log_to_file_only("PollTCP: Rcv poll timed out despite status showing data? Odd. Will retry status.");
+            } else {
+                char peerIPStr[INET_ADDRSTRLEN];
+                AddrToStr(gPeerIP, peerIPStr);
+                log_message("PollTCP: Rcv poll failed for %s: %d. Aborting.", peerIPStr, err);
+                LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
+                gTCPState = TCP_STATE_IDLE;
+            }
+        } else {
+            if (connectionState == 14) {
+                char peerIPStr[INET_ADDRSTRLEN];
+                AddrToStr(gPeerIP, peerIPStr);
+                log_message("PollTCP: Peer %s has closed (State: CLOSE_WAIT). Aborting to clean up. Returning to IDLE.", peerIPStr);
+                LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
+                gTCPState = TCP_STATE_IDLE;
+            } else if (connectionState != 8) {
+                char peerIPStr[INET_ADDRSTRLEN];
+                AddrToStr(gPeerIP, peerIPStr);
+                log_to_file_only("PollTCP: Peer %s in closing state %d with no data. Waiting for MacTCP.", peerIPStr, connectionState);
+            }
+        }
+        break;
+    default:
+        log_message("PollTCP: In unexpected state %d.", gTCPState);
+        gTCPState = TCP_STATE_IDLE;
+        break;
     }
 }
 TCPState GetTCPState(void)
@@ -324,10 +328,10 @@ OSErr MacTCP_SendMessageSync(const char *peerIPStr,
     log_to_file_only("MacTCP_SendMessageSync: Request to send '%s' to %s", msg_type, peerIPStr);
     if (gMacTCPRefNum == 0) return notOpenErr;
     if (gTCPStream == NULL && gTCPState != TCP_STATE_RELEASING && gTCPState != TCP_STATE_UNINITIALIZED) {
-         if (gTCPStream == NULL) {
+        if (gTCPStream == NULL) {
             log_message("Error (SendMessage): gTCPStream is NULL and not in deep cleanup state.");
             return kInvalidStreamPtrErr;
-         }
+        }
     }
     if (peerIPStr == NULL || msg_type == NULL || local_username == NULL || local_ip_str == NULL || giveTime == NULL) {
         return paramErr;
@@ -368,12 +372,12 @@ OSErr MacTCP_SendMessageSync(const char *peerIPStr,
     err = LowTCPActiveOpenSyncPoll(kConnectULPTimeoutSeconds, targetIP, PORT_TCP, giveTime);
     if (err == noErr) {
         log_to_file_only("SendMessage: Connected successfully to %s.", peerIPStr);
-        sendWDS[0].length = formattedLen -1;
+        sendWDS[0].length = formattedLen - 1;
         sendWDS[0].ptr = (Ptr)messageBuffer;
         sendWDS[1].length = 0;
         sendWDS[1].ptr = NULL;
         log_to_file_only("SendMessage: Sending data (%d bytes)...", sendWDS[0].length);
-        err = LowTCPSendSyncPoll(kSendULPTimeoutSeconds, true , (Ptr)sendWDS, giveTime);
+        err = LowTCPSendSyncPoll(kSendULPTimeoutSeconds, true, (Ptr)sendWDS, giveTime);
         if (err != noErr) {
             log_message("Error (SendMessage): Send failed to %s: %d", peerIPStr, err);
             finalErr = err;
@@ -390,8 +394,8 @@ OSErr MacTCP_SendMessageSync(const char *peerIPStr,
         log_message("Error (SendMessage): Connect to %s failed: %d", peerIPStr, err);
         finalErr = err;
         if (err == kConnectionExistsErr && strcmp(msg_type, MSG_QUIT) == 0) {
-             log_message("SendMessage: Connect for QUIT to %s failed with connectionExists. Peer might be in TIME_WAIT. Assuming QUIT effectively sent.", peerIPStr);
-             finalErr = noErr;
+            log_message("SendMessage: Connect for QUIT to %s failed with connectionExists. Peer might be in TIME_WAIT. Assuming QUIT effectively sent.", peerIPStr);
+            finalErr = noErr;
         }
     }
 SendMessageCleanup:
@@ -428,7 +432,7 @@ static void ProcessTCPReceive(unsigned short dataLength)
                                         msgType,
                                         content,
                                         &mac_callbacks,
-                                        NULL );
+                                        NULL);
             if (strcmp(msgType, MSG_QUIT) == 0) {
                 log_message("ProcessTCPReceive: QUIT received from %s. State machine will handle closure.", senderIPStrFromConnection);
             }
@@ -475,7 +479,8 @@ static OSErr LowLevelSyncPoll(TCPiopb *pBlock, GiveTimePtr giveTime, SInt16 csCo
     }
     return pBlock->ioResult;
 }
-static OSErr LowTCPCreateSync(short macTCPRefNum, StreamPtr *streamPtrOut, Ptr rcvBuff, unsigned long rcvBuffLen) {
+static OSErr LowTCPCreateSync(short macTCPRefNum, StreamPtr *streamPtrOut, Ptr rcvBuff, unsigned long rcvBuffLen)
+{
     OSErr err;
     TCPiopb pbCreate;
     if (streamPtrOut == NULL || rcvBuff == NULL) return paramErr;
@@ -500,7 +505,8 @@ static OSErr LowTCPCreateSync(short macTCPRefNum, StreamPtr *streamPtrOut, Ptr r
     }
     return err;
 }
-static OSErr LowTCPActiveOpenSyncPoll(Byte ulpTimeoutSeconds, ip_addr remoteHost, tcp_port remotePort, GiveTimePtr giveTime) {
+static OSErr LowTCPActiveOpenSyncPoll(Byte ulpTimeoutSeconds, ip_addr remoteHost, tcp_port remotePort, GiveTimePtr giveTime)
+{
     TCPiopb pbOpen;
     SInt16 pollTimeout;
     memset(&pbOpen, 0, sizeof(TCPiopb));
@@ -515,7 +521,8 @@ static OSErr LowTCPActiveOpenSyncPoll(Byte ulpTimeoutSeconds, ip_addr remoteHost
     pollTimeout = (SInt16)ulpTimeoutSeconds * 60 + 30;
     return LowLevelSyncPoll(&pbOpen, giveTime, TCPActiveOpen, pollTimeout);
 }
-static OSErr LowTCPSendSyncPoll(Byte ulpTimeoutSeconds, Boolean push, Ptr wdsPtr, GiveTimePtr giveTime) {
+static OSErr LowTCPSendSyncPoll(Byte ulpTimeoutSeconds, Boolean push, Ptr wdsPtr, GiveTimePtr giveTime)
+{
     TCPiopb pbSend;
     SInt16 pollTimeout;
     if (wdsPtr == NULL) return kInvalidWDSErr;
@@ -529,7 +536,8 @@ static OSErr LowTCPSendSyncPoll(Byte ulpTimeoutSeconds, Boolean push, Ptr wdsPtr
     pollTimeout = (SInt16)ulpTimeoutSeconds * 60 + 30;
     return LowLevelSyncPoll(&pbSend, giveTime, TCPSend, pollTimeout);
 }
-static OSErr LowTCPRcvSyncPoll(SInt16 appPollTimeoutTicks, Ptr buffer, unsigned short *bufferLen, Boolean *markFlag, Boolean *urgentFlag, GiveTimePtr giveTime) {
+static OSErr LowTCPRcvSyncPoll(SInt16 appPollTimeoutTicks, Ptr buffer, unsigned short *bufferLen, Boolean *markFlag, Boolean *urgentFlag, GiveTimePtr giveTime)
+{
     OSErr err;
     TCPiopb pbRcv;
     unsigned short initialBufferLen;
@@ -546,7 +554,8 @@ static OSErr LowTCPRcvSyncPoll(SInt16 appPollTimeoutTicks, Ptr buffer, unsigned 
     *urgentFlag = pbRcv.csParam.receive.urgentFlag;
     return err;
 }
-static OSErr LowTCPStatusSyncPoll(SInt16 appPollTimeoutTicks, GiveTimePtr giveTime, unsigned short *amtUnread, Byte *connState) {
+static OSErr LowTCPStatusSyncPoll(SInt16 appPollTimeoutTicks, GiveTimePtr giveTime, unsigned short *amtUnread, Byte *connState)
+{
     OSErr err;
     TCPiopb pbStat;
     if (amtUnread == NULL || connState == NULL) return paramErr;
@@ -563,7 +572,8 @@ static OSErr LowTCPStatusSyncPoll(SInt16 appPollTimeoutTicks, GiveTimePtr giveTi
     }
     return err;
 }
-static OSErr LowTCPAbortSyncPoll(Byte ulpTimeoutSeconds, GiveTimePtr giveTime) {
+static OSErr LowTCPAbortSyncPoll(Byte ulpTimeoutSeconds, GiveTimePtr giveTime)
+{
     OSErr err;
     TCPiopb pbAbort;
     SInt16 pollTimeout;
@@ -584,7 +594,8 @@ static OSErr LowTCPAbortSyncPoll(Byte ulpTimeoutSeconds, GiveTimePtr giveTime) {
     }
     return err;
 }
-static OSErr LowTCPReleaseSync(short macTCPRefNum, StreamPtr streamToRelease) {
+static OSErr LowTCPReleaseSync(short macTCPRefNum, StreamPtr streamToRelease)
+{
     OSErr err;
     TCPiopb pbRelease;
     if (streamToRelease == NULL) return kInvalidStreamPtrErr;

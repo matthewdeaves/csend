@@ -1,8 +1,8 @@
 #ifndef NETWORK_H
-#define NETWORK_H 
+#define NETWORK_H
 #include <MacTypes.h>
 #include "discovery.h"
-#define __MACTCPCOMMONTYPES__ 
+#define __MACTCPCOMMONTYPES__
 #include <AddressXlation.h>
 #include <MacTCP.h>
 #include "common_defs.h"

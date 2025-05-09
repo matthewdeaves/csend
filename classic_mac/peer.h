@@ -1,5 +1,5 @@
 #ifndef PEER_MAC_H
-#define PEER_MAC_H 
+#define PEER_MAC_H
 #include <MacTypes.h>
 #include "../shared/common_defs.h"
 #include "../shared/peer.h"

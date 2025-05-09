@@ -1,5 +1,5 @@
 #ifndef LOGGING_SHARED_H
-#define LOGGING_SHARED_H 
+#define LOGGING_SHARED_H
 #ifdef __MACOS__
 #include <MacTypes.h>
 #else

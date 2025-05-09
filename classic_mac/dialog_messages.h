@@ -1,5 +1,5 @@
 #ifndef DIALOG_MESSAGES_H
-#define DIALOG_MESSAGES_H 
+#define DIALOG_MESSAGES_H
 #include <MacTypes.h>
 #include <TextEdit.h>
 #include <Controls.h>

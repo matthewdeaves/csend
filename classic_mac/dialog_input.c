@@ -81,7 +81,7 @@ void HandleInputTEUpdate(DialogPtr dialog)
         SetPort(GetWindowPort(dialog));
         GetDialogItem(dialog, kInputTextEdit, &itemTypeIgnored, &itemHandleIgnored, &userItemRect);
         log_to_file_only("HandleInputTEUpdate: UserItemRect for kInputTextEdit is (%d,%d,%d,%d)",
-            userItemRect.top, userItemRect.left, userItemRect.bottom, userItemRect.right);
+                         userItemRect.top, userItemRect.left, userItemRect.bottom, userItemRect.right);
         FrameRect(&userItemRect);
         log_to_file_only("HandleInputTEUpdate: FrameRect called.");
         SignedByte teState = HGetState((Handle)gInputTE);
@@ -90,11 +90,11 @@ void HandleInputTEUpdate(DialogPtr dialog)
             teActualViewRect = (**gInputTE).viewRect;
             EraseRect(&teActualViewRect);
             log_to_file_only("HandleInputTEUpdate: EraseRect called for TE's viewRect (%d,%d,%d,%d)",
-                teActualViewRect.top, teActualViewRect.left, teActualViewRect.bottom, teActualViewRect.right);
+                             teActualViewRect.top, teActualViewRect.left, teActualViewRect.bottom, teActualViewRect.right);
             TEUpdate(&teActualViewRect, gInputTE);
             log_to_file_only("HandleInputTEUpdate: TEUpdate called.");
         } else {
-             log_message("HandleInputTEUpdate ERROR: gInputTE deref failed after HLock!");
+            log_message("HandleInputTEUpdate ERROR: gInputTE deref failed after HLock!");
         }
         HSetState((Handle)gInputTE, teState);
         SetPort(oldPort);
@@ -163,4 +163,22 @@ void ClearInputText(void)
             HandleInputTEUpdate(gMainWindow);
         }
     }
+}
+void IdleInputTE(void)
+{
+    if (gInputTE != NULL) {
+        TEIdle(gInputTE);
+    }
+}
+Boolean HandleInputTEKeyDown(EventRecord *theEvent)
+{
+    char theChar;
+    if (gInputTE != NULL && gMainWindow != NULL && FrontWindow() == (WindowPtr)gMainWindow) {
+        if (!(theEvent->modifiers & cmdKey)) {
+            theChar = theEvent->message & charCodeMask;
+            TEKey(theChar, gInputTE);
+            return true;
+        }
+    }
+    return false;
 }

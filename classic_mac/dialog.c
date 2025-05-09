@@ -67,14 +67,14 @@ Boolean InitDialog(void)
             log_message("Warning: Item %d (kDebugCheckbox) is not a checkbox (Type: %d)! Cannot set initial debug state.", kDebugCheckbox, itemType);
         }
     } else {
-         log_message("Warning: Item %d (kDebugCheckbox) handle is NULL! Cannot set initial state.", kDebugCheckbox);
+        log_message("Warning: Item %d (kDebugCheckbox) handle is NULL! Cannot set initial state.", kDebugCheckbox);
     }
     GetDialogItem(gMainWindow, kBroadcastCheckbox, &itemType, &itemHandle, &itemRect);
     if (itemHandle != NULL) {
         if (itemType == (ctrlItem + chkCtrl)) {
-             ctrlHandle = (ControlHandle)itemHandle;
-             SetControlValue(ctrlHandle, 0);
-             log_message("Broadcast checkbox (Item %d) initialized to: OFF", kBroadcastCheckbox);
+            ctrlHandle = (ControlHandle)itemHandle;
+            SetControlValue(ctrlHandle, 0);
+            log_message("Broadcast checkbox (Item %d) initialized to: OFF", kBroadcastCheckbox);
         } else {
             log_message("Warning: Item %d (kBroadcastCheckbox) is not a checkbox (Type: %d)! Cannot set initial state.", kBroadcastCheckbox, itemType);
         }
@@ -145,7 +145,8 @@ void HandleSendButtonClick(void)
         int sent_count = 0;
         log_message("Attempting broadcast of: '%s'", inputCStr);
         sprintf(displayMsg, "You (Broadcast): %s", inputCStr);
-        AppendToMessagesTE(displayMsg); AppendToMessagesTE("\r");
+        AppendToMessagesTE(displayMsg);
+        AppendToMessagesTE("\r");
         for (i = 0; i < MAX_PEERS; i++) {
             if (gPeerManager.peers[i].active) {
                 sendErr = MacTCP_SendMessageSync(gPeerManager.peers[i].ip,
@@ -163,7 +164,8 @@ void HandleSendButtonClick(void)
             }
         }
         sprintf(displayMsg, "Broadcast sent to %d active peer(s).", sent_count);
-        AppendToMessagesTE(displayMsg); AppendToMessagesTE("\r");
+        AppendToMessagesTE(displayMsg);
+        AppendToMessagesTE("\r");
         log_message("Broadcast of '%s' completed. Sent to %d peers.", inputCStr, sent_count);
         ClearInputText();
     } else {
@@ -179,16 +181,18 @@ void HandleSendButtonClick(void)
                                              YieldTimeToSystem);
             if (sendErr == noErr) {
                 sprintf(displayMsg, "You (to %s): %s", targetPeer.username, inputCStr);
-                AppendToMessagesTE(displayMsg); AppendToMessagesTE("\r");
+                AppendToMessagesTE(displayMsg);
+                AppendToMessagesTE("\r");
                 log_message("Sync send completed successfully.");
                 ClearInputText();
             } else {
                 if (sendErr == streamBusyErr) {
-                     sprintf(displayMsg, "Could not send to %s: network busy. Try again.", targetPeer.username);
+                    sprintf(displayMsg, "Could not send to %s: network busy. Try again.", targetPeer.username);
                 } else {
-                     sprintf(displayMsg, "Error sending to %s: %d", targetPeer.username, sendErr);
+                    sprintf(displayMsg, "Error sending to %s: %d", targetPeer.username, sendErr);
                 }
-                AppendToMessagesTE(displayMsg); AppendToMessagesTE("\r");
+                AppendToMessagesTE(displayMsg);
+                AppendToMessagesTE("\r");
                 log_message("Error sending message to %s: %d", targetPeer.ip, sendErr);
                 SysBeep(10);
             }
