@@ -1,3 +1,6 @@
+// FILE: ./classic_mac/main.c
+//====================================
+
 //====================================
 // FILE: ./classic_mac/main.c
 //====================================
@@ -20,7 +23,7 @@
 #include "network.h" // For InitializeNetworking, CleanupNetworking, gMyUsername, gMyLocalIPStr
 #include "dialog.h"  // For InitDialog, CleanupDialog, gMainWindow, k* defines
 #include "peer.h"    // For InitPeerList, gPeerManager
-#include "dialog_peerlist.h" // For UpdatePeerDisplayList, gPeerListHandle, MyScrollAction (if used directly)
+#include "dialog_peerlist.h" // For UpdatePeerDisplayList, HandlePeerListClick, DialogPeerList_DeselectAll, ActivatePeerList
 #include "dialog_input.h"    // For gInputTE, TEClick, TEKey
 #include "dialog_messages.h" // For gMessagesTE, MyScrollAction, ScrollMessagesTE
 #include "./mactcp_messaging.h" // For PollTCP, MacTCP_SendMessageSync, streamBusyErr
@@ -235,8 +238,11 @@ void MainEventLoop(void)
                         eventHandledByApp = true;
                     }
                     // Check for clicks in Peer List (UserItem for List Manager)
+                    // Must check gPeerListHandle itself as it's a UserItem, not a standard control FindControl would get
                     else if (gPeerListHandle != NULL && PtInRect(localPt, &(**gPeerListHandle).rView)) {
-                        eventHandledByApp = HandlePeerListClick(gMainWindow, &event); // event has global coords
+                        // HandlePeerListClick expects the original event with global coordinates
+                        // but it internally converts. For consistency, ensure it knows its dialog.
+                        eventHandledByApp = HandlePeerListClick(gMainWindow, &event);
                     }
                     // Check for clicks in Input TE (UserItem for TextEdit)
                     else {
@@ -298,23 +304,7 @@ void MainEventLoop(void)
 
                                         if (newCheckboxValue == 1) { // If broadcast is now checked
                                             log_message("Broadcast checkbox checked. Deselecting peer if any.");
-                                            if (gPeerListHandle != NULL && gLastSelectedCell.v >= 0) {
-                                                GrafPtr oldPortForList;
-                                                GetPort(&oldPortForList);
-                                                SetPort(GetWindowPort(gMainWindow));
-
-                                                LSetSelect(false, gLastSelectedCell, gPeerListHandle); // Deselect
-                                                SetPt(&gLastSelectedCell, 0, -1); // Clear stored selection
-
-                                                // Redraw list
-                                                SignedByte listState = HGetState((Handle)gPeerListHandle);
-                                                HLock((Handle)gPeerListHandle);
-                                                if (*gPeerListHandle != NULL) {
-                                                    InvalRect(&(**gPeerListHandle).rView);
-                                                }
-                                                HSetState((Handle)gPeerListHandle, listState);
-                                                SetPort(oldPortForList);
-                                            }
+                                            DialogPeerList_DeselectAll(); // Use new encapsulated function
                                         } else {
                                             log_message("Broadcast checkbox unchecked.");
                                         }
@@ -332,7 +322,6 @@ void MainEventLoop(void)
                                     log_message("WARNING: DialogSelect returned item kMessagesScrollbar - This should ideally be handled in mouseDown.");
                                     if (gMessagesTE != NULL && gMessagesScrollBar != NULL) {
                                         short currentScrollVal = GetControlValue(gMessagesScrollBar);
-                                        // short currentTopLine, desiredTopPixel, currentTopPixel, scrollDeltaPixels = 0, lineHeight = 0;
                                         short scrollDeltaPixels = 0, lineHeight = 0;
                                         GrafPtr scrollPort;
                                         GetPort(&scrollPort);
@@ -348,9 +337,6 @@ void MainEventLoop(void)
                                         }
                                         lineHeight = (**gMessagesTE).lineHeight;
                                         if (lineHeight > 0) {
-                                            // desiredTopPixel = -currentScrollVal * lineHeight;
-                                            // currentTopPixel = (**gMessagesTE).destRect.top;
-                                            // scrollDeltaPixels = desiredTopPixel - currentTopPixel;
                                             short currentActualTopLine = -(**gMessagesTE).destRect.top / lineHeight;
                                             scrollDeltaPixels = (currentActualTopLine - currentScrollVal) * lineHeight;
 

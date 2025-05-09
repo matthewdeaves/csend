@@ -1,3 +1,6 @@
+// FILE: ./classic_mac/dialog.c
+//====================================
+
 //====================================
 // FILE: ./classic_mac/dialog.c
 //====================================
@@ -203,7 +206,8 @@ void HandleSendButtonClick(void)
         ClearInputText();
     } else { // Unicast send
         peer_t targetPeer;
-        if (GetSelectedPeerInfo(&targetPeer)) { // GetSelectedPeerInfo is from classic_mac/peer.c
+        // Use the new function from dialog_peerlist.c
+        if (DialogPeerList_GetSelectedPeer(&targetPeer)) {
             log_message("Attempting sync send to selected peer %s@%s: '%s'",
                         targetPeer.username, targetPeer.ip, inputCStr);
 
