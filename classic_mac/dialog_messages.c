@@ -31,11 +31,15 @@ ControlHandle gMessagesScrollBar = NULL;
 pascal void MyScrollAction(ControlHandle theControl, short partCode)
 {
     if (theControl == gMessagesScrollBar) {
-        if (partCode != 0) {
+        if (partCode != 0 && partCode != kControlIndicatorPart) {
             HandleMessagesScrollClick(theControl, partCode);
+        } else if (partCode == kControlIndicatorPart) {
+            log_message("MyScrollAction: WARNING - Called with inThumb (part %d) for control 0x%lX. Main.c should handle this.",
+                        partCode, (unsigned long)theControl);
         }
     } else {
-        log_to_file_only("MyScrollAction: Called for unexpected control 0x%lX", (unsigned long)theControl);
+        log_message("MyScrollAction: Called for unexpected control 0x%lX, part %d",
+                    (unsigned long)theControl, partCode);
     }
 }
 Boolean InitMessagesTEAndScrollbar(DialogPtr dialog)
@@ -102,13 +106,17 @@ void AppendToMessagesTE(const char *text)
     GrafPtr oldPort;
     Boolean scrolledToBottom = false;
     if (gMessagesTE == NULL) {
+        log_message("AppendToMessagesTE: gMessagesTE is NULL. Cannot append.");
+        return;
+    }
+    if (text == NULL || text[0] == '\0') {
         return;
     }
     GetPort(&oldPort);
     if (gMainWindow != NULL) {
         SetPort(GetWindowPort(gMainWindow));
     } else {
-        log_message("AppendToMessagesTE Warning: gMainWindow is NULL!");
+        log_message("AppendToMessagesTE Warning: gMainWindow is NULL! Port not set.");
     }
     SignedByte teState = HGetState((Handle)gMessagesTE);
     HLock((Handle)gMessagesTE);
@@ -128,16 +136,8 @@ void AppendToMessagesTE(const char *text)
             AdjustMessagesScrollbar();
             if (scrolledToBottom && gMessagesScrollBar != NULL) {
                 short newMaxScroll = GetControlMaximum(gMessagesScrollBar);
-                if (newMaxScroll > maxScroll || GetControlValue(gMessagesScrollBar) < newMaxScroll) {
-                    short lineHeight = (**gMessagesTE).lineHeight;
-                    if (lineHeight > 0) {
-                        short currentTopLine = -(**gMessagesTE).destRect.top / lineHeight;
-                        short scrollDeltaPixels = (currentTopLine - newMaxScroll) * lineHeight;
-                        ScrollMessagesTE(scrollDeltaPixels);
-                        SetControlValue(gMessagesScrollBar, newMaxScroll);
-                    }
-                }
-            } else if (gMessagesScrollBar != NULL) {
+                SetControlValue(gMessagesScrollBar, newMaxScroll);
+                ScrollMessagesTEToValue(newMaxScroll);
             }
         } else {
             log_message("Warning: Messages TE field near full. Cannot append.");
@@ -161,42 +161,34 @@ void AdjustMessagesScrollbar(void)
         short linesInView = 0;
         short totalLines = (**gMessagesTE).nLines;
         short maxScroll = 0;
-        short firstVisibleLine = 0;
+        short currentVal = 0;
         if (lineHeight > 0) {
             linesInView = viewHeight / lineHeight;
-            firstVisibleLine = -(**gMessagesTE).destRect.top / lineHeight;
+            if (linesInView < 1) linesInView = 1;
+            currentVal = -(**gMessagesTE).destRect.top / lineHeight;
         } else {
             linesInView = 1;
             totalLines = 0;
-            firstVisibleLine = 0;
-            log_message("AdjustMessagesScrollbar Warning: lineHeight is %d!", lineHeight);
+            currentVal = 0;
+            log_to_file_only("AdjustMessagesScrollbar Warning: lineHeight is %d!", lineHeight);
         }
-        if (linesInView < 1) linesInView = 1;
         maxScroll = totalLines - linesInView;
         if (maxScroll < 0) maxScroll = 0;
         SetControlMaximum(gMessagesScrollBar, maxScroll);
-        if (firstVisibleLine > maxScroll) {
-            short scrollDeltaPixels = (firstVisibleLine - maxScroll) * lineHeight;
-            ScrollMessagesTE(scrollDeltaPixels);
-            firstVisibleLine = maxScroll;
+        if (currentVal > maxScroll) {
+            currentVal = maxScroll;
         }
-        if (firstVisibleLine < 0) firstVisibleLine = 0;
-        SetControlValue(gMessagesScrollBar, firstVisibleLine);
+        if (currentVal < 0) currentVal = 0;
+        SetControlValue(gMessagesScrollBar, currentVal);
         Boolean shouldBeVisible = (maxScroll > 0);
         Boolean isVisible = ((**gMessagesScrollBar).contrlVis != 0);
         Boolean windowIsActive = (gMainWindow != NULL && FrontWindow() == (WindowPtr)gMainWindow);
         short hiliteValue = 255;
         if (shouldBeVisible) {
-            if (!isVisible) {
-                ShowControl(gMessagesScrollBar);
-            }
-            if (windowIsActive) {
-                hiliteValue = 0;
-            }
+            if (!isVisible) ShowControl(gMessagesScrollBar);
+            if (windowIsActive) hiliteValue = 0;
         } else {
-            if (isVisible) {
-                HideControl(gMessagesScrollBar);
-            }
+            if (isVisible) HideControl(gMessagesScrollBar);
         }
         HiliteControl(gMessagesScrollBar, hiliteValue);
     } else {
@@ -206,61 +198,74 @@ void AdjustMessagesScrollbar(void)
 }
 void HandleMessagesScrollClick(ControlHandle theControl, short partCode)
 {
-    if (gMessagesTE == NULL || partCode == 0 || partCode == inThumb) {
+    if (gMessagesTE == NULL || partCode == 0 || partCode == kControlIndicatorPart) {
+        if (partCode == kControlIndicatorPart) {
+             log_to_file_only("HandleMessagesScrollClick: Received inThumb (part %d), ignoring as main.c handles it.", partCode);
+        }
         return;
     }
     short linesToScroll = 0;
-    short currentScroll, maxScroll;
+    short currentScroll, maxScroll, newScroll;
     short lineHeight = 0;
     short viewHeight = 0;
     short pageScroll = 1;
     SignedByte teState = HGetState((Handle)gMessagesTE);
     HLock((Handle)gMessagesTE);
-    if (*gMessagesTE != NULL) {
-        lineHeight = (**gMessagesTE).lineHeight;
-        viewHeight = (**gMessagesTE).viewRect.bottom - (**gMessagesTE).viewRect.top;
-        if (lineHeight > 0) {
-            pageScroll = viewHeight / lineHeight;
-            if (pageScroll > 1) pageScroll -= 1;
-            if (pageScroll < 1) pageScroll = 1;
-        } else {
-            log_message("HandleMessagesScrollClick Warning: lineHeight is %d!", lineHeight);
-            HSetState((Handle)gMessagesTE, teState);
-            return;
-        }
-    } else {
+    if (*gMessagesTE == NULL) {
         log_message("HandleMessagesScrollClick Error: gMessagesTE dereference failed!");
         HSetState((Handle)gMessagesTE, teState);
         return;
     }
+    lineHeight = (**gMessagesTE).lineHeight;
+    viewHeight = (**gMessagesTE).viewRect.bottom - (**gMessagesTE).viewRect.top;
     HSetState((Handle)gMessagesTE, teState);
+    if (lineHeight <= 0) {
+        log_message("HandleMessagesScrollClick Warning: lineHeight is %d! Cannot scroll.", lineHeight);
+        return;
+    }
+    pageScroll = viewHeight / lineHeight;
+    if (pageScroll > 1) pageScroll -= 1;
+    if (pageScroll < 1) pageScroll = 1;
     currentScroll = GetControlValue(theControl);
     maxScroll = GetControlMaximum(theControl);
     switch (partCode) {
-    case inUpButton:
-        linesToScroll = -1;
-        break;
-    case inDownButton:
-        linesToScroll = 1;
-        break;
-    case inPageUp:
-        linesToScroll = -pageScroll;
-        break;
-    case inPageDown:
-        linesToScroll = pageScroll;
-        break;
-    default:
-        log_to_file_only("HandleMessagesScrollClick: Ignoring unknown partCode %d", partCode);
-        return;
+        case inUpButton: linesToScroll = -1; break;
+        case inDownButton: linesToScroll = 1; break;
+        case inPageUp: linesToScroll = -pageScroll; break;
+        case inPageDown: linesToScroll = pageScroll; break;
+        default:
+            log_to_file_only("HandleMessagesScrollClick: Ignoring unknown partCode %d", partCode);
+            return;
     }
-    short newScroll = currentScroll + linesToScroll;
+    newScroll = currentScroll + linesToScroll;
     if (newScroll < 0) newScroll = 0;
     if (newScroll > maxScroll) newScroll = maxScroll;
     if (newScroll != currentScroll) {
         short scrollDeltaPixels = (currentScroll - newScroll) * lineHeight;
         SetControlValue(theControl, newScroll);
         ScrollMessagesTE(scrollDeltaPixels);
-    } else {
+    }
+}
+void ScrollMessagesTEToValue(short newScrollValue) {
+    if (gMessagesTE == NULL) return;
+    SignedByte teState = HGetState((Handle)gMessagesTE);
+    HLock((Handle)gMessagesTE);
+    if (*gMessagesTE == NULL) {
+        log_message("ScrollMessagesTEToValue Error: gMessagesTE deref failed!");
+        HSetState((Handle)gMessagesTE, teState);
+        return;
+    }
+    short lineHeight = (**gMessagesTE).lineHeight;
+    if (lineHeight <= 0) {
+        log_message("ScrollMessagesTEToValue Warning: lineHeight is %d! Cannot scroll.", lineHeight);
+        HSetState((Handle)gMessagesTE, teState);
+        return;
+    }
+    short currentActualTopLine = -(**gMessagesTE).destRect.top / lineHeight;
+    short scrollDeltaPixels = (currentActualTopLine - newScrollValue) * lineHeight;
+    HSetState((Handle)gMessagesTE, teState);
+    if (scrollDeltaPixels != 0) {
+        ScrollMessagesTE(scrollDeltaPixels);
     }
 }
 void HandleMessagesTEUpdate(DialogPtr dialog)
@@ -276,7 +281,8 @@ void HandleMessagesTEUpdate(DialogPtr dialog)
         SignedByte teState = HGetState((Handle)gMessagesTE);
         HLock((Handle)gMessagesTE);
         if (*gMessagesTE != NULL) {
-            TEUpdate(&itemRect, gMessagesTE);
+            EraseRect(&(**gMessagesTE).viewRect);
+            TEUpdate(&(**gMessagesTE).viewRect, gMessagesTE);
         }
         HSetState((Handle)gMessagesTE, teState);
         SetPort(oldPort);
@@ -293,7 +299,7 @@ void ActivateMessagesTEAndScrollbar(Boolean activating)
     if (gMessagesScrollBar != NULL) {
         short maxScroll = GetControlMaximum(gMessagesScrollBar);
         short hiliteValue = 255;
-        if (activating && maxScroll > 0) {
+        if (activating && maxScroll > 0 && (**gMessagesScrollBar).contrlVis) {
             hiliteValue = 0;
         }
         HiliteControl(gMessagesScrollBar, hiliteValue);
@@ -307,7 +313,7 @@ void ScrollMessagesTE(short deltaPixels)
         if (gMainWindow != NULL) {
             SetPort(GetWindowPort(gMainWindow));
         } else {
-            log_message("ScrollMessagesTE Warning: gMainWindow is NULL!");
+            log_message("ScrollMessagesTE Warning: gMainWindow is NULL! Port not set.");
         }
         SignedByte teState = HGetState((Handle)gMessagesTE);
         HLock((Handle)gMessagesTE);
@@ -320,6 +326,5 @@ void ScrollMessagesTE(short deltaPixels)
         }
         HSetState((Handle)gMessagesTE, teState);
         SetPort(oldPort);
-    } else if (deltaPixels == 0) {
     }
 }

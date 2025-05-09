@@ -12,6 +12,7 @@ void CleanupMessagesTEAndScrollbar(void);
 void AppendToMessagesTE(const char *text);
 void AdjustMessagesScrollbar(void);
 void HandleMessagesScrollClick(ControlHandle theControl, short partCode);
+void ScrollMessagesTEToValue(short newScrollValue);
 void HandleMessagesTEUpdate(DialogPtr dialog);
 void ActivateMessagesTEAndScrollbar(Boolean activating);
 void ScrollMessagesTE(short deltaPixels);
