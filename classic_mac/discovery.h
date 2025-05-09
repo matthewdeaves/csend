@@ -4,7 +4,7 @@
 #include <Devices.h>
 #include <MacTCP.h>
 #include "common_defs.h"
-#include "peer_mac.h"
+#include "peer.h"
 #define BROADCAST_IP 0xFFFFFFFFUL
 #define kMinUDPBufSize 2048
 extern StreamPtr gUDPStream;

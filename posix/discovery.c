@@ -1,7 +1,7 @@
 #include "discovery.h"
 #include "logging.h"
 #include "../shared/protocol.h"
-#include "../shared/discovery_logic.h"
+#include "../shared/discovery.h"
 #include "network.h"
 #include "peer.h"
 #include <stdio.h>

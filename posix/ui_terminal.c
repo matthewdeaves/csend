@@ -2,7 +2,7 @@
 #include "network.h"
 #include "logging.h"
 #include "../shared/protocol.h"
-#include "../shared/logging_shared.h"
+#include "../shared/logging.h"
 #include "messaging.h"
 #include <stdio.h>
 #include <string.h>

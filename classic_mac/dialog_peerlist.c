@@ -1,7 +1,7 @@
 #include "dialog_peerlist.h"
 #include "dialog.h"
 #include "logging.h"
-#include "peer_mac.h"
+#include "peer.h"
 #include <MacTypes.h>
 #include <Lists.h>
 #include <Dialogs.h>

@@ -1,6 +1,6 @@
 #include "logging.h"
 #include "dialog.h"
-#include "../shared/logging_shared.h"
+#include "../shared/logging.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <Sound.h>

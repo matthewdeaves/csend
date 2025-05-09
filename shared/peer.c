@@ -1,4 +1,4 @@
-#include "peer_shared.h"
+#include "peer.h"
 #include "logging.h"
 #include <string.h>
 #include <stdio.h>

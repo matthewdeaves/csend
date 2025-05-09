@@ -1,7 +1,7 @@
 #include "messaging.h"
 #include "network.h"
 #include "../shared/protocol.h"
-#include "../shared/messaging_logic.h"
+#include "../shared/messaging.h"
 #include "logging.h"
 #include <stdio.h>
 #include <string.h>

@@ -2,7 +2,7 @@
 #define PEER_MAC_H 
 #include <MacTypes.h>
 #include "../shared/common_defs.h"
-#include "../shared/peer_shared.h"
+#include "../shared/peer.h"
 extern peer_manager_t gPeerManager;
 void InitPeerList(void);
 int AddOrUpdatePeer(const char *ip, const char *username);
