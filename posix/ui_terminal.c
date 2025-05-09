@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <stdarg.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <sys/select.h>
@@ -32,9 +33,9 @@ void print_peers(app_state_t *state)
     for (int i = 0; i < MAX_PEERS; i++) {
         if (state->peer_manager.peers[i].active) {
             if (difftime(now, state->peer_manager.peers[i].last_seen) > PEER_TIMEOUT) {
-                log_message("Peer %s@%s timed out (detected in print_peers).",
-                            state->peer_manager.peers[i].username,
-                            state->peer_manager.peers[i].ip);
+                log_internal_message("Peer %s@%s timed out (detected in print_peers).",
+                                     state->peer_manager.peers[i].username,
+                                     state->peer_manager.peers[i].ip);
                 state->peer_manager.peers[i].active = 0;
                 continue;
             }
@@ -63,7 +64,8 @@ int handle_command(app_state_t *state, const char *input)
     } else if (strcmp(input, "/debug") == 0) {
         Boolean current_debug_state = is_debug_output_enabled();
         set_debug_output_enabled(!current_debug_state);
-        display_user_message("Debug output %s.", is_debug_output_enabled() ? "ENABLED" : "DISABLED");
+        log_app_event("Debug output %s.", is_debug_output_enabled() ? "ENABLED" : "DISABLED");
+        terminal_display_app_message("Debug output %s.", is_debug_output_enabled() ? "ENABLED" : "DISABLED");
         return 0;
     } else if (strncmp(input, "/send ", 6) == 0) {
         int peer_num_input;
@@ -73,14 +75,16 @@ int handle_command(app_state_t *state, const char *input)
         input_copy[BUFFER_SIZE - 1] = '\0';
         msg_start = strchr(input_copy + 6, ' ');
         if (msg_start == NULL) {
-            display_user_message("Usage: /send <peer_number> <message>");
+            log_app_event("Usage: /send <peer_number> <message>");
+            terminal_display_app_message("Usage: /send <peer_number> <message>");
             return 0;
         }
         *msg_start = '\0';
         peer_num_input = atoi(input_copy + 6);
         msg_start++;
         if (peer_num_input <= 0) {
-            display_user_message("Invalid peer number. Use /list to see active peers.");
+            log_app_event("Invalid peer number. Use /list to see active peers.");
+            terminal_display_app_message("Invalid peer number. Use /list to see active peers.");
             return 0;
         }
         pthread_mutex_lock(&state->peers_mutex);
@@ -102,57 +106,62 @@ int handle_command(app_state_t *state, const char *input)
         pthread_mutex_unlock(&state->peers_mutex);
         if (found) {
             if (send_message(target_ip, msg_start, MSG_TEXT, state->username) < 0) {
-                log_message("Failed to send message to %s", target_ip);
+                log_internal_message("Failed to send message to %s", target_ip);
             } else {
-                display_user_message("Message sent to peer %d (%s)", peer_num_input, target_ip);
+                log_app_event("Message sent to peer %d (%s)", peer_num_input, target_ip);
+                terminal_display_app_message("Message sent to peer %d (%s)", peer_num_input, target_ip);
             }
         } else {
-            display_user_message("Invalid peer number '%d'. Use /list to see active peers.", peer_num_input);
+            log_app_event("Invalid peer number '%d'. Use /list to see active peers.", peer_num_input);
+            terminal_display_app_message("Invalid peer number '%d'. Use /list to see active peers.", peer_num_input);
         }
         return 0;
     } else if (strncmp(input, "/broadcast ", 11) == 0) {
         const char *message_content = input + 11;
-        display_user_message("Broadcasting message: %s", message_content);
+        log_app_event("Broadcasting message: %s", message_content);
+        terminal_display_app_message("Broadcasting message: %s", message_content);
         pthread_mutex_lock(&state->peers_mutex);
         int sent_count = 0;
         for (int i = 0; i < MAX_PEERS; i++) {
             if (state->peer_manager.peers[i].active &&
                     (difftime(time(NULL), state->peer_manager.peers[i].last_seen) <= PEER_TIMEOUT)) {
                 if (send_message(state->peer_manager.peers[i].ip, message_content, MSG_TEXT, state->username) < 0) {
-                    log_message("Failed to send broadcast message to %s", state->peer_manager.peers[i].ip);
+                    log_internal_message("Failed to send broadcast message to %s", state->peer_manager.peers[i].ip);
                 } else {
                     sent_count++;
                 }
             }
         }
         pthread_mutex_unlock(&state->peers_mutex);
-        display_user_message("Broadcast message sent to %d active peer(s).", sent_count);
+        log_app_event("Broadcast message sent to %d active peer(s).", sent_count);
+        terminal_display_app_message("Broadcast message sent to %d active peer(s).", sent_count);
         return 0;
     } else if (strcmp(input, "/quit") == 0) {
-        log_message("Initiating quit sequence...");
+        log_internal_message("Initiating quit sequence...");
         pthread_mutex_lock(&state->peers_mutex);
-        log_message("Sending QUIT notifications to peers...");
+        log_internal_message("Sending QUIT notifications to peers...");
         int notify_count = 0;
         for (int i = 0; i < MAX_PEERS; i++) {
             if (state->peer_manager.peers[i].active) {
                 if (send_message(state->peer_manager.peers[i].ip, "", MSG_QUIT, state->username) < 0) {
-                    log_message("Failed to send quit notification to %s", state->peer_manager.peers[i].ip);
+                    log_internal_message("Failed to send quit notification to %s", state->peer_manager.peers[i].ip);
                 } else {
                     notify_count++;
                 }
             }
         }
         pthread_mutex_unlock(&state->peers_mutex);
-        log_message("Quit notifications sent to %d peer(s).", notify_count);
+        log_internal_message("Quit notifications sent to %d peer(s).", notify_count);
         if (g_state) {
             g_state->running = 0;
         } else {
             state->running = 0;
         }
-        log_message("Exiting application via /quit command...");
+        log_internal_message("Exiting application via /quit command...");
         return 1;
     } else {
-        display_user_message("Unknown command: '%s'. Type /help for available commands.", input);
+        log_app_event("Unknown command: '%s'. Type /help for available commands.", input);
+        terminal_display_app_message("Unknown command: '%s'. Type /help for available commands.", input);
         return 0;
     }
 }
@@ -188,7 +197,7 @@ void *user_input_thread(void *arg)
         if (fgets(input, BUFFER_SIZE, stdin) == NULL) {
             if (state->running) {
                 if (feof(stdin)) {
-                    log_message("EOF detected on stdin. Exiting input loop.");
+                    log_internal_message("EOF detected on stdin. Exiting input loop.");
                     if (g_state) g_state->running = 0;
                     else state->running = 0;
                 } else {
@@ -209,6 +218,24 @@ void *user_input_thread(void *arg)
         printf("> ");
         fflush(stdout);
     }
-    log_message("User input thread stopped.");
+    log_internal_message("User input thread stopped.");
     return NULL;
+}
+void terminal_display_app_message(const char *format, ...)
+{
+    va_list args;
+    time_t now = time(NULL);
+    char time_str[20];
+    struct tm *local_time_info = localtime(&now);
+    if (local_time_info) {
+        strftime(time_str, sizeof(time_str), "%H:%M:%S", local_time_info);
+        printf("[%s] ", time_str);
+    } else {
+        printf("[--:--:--] ");
+    }
+    va_start(args, format);
+    vprintf(format, args);
+    va_end(args);
+    printf("\n");
+    fflush(stdout);
 }

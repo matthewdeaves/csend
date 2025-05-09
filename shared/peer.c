@@ -64,7 +64,7 @@ int peer_shared_add_or_update(peer_manager_t *manager, const char *ip, const cha
         peer_shared_update_entry(new_peer, username);
         return 1;
     }
-    log_message("Peer list is full. Cannot add peer %s@%s.", username ? username : "??", ip);
+    log_internal_message("Peer list is full. Cannot add peer %s@%s.", username ? username : "??", ip);
     return -1;
 }
 int peer_shared_prune_timed_out(peer_manager_t *manager)
@@ -94,7 +94,7 @@ int peer_shared_prune_timed_out(peer_manager_t *manager)
 #endif
             }
             if (time_diff > timeout_duration) {
-                log_message("Peer %s@%s timed out.", manager->peers[i].username, manager->peers[i].ip);
+                log_internal_message("Peer %s@%s timed out.", manager->peers[i].username, manager->peers[i].ip);
                 manager->peers[i].active = 0;
                 pruned_count++;
             }

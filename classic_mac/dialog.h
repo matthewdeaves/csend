@@ -1,5 +1,5 @@
 #ifndef DIALOG_H
-#define DIALOG_H 
+#define DIALOG_H
 #include <MacTypes.h>
 #include <Dialogs.h>
 #include <TextEdit.h>
@@ -20,8 +20,6 @@
 extern DialogPtr gMainWindow;
 extern Boolean gDialogTEInitialized;
 extern Boolean gDialogListInitialized;
-extern char gMyUsername[32];
-extern Cell gLastSelectedCell;
 Boolean InitDialog(void);
 void CleanupDialog(void);
 void HandleSendButtonClick(void);

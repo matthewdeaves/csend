@@ -1,5 +1,5 @@
 #ifndef DISCOVERY_LOGIC_H
-#define DISCOVERY_LOGIC_H 
+#define DISCOVERY_LOGIC_H
 #include "common_defs.h"
 #include <stdint.h>
 typedef struct {

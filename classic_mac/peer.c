@@ -18,7 +18,7 @@ Boolean MarkPeerInactive(const char *ip)
     int index = peer_shared_find_by_ip(&gPeerManager, ip);
     if (index != -1) {
         if (gPeerManager.peers[index].active) {
-            log_message("Marking peer %s@%s as inactive due to QUIT message.", gPeerManager.peers[index].username, ip);
+            log_internal_message("Marking peer %s@%s as inactive due to QUIT message.", gPeerManager.peers[index].username, ip);
             gPeerManager.peers[index].active = 0;
             return true;
         } else {
@@ -33,7 +33,7 @@ void PruneTimedOutPeers(void)
 {
     int pruned_count = peer_shared_prune_timed_out(&gPeerManager);
     if (pruned_count > 0) {
-        log_message("Pruned %d timed-out peer(s).", pruned_count);
+        log_internal_message("Pruned %d timed-out peer(s).", pruned_count);
     }
 }
 Boolean GetPeerByIndex(int active_index, peer_t *out_peer)

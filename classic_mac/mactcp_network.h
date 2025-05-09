@@ -1,8 +1,8 @@
 #ifndef NETWORK_H
-#define NETWORK_H 
+#define NETWORK_H
 #include <MacTypes.h>
 #include "discovery.h"
-#define __MACTCPCOMMONTYPES__ 
+#define __MACTCPCOMMONTYPES__
 #include <AddressXlation.h>
 #include <MacTCP.h>
 #include "common_defs.h"
@@ -10,6 +10,7 @@
 #define ipctlGetAddr 15
 extern short gMacTCPRefNum;
 extern ip_addr gMyLocalIP;
+extern char gMyUsername[32];
 extern char gMyLocalIPStr[INET_ADDRSTRLEN];
 extern char gMyUsername[32];
 OSErr InitializeNetworking(void);

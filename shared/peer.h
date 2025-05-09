@@ -1,5 +1,5 @@
 #ifndef PEER_SHARED_H
-#define PEER_SHARED_H 
+#define PEER_SHARED_H
 #include "common_defs.h"
 typedef struct {
     peer_t peers[MAX_PEERS];

@@ -1,11 +1,6 @@
-#ifndef LOGGING_H
-#define LOGGING_H 
-#include <stdio.h>
-#define kLogFileName "csend_log.txt"
-extern FILE *gLogFile;
-void InitLogFile(void);
-void CloseLogFile(void);
-void log_message(const char *format, ...);
-void display_user_message(const char *format, ...);
+#ifndef CLASSIC_MAC_LOGGING_H_WRAPPER
+#define CLASSIC_MAC_LOGGING_H_WRAPPER
+#include "../shared/logging.h"
+void classic_mac_platform_display_debug_log(const char *timestamp_and_prefix, const char *message_body);
 void log_to_file_only(const char *format, ...);
 #endif
