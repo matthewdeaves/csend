@@ -61,12 +61,12 @@ static int mac_tcp_add_or_update_peer(const char *ip, const char *username, void
     (void)platform_context;
     int addResult = AddOrUpdatePeer(ip, username);
     if (addResult > 0) {
-        log_internal_message("Peer connected/updated via TCP: %s@%s", username, ip);
+        log_debug("Peer connected/updated via TCP: %s@%s", username, ip);
         if (gMainWindow != NULL && gPeerListHandle != NULL) UpdatePeerDisplayList(true);
     } else if (addResult == 0) {
-        log_to_file_only("Peer updated via TCP: %s@%s", username, ip);
+        log_debug("Peer updated via TCP: %s@%s", username, ip);
     } else {
-        log_internal_message("Peer list full or error, could not add/update %s@%s from TCP connection", username, ip);
+        log_debug("Peer list full or error, could not add/update %s@%s from TCP connection", username, ip);
     }
     return addResult;
 }
@@ -79,16 +79,16 @@ static void mac_tcp_display_text_message(const char *username, const char *ip, c
         sprintf(displayMsg, "%s: %s", username ? username : "???", message_content ? message_content : "");
         AppendToMessagesTE(displayMsg);
         AppendToMessagesTE("\r");
-        log_internal_message("Message from %s@%s: %s", username, ip, message_content);
+        log_debug("Message from %s@%s: %s", username, ip, message_content);
     } else {
-        log_internal_message("Error (mac_tcp_display_text_message): Cannot display message, dialog not ready.");
+        log_debug("Error (mac_tcp_display_text_message): Cannot display message, dialog not ready.");
     }
 }
 static void mac_tcp_mark_peer_inactive(const char *ip, void *platform_context)
 {
     (void)platform_context;
     if (!ip) return;
-    log_internal_message("Peer %s has sent QUIT notification via TCP.", ip);
+    log_debug("Peer %s has sent QUIT notification via TCP.", ip);
     if (MarkPeerInactive(ip)) {
         if (gMainWindow != NULL && gPeerListHandle != NULL) UpdatePeerDisplayList(true);
     }
@@ -96,30 +96,30 @@ static void mac_tcp_mark_peer_inactive(const char *ip, void *platform_context)
 OSErr InitTCP(short macTCPRefNum)
 {
     OSErr err;
-    log_internal_message("Initializing Single TCP Stream (Async Passive Open / Sync Poll Strategy)...");
+    log_debug("Initializing Single TCP Stream (Async Passive Open / Sync Poll Strategy)...");
     if (macTCPRefNum == 0) return paramErr;
     if (gTCPStream != NULL || gTCPState != TCP_STATE_UNINITIALIZED) {
-        log_internal_message("Error (InitTCP): Already initialized or in unexpected state (%d)?", gTCPState);
+        log_debug("Error (InitTCP): Already initialized or in unexpected state (%d)?", gTCPState);
         return streamAlreadyOpen;
     }
     gTCPInternalBuffer = NewPtrClear(kTCPInternalBufferSize);
     gTCPRecvBuffer = NewPtrClear(kTCPRecvBufferSize);
     if (gTCPInternalBuffer == NULL || gTCPRecvBuffer == NULL) {
-        log_internal_message("Fatal Error: Could not allocate TCP buffers.");
+        log_debug("Fatal Error: Could not allocate TCP buffers.");
         if (gTCPInternalBuffer) DisposePtr(gTCPInternalBuffer);
         if (gTCPRecvBuffer) DisposePtr(gTCPRecvBuffer);
         gTCPInternalBuffer = gTCPRecvBuffer = NULL;
         return memFullErr;
     }
-    log_internal_message("Allocated TCP buffers (Internal: %ld, Recv: %ld).", (long)kTCPInternalBufferSize, (long)kTCPRecvBufferSize);
-    log_internal_message("Creating Single Stream...");
+    log_debug("Allocated TCP buffers (Internal: %ld, Recv: %ld).", (long)kTCPInternalBufferSize, (long)kTCPRecvBufferSize);
+    log_debug("Creating Single Stream...");
     err = LowTCPCreateSync(macTCPRefNum, &gTCPStream, gTCPInternalBuffer, kTCPInternalBufferSize);
     if (err != noErr || gTCPStream == NULL) {
-        log_internal_message("Error: Failed to create TCP Stream: %d", err);
+        log_debug("Error: Failed to create TCP Stream: %d", err);
         CleanupTCP(macTCPRefNum);
         return err;
     }
-    log_internal_message("Single TCP Stream created (0x%lX).", (unsigned long)gTCPStream);
+    log_debug("Single TCP Stream created (0x%lX).", (unsigned long)gTCPStream);
     memset(&gTCPPassiveOpenPB, 0, sizeof(TCPiopb));
     gTCPPassiveOpenPB.ioCompletion = nil;
     gTCPPassiveOpenPB.ioCRefNum = gMacTCPRefNum;
@@ -129,18 +129,18 @@ OSErr InitTCP(short macTCPRefNum)
     gIsSending = false;
     gPeerIP = 0;
     gPeerPort = 0;
-    log_internal_message("TCP initialization complete. State: IDLE.");
+    log_debug("TCP initialization complete. State: IDLE.");
     return noErr;
 }
 void CleanupTCP(short macTCPRefNum)
 {
-    log_internal_message("Cleaning up Single TCP Stream...");
+    log_debug("Cleaning up Single TCP Stream...");
     StreamPtr streamToRelease = gTCPStream;
     TCPState stateBeforeCleanup = gTCPState;
     gTCPState = TCP_STATE_RELEASING;
     gTCPStream = NULL;
     if (stateBeforeCleanup == TCP_STATE_CONNECTED_IN || stateBeforeCleanup == TCP_STATE_PASSIVE_OPEN_PENDING) {
-        log_internal_message("Cleanup: Attempting synchronous abort (best effort)...");
+        log_debug("Cleanup: Attempting synchronous abort (best effort)...");
         if (streamToRelease != NULL) {
             StreamPtr currentGlobalStream = gTCPStream;
             gTCPStream = streamToRelease;
@@ -149,12 +149,12 @@ void CleanupTCP(short macTCPRefNum)
         }
     }
     if (streamToRelease != NULL && macTCPRefNum != 0) {
-        log_internal_message("Attempting sync release of stream 0x%lX...", (unsigned long)streamToRelease);
+        log_debug("Attempting sync release of stream 0x%lX...", (unsigned long)streamToRelease);
         OSErr relErr = LowTCPReleaseSync(macTCPRefNum, streamToRelease);
-        if (relErr != noErr) log_internal_message("Warning: Sync release failed: %d", relErr);
-        else log_to_file_only("Sync release successful.");
+        if (relErr != noErr) log_debug("Warning: Sync release failed: %d", relErr);
+        else log_debug("Sync release successful.");
     } else if (streamToRelease != NULL) {
-        log_internal_message("Warning: Cannot release stream, MacTCP refnum is 0.");
+        log_debug("Warning: Cannot release stream, MacTCP refnum is 0.");
     }
     gTCPState = TCP_STATE_UNINITIALIZED;
     gIsSending = false;
@@ -169,7 +169,7 @@ void CleanupTCP(short macTCPRefNum)
         DisposePtr(gTCPInternalBuffer);
         gTCPInternalBuffer = NULL;
     }
-    log_internal_message("TCP cleanup finished.");
+    log_debug("TCP cleanup finished.");
 }
 void PollTCP(GiveTimePtr giveTime)
 {
@@ -186,9 +186,9 @@ void PollTCP(GiveTimePtr giveTime)
     }
     switch (gTCPState) {
     case TCP_STATE_IDLE:
-        log_to_file_only("PollTCP: State IDLE. Attempting ASYNC Passive Open (ULP: %ds)...", kTCPPassiveOpenULPTimeoutSeconds);
+        log_debug("PollTCP: State IDLE. Attempting ASYNC Passive Open (ULP: %ds)...", kTCPPassiveOpenULPTimeoutSeconds);
         if (!gPassiveOpenPBInitialized) {
-            log_internal_message("PollTCP CRITICAL: gTCPPassiveOpenPB not initialized!");
+            log_debug("PollTCP CRITICAL: gTCPPassiveOpenPB not initialized!");
             gTCPState = TCP_STATE_ERROR;
             break;
         }
@@ -210,10 +210,10 @@ void PollTCP(GiveTimePtr giveTime)
         gTCPPassiveOpenPB.ioResult = 1;
         err = PBControlAsync((ParmBlkPtr)&gTCPPassiveOpenPB);
         if (err == noErr) {
-            log_to_file_only("PollTCP: Async TCPPassiveOpen initiated.");
+            log_debug("PollTCP: Async TCPPassiveOpen initiated.");
             gTCPState = TCP_STATE_PASSIVE_OPEN_PENDING;
         } else {
-            log_internal_message("PollTCP: PBControlAsync(TCPPassiveOpen) failed immediately: %d. Retrying after delay.", err);
+            log_debug("PollTCP: PBControlAsync(TCPPassiveOpen) failed immediately: %d. Retrying after delay.", err);
             gTCPState = TCP_STATE_IDLE;
             Delay(kErrorRetryDelayTicks, &dummyTimer);
         }
@@ -228,18 +228,18 @@ void PollTCP(GiveTimePtr giveTime)
             gPeerPort = gTCPPassiveOpenPB.csParam.open.remotePort;
             char senderIPStr[INET_ADDRSTRLEN];
             AddrToStr(gPeerIP, senderIPStr);
-            log_internal_message("PollTCP: Incoming connection from %s:%u.", senderIPStr, gPeerPort);
+            log_debug("PollTCP: Incoming connection from %s:%u.", senderIPStr, gPeerPort);
             gTCPState = TCP_STATE_CONNECTED_IN;
             goto CheckConnectedInData;
         } else {
             err = gTCPPassiveOpenPB.ioResult;
             if (err == kRequestAbortedErr) {
-                log_internal_message("PollTCP: Async Passive Open was aborted (err %d), likely by a send operation. Returning to IDLE.", err);
+                log_debug("PollTCP: Async Passive Open was aborted (err %d), likely by a send operation. Returning to IDLE.", err);
             } else {
-                log_internal_message("PollTCP: Async Passive Open failed: %d.", err);
+                log_debug("PollTCP: Async Passive Open failed: %d.", err);
             }
             if (err == kDuplicateSocketErr || err == kConnectionExistsErr) {
-                log_internal_message("PollTCP: Attempting Abort to clear stream after Passive Open failure (%d).", err);
+                log_debug("PollTCP: Attempting Abort to clear stream after Passive Open failure (%d).", err);
                 LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
             }
             gTCPState = TCP_STATE_IDLE;
@@ -248,10 +248,10 @@ void PollTCP(GiveTimePtr giveTime)
         break;
     case TCP_STATE_CONNECTED_IN:
 CheckConnectedInData:
-        log_to_file_only("PollTCP: State CONNECTED_IN. Checking status...");
+        log_debug("PollTCP: State CONNECTED_IN. Checking status...");
         err = LowTCPStatusSyncPoll(kTCPStatusPollTimeoutTicks, giveTime, &amountUnread, &connectionState);
         if (err != noErr) {
-            log_internal_message("PollTCP: Error getting status while CONNECTED_IN: %d. Aborting.", err);
+            log_debug("PollTCP: Error getting status while CONNECTED_IN: %d. Aborting.", err);
             LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
             gTCPState = TCP_STATE_IDLE;
             break;
@@ -259,33 +259,33 @@ CheckConnectedInData:
         if (connectionState != 8 && connectionState != 10 && connectionState != 12 && connectionState != 14) {
             char peerIPStr[INET_ADDRSTRLEN];
             AddrToStr(gPeerIP, peerIPStr);
-            log_internal_message("PollTCP: Connection state is %d (not Established/Closing) for %s. Aborting and returning to IDLE.", connectionState, peerIPStr);
+            log_debug("PollTCP: Connection state is %d (not Established/Closing) for %s. Aborting and returning to IDLE.", connectionState, peerIPStr);
             LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
             gTCPState = TCP_STATE_IDLE;
             break;
         }
-        log_to_file_only("PollTCP: Status OK (State %d). Unread data: %u bytes.", connectionState, amountUnread);
+        log_debug("PollTCP: Status OK (State %d). Unread data: %u bytes.", connectionState, amountUnread);
         if (amountUnread > 0) {
             unsigned short bytesToRead = kTCPRecvBufferSize;
             Boolean markFlag = false, urgentFlag = false;
-            log_to_file_only("PollTCP: Attempting synchronous Rcv poll...");
+            log_debug("PollTCP: Attempting synchronous Rcv poll...");
             err = LowTCPRcvSyncPoll(kTCPRecvPollTimeoutTicks, gTCPRecvBuffer, &bytesToRead, &markFlag, &urgentFlag, giveTime);
             if (err == noErr) {
-                log_to_file_only("PollTCP: Rcv poll got %u bytes.", bytesToRead);
+                log_debug("PollTCP: Rcv poll got %u bytes.", bytesToRead);
                 ProcessTCPReceive(bytesToRead);
             } else if (err == kConnectionClosingErr) {
                 char peerIPStr[INET_ADDRSTRLEN];
                 AddrToStr(gPeerIP, peerIPStr);
-                log_internal_message("PollTCP: Rcv poll indicated connection closing by peer %s. Processing final %u bytes.", peerIPStr, bytesToRead);
+                log_debug("PollTCP: Rcv poll indicated connection closing by peer %s. Processing final %u bytes.", peerIPStr, bytesToRead);
                 if (bytesToRead > 0) ProcessTCPReceive(bytesToRead);
                 LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
                 gTCPState = TCP_STATE_IDLE;
             } else if (err == commandTimeout) {
-                log_to_file_only("PollTCP: Rcv poll timed out despite status showing data? Odd. Will retry status.");
+                log_debug("PollTCP: Rcv poll timed out despite status showing data? Odd. Will retry status.");
             } else {
                 char peerIPStr[INET_ADDRSTRLEN];
                 AddrToStr(gPeerIP, peerIPStr);
-                log_internal_message("PollTCP: Rcv poll failed for %s: %d. Aborting.", peerIPStr, err);
+                log_debug("PollTCP: Rcv poll failed for %s: %d. Aborting.", peerIPStr, err);
                 LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
                 gTCPState = TCP_STATE_IDLE;
             }
@@ -293,18 +293,18 @@ CheckConnectedInData:
             if (connectionState == 14) {
                 char peerIPStr[INET_ADDRSTRLEN];
                 AddrToStr(gPeerIP, peerIPStr);
-                log_internal_message("PollTCP: Peer %s has closed (State: CLOSE_WAIT). Aborting to clean up. Returning to IDLE.", peerIPStr);
+                log_debug("PollTCP: Peer %s has closed (State: CLOSE_WAIT). Aborting to clean up. Returning to IDLE.", peerIPStr);
                 LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
                 gTCPState = TCP_STATE_IDLE;
             } else if (connectionState != 8) {
                 char peerIPStr[INET_ADDRSTRLEN];
                 AddrToStr(gPeerIP, peerIPStr);
-                log_to_file_only("PollTCP: Peer %s in closing state %d with no data. Waiting for MacTCP.", peerIPStr, connectionState);
+                log_debug("PollTCP: Peer %s in closing state %d with no data. Waiting for MacTCP.", peerIPStr, connectionState);
             }
         }
         break;
     default:
-        log_internal_message("PollTCP: In unexpected state %d.", gTCPState);
+        log_debug("PollTCP: In unexpected state %d.", gTCPState);
         gTCPState = TCP_STATE_IDLE;
         break;
     }
@@ -325,11 +325,11 @@ OSErr MacTCP_SendMessageSync(const char *peerIPStr,
     char messageBuffer[BUFFER_SIZE];
     int formattedLen;
     struct wdsEntry sendWDS[2];
-    log_to_file_only("MacTCP_SendMessageSync: Request to send '%s' to %s", msg_type, peerIPStr);
+    log_debug("MacTCP_SendMessageSync: Request to send '%s' to %s", msg_type, peerIPStr);
     if (gMacTCPRefNum == 0) return notOpenErr;
     if (gTCPStream == NULL && gTCPState != TCP_STATE_RELEASING && gTCPState != TCP_STATE_UNINITIALIZED) {
         if (gTCPStream == NULL) {
-            log_internal_message("Error (SendMessage): gTCPStream is NULL and not in deep cleanup state.");
+            log_debug("Error (SendMessage): gTCPStream is NULL and not in deep cleanup state.");
             return kInvalidStreamPtrErr;
         }
     }
@@ -337,71 +337,71 @@ OSErr MacTCP_SendMessageSync(const char *peerIPStr,
         return paramErr;
     }
     if (gTCPState == TCP_STATE_PASSIVE_OPEN_PENDING) {
-        log_internal_message("SendMessage: Stream was in PASSIVE_OPEN_PENDING. Aborting pending listen to allow send.");
+        log_debug("SendMessage: Stream was in PASSIVE_OPEN_PENDING. Aborting pending listen to allow send.");
         OSErr abortErr = LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
         if (abortErr == noErr) {
-            log_to_file_only("SendMessage: Abort of pending passive open successful.");
+            log_debug("SendMessage: Abort of pending passive open successful.");
         } else {
-            log_internal_message("SendMessage: Abort of pending passive open FAILED: %d. Send may fail.", abortErr);
+            log_debug("SendMessage: Abort of pending passive open FAILED: %d. Send may fail.", abortErr);
             return (abortErr == commandTimeout) ? streamBusyErr : abortErr;
         }
         gTCPState = TCP_STATE_IDLE;
     }
     if (gIsSending) {
-        log_internal_message("Warning (SendMessage): Send already in progress.");
+        log_debug("Warning (SendMessage): Send already in progress.");
         return streamBusyErr;
     }
     if (gTCPState != TCP_STATE_IDLE) {
-        log_internal_message("Warning (SendMessage): Stream not IDLE (state %d) after attempting to clear. Cannot send now.", gTCPState);
+        log_debug("Warning (SendMessage): Stream not IDLE (state %d) after attempting to clear. Cannot send now.", gTCPState);
         return streamBusyErr;
     }
     gIsSending = true;
     err = ParseIPv4(peerIPStr, &targetIP);
     if (err != noErr || targetIP == 0) {
-        log_internal_message("Error (SendMessage): Invalid peer IP '%s'.", peerIPStr);
+        log_debug("Error (SendMessage): Invalid peer IP '%s'.", peerIPStr);
         finalErr = paramErr;
         goto SendMessageCleanup;
     }
     formattedLen = format_message(messageBuffer, BUFFER_SIZE, msg_type, local_username, local_ip_str, message_content ? message_content : "");
     if (formattedLen <= 0) {
-        log_internal_message("Error (SendMessage): format_message failed for type '%s'.", msg_type);
+        log_debug("Error (SendMessage): format_message failed for type '%s'.", msg_type);
         finalErr = paramErr;
         goto SendMessageCleanup;
     }
-    log_to_file_only("SendMessage: Connecting to %s...", peerIPStr);
+    log_debug("SendMessage: Connecting to %s...", peerIPStr);
     err = LowTCPActiveOpenSyncPoll(kConnectULPTimeoutSeconds, targetIP, PORT_TCP, giveTime);
     if (err == noErr) {
-        log_to_file_only("SendMessage: Connected successfully to %s.", peerIPStr);
+        log_debug("SendMessage: Connected successfully to %s.", peerIPStr);
         sendWDS[0].length = formattedLen - 1;
         sendWDS[0].ptr = (Ptr)messageBuffer;
         sendWDS[1].length = 0;
         sendWDS[1].ptr = NULL;
-        log_to_file_only("SendMessage: Sending data (%d bytes)...", sendWDS[0].length);
+        log_debug("SendMessage: Sending data (%d bytes)...", sendWDS[0].length);
         err = LowTCPSendSyncPoll(kSendULPTimeoutSeconds, true, (Ptr)sendWDS, giveTime);
         if (err != noErr) {
-            log_internal_message("Error (SendMessage): Send failed to %s: %d", peerIPStr, err);
+            log_debug("Error (SendMessage): Send failed to %s: %d", peerIPStr, err);
             finalErr = err;
         } else {
-            log_to_file_only("SendMessage: Send successful to %s.", peerIPStr);
+            log_debug("SendMessage: Send successful to %s.", peerIPStr);
         }
-        log_to_file_only("SendMessage: Aborting connection to %s...", peerIPStr);
+        log_debug("SendMessage: Aborting connection to %s...", peerIPStr);
         OSErr abortErr = LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, giveTime);
         if (abortErr != noErr) {
-            log_internal_message("Warning (SendMessage): Abort failed for %s: %d", peerIPStr, abortErr);
+            log_debug("Warning (SendMessage): Abort failed for %s: %d", peerIPStr, abortErr);
             if (finalErr == noErr) finalErr = abortErr;
         }
     } else {
-        log_internal_message("Error (SendMessage): Connect to %s failed: %d", peerIPStr, err);
+        log_debug("Error (SendMessage): Connect to %s failed: %d", peerIPStr, err);
         finalErr = err;
         if (err == kConnectionExistsErr && strcmp(msg_type, MSG_QUIT) == 0) {
-            log_internal_message("SendMessage: Connect for QUIT to %s failed with connectionExists. Peer might be in TIME_WAIT. Assuming QUIT effectively sent.", peerIPStr);
+            log_debug("SendMessage: Connect for QUIT to %s failed with connectionExists. Peer might be in TIME_WAIT. Assuming QUIT effectively sent.", peerIPStr);
             finalErr = noErr;
         }
     }
 SendMessageCleanup:
     gIsSending = false;
     gTCPState = TCP_STATE_IDLE;
-    log_to_file_only("MacTCP_SendMessageSync to %s for '%s': Released send lock. Final Status: %d.", peerIPStr, msg_type, finalErr);
+    log_debug("MacTCP_SendMessageSync to %s for '%s': Released send lock. Final Status: %d.", peerIPStr, msg_type, finalErr);
     return finalErr;
 }
 static void ProcessTCPReceive(unsigned short dataLength)
@@ -420,12 +420,12 @@ static void ProcessTCPReceive(unsigned short dataLength)
         OSErr addrErr = AddrToStr(gPeerIP, senderIPStrFromConnection);
         if (addrErr != noErr) {
             sprintf(senderIPStrFromConnection, "%lu.%lu.%lu.%lu", (gPeerIP >> 24) & 0xFF, (gPeerIP >> 16) & 0xFF, (gPeerIP >> 8) & 0xFF, gPeerIP & 0xFF);
-            log_to_file_only("ProcessTCPReceive: AddrToStr failed for gPeerIP %lu. Using manual format '%s'.", gPeerIP, senderIPStrFromConnection);
+            log_debug("ProcessTCPReceive: AddrToStr failed for gPeerIP %lu. Using manual format '%s'.", gPeerIP, senderIPStrFromConnection);
         }
         if (dataLength < kTCPRecvBufferSize) gTCPRecvBuffer[dataLength] = '\0';
         else gTCPRecvBuffer[kTCPRecvBufferSize - 1] = '\0';
         if (parse_message(gTCPRecvBuffer, dataLength, senderIPStrFromPayload, senderUsername, msgType, content) == 0) {
-            log_to_file_only("ProcessTCPReceive: Calling shared handler for '%s' from %s@%s (payload IP: %s).",
+            log_debug("ProcessTCPReceive: Calling shared handler for '%s' from %s@%s (payload IP: %s).",
                              msgType, senderUsername, senderIPStrFromConnection, senderIPStrFromPayload);
             handle_received_tcp_message(senderIPStrFromConnection,
                                         senderUsername,
@@ -434,15 +434,15 @@ static void ProcessTCPReceive(unsigned short dataLength)
                                         &mac_callbacks,
                                         NULL);
             if (strcmp(msgType, MSG_QUIT) == 0) {
-                log_internal_message("ProcessTCPReceive: QUIT received from %s. State machine will handle closure.", senderIPStrFromConnection);
+                log_debug("ProcessTCPReceive: QUIT received from %s. State machine will handle closure.", senderIPStrFromConnection);
             }
         } else {
-            log_internal_message("Failed to parse TCP message from %s (%u bytes). Discarding.", senderIPStrFromConnection, dataLength);
+            log_debug("Failed to parse TCP message from %s (%u bytes). Discarding.", senderIPStrFromConnection, dataLength);
         }
     } else if (dataLength == 0) {
-        log_to_file_only("ProcessTCPReceive: Received 0 bytes (likely connection closing signal or KeepAlive).");
+        log_debug("ProcessTCPReceive: Received 0 bytes (likely connection closing signal or KeepAlive).");
     } else {
-        log_internal_message("ProcessTCPReceive: Error - dataLength > 0 but buffer is NULL or other issue?");
+        log_debug("ProcessTCPReceive: Error - dataLength > 0 but buffer is NULL or other issue?");
     }
 }
 static OSErr LowLevelSyncPoll(TCPiopb *pBlock, GiveTimePtr giveTime, SInt16 csCode, SInt16 appPollTimeoutTicks)
@@ -453,12 +453,12 @@ static OSErr LowLevelSyncPoll(TCPiopb *pBlock, GiveTimePtr giveTime, SInt16 csCo
     if (gMacTCPRefNum == 0) return notOpenErr;
     if (csCode != TCPCreate && csCode != TCPRelease) {
         if (gTCPStream == NULL) {
-            log_internal_message("Error (LowLevelSyncPoll %d): gTCPStream is NULL.", csCode);
+            log_debug("Error (LowLevelSyncPoll %d): gTCPStream is NULL.", csCode);
             return kInvalidStreamPtrErr;
         }
         pBlock->tcpStream = gTCPStream;
     } else if (csCode == TCPRelease && pBlock->tcpStream == NULL) {
-        log_internal_message("Error (LowLevelSyncPoll TCPRelease): pBlock->tcpStream is NULL.");
+        log_debug("Error (LowLevelSyncPoll TCPRelease): pBlock->tcpStream is NULL.");
         return kInvalidStreamPtrErr;
     }
     pBlock->ioCompletion = nil;
@@ -467,13 +467,13 @@ static OSErr LowLevelSyncPoll(TCPiopb *pBlock, GiveTimePtr giveTime, SInt16 csCo
     pBlock->csCode = csCode;
     err = PBControlAsync((ParmBlkPtr)pBlock);
     if (err != noErr) {
-        log_internal_message("Error (LowLevelSyncPoll %d): PBControlAsync failed immediately: %d", csCode, err);
+        log_debug("Error (LowLevelSyncPoll %d): PBControlAsync failed immediately: %d", csCode, err);
         return err;
     }
     while (pBlock->ioResult > 0) {
         giveTime();
         if (appPollTimeoutTicks > 0 && (TickCount() - startTime) >= (unsigned long)appPollTimeoutTicks) {
-            log_to_file_only("LowLevelSyncPoll (%d): App-level poll timeout (%d ticks) reached.", csCode, appPollTimeoutTicks);
+            log_debug("LowLevelSyncPoll (%d): App-level poll timeout (%d ticks) reached.", csCode, appPollTimeoutTicks);
             return commandTimeout;
         }
     }
@@ -496,12 +496,12 @@ static OSErr LowTCPCreateSync(short macTCPRefNum, StreamPtr *streamPtrOut, Ptr r
     if (err == noErr) {
         *streamPtrOut = pbCreate.tcpStream;
         if (*streamPtrOut == NULL) {
-            log_internal_message("Error (LowTCPCreateSync): PBControlSync ok but returned NULL stream.");
+            log_debug("Error (LowTCPCreateSync): PBControlSync ok but returned NULL stream.");
             err = ioErr;
         }
     } else {
         *streamPtrOut = NULL;
-        log_internal_message("Error (LowTCPCreateSync): PBControlSync failed: %d", err);
+        log_debug("Error (LowTCPCreateSync): PBControlSync failed: %d", err);
     }
     return err;
 }
@@ -567,7 +567,7 @@ static OSErr LowTCPStatusSyncPoll(SInt16 appPollTimeoutTicks, GiveTimePtr giveTi
     } else {
         *amtUnread = 0;
         *connState = 0;
-        log_internal_message("Warning (LowTCPStatusSyncPoll): Failed: %d", err);
+        log_debug("Warning (LowTCPStatusSyncPoll): Failed: %d", err);
         if (err == kInvalidStreamPtrErr) err = kConnectionDoesntExistErr;
     }
     return err;
@@ -578,19 +578,19 @@ static OSErr LowTCPAbortSyncPoll(Byte ulpTimeoutSeconds, GiveTimePtr giveTime)
     TCPiopb pbAbort;
     SInt16 pollTimeout;
     if (gTCPStream == NULL) {
-        log_to_file_only("LowTCPAbortSyncPoll: Stream is NULL, nothing to abort.");
+        log_debug("LowTCPAbortSyncPoll: Stream is NULL, nothing to abort.");
         return noErr;
     }
     memset(&pbAbort, 0, sizeof(TCPiopb));
     pollTimeout = (SInt16)ulpTimeoutSeconds * 60 + 30;
     err = LowLevelSyncPoll(&pbAbort, giveTime, TCPAbort, pollTimeout);
     if (err == kConnectionDoesntExistErr || err == kInvalidStreamPtrErr || err == kRequestAbortedErr) {
-        log_to_file_only("LowTCPAbortSyncPoll: Abort completed (err %d). Considered OK for reset.", err);
+        log_debug("LowTCPAbortSyncPoll: Abort completed (err %d). Considered OK for reset.", err);
         err = noErr;
     } else if (err != noErr) {
-        log_internal_message("Warning (LowTCPAbortSyncPoll): Abort poll failed with error: %d", err);
+        log_debug("Warning (LowTCPAbortSyncPoll): Abort poll failed with error: %d", err);
     } else {
-        log_to_file_only("LowTCPAbortSyncPoll: Abort poll successful.");
+        log_debug("LowTCPAbortSyncPoll: Abort poll successful.");
     }
     return err;
 }
@@ -606,9 +606,9 @@ static OSErr LowTCPReleaseSync(short macTCPRefNum, StreamPtr streamToRelease)
     pbRelease.tcpStream = streamToRelease;
     err = PBControlSync((ParmBlkPtr)&pbRelease);
     if (err != noErr && err != kInvalidStreamPtrErr) {
-        log_internal_message("Warning (LowTCPReleaseSync): PBControlSync failed: %d", err);
+        log_debug("Warning (LowTCPReleaseSync): PBControlSync failed: %d", err);
     } else if (err == kInvalidStreamPtrErr) {
-        log_to_file_only("Info (LowTCPReleaseSync): Stream 0x%lX already invalid or released. Error: %d", (unsigned long)streamToRelease, err);
+        log_debug("Info (LowTCPReleaseSync): Stream 0x%lX already invalid or released. Error: %d", (unsigned long)streamToRelease, err);
         err = noErr;
     }
     return err;

@@ -27,20 +27,20 @@ void init_app_state(app_state_t *state, const char *username)
 }
 void cleanup_app_state(app_state_t *state)
 {
-    log_internal_message("Starting POSIX cleanup...");
+    log_debug("Starting POSIX cleanup...");
     if (state->tcp_socket >= 0) {
-        log_internal_message("Closing TCP socket %d", state->tcp_socket);
+        log_debug("Closing TCP socket %d", state->tcp_socket);
         close(state->tcp_socket);
         state->tcp_socket = -1;
     }
     if (state->udp_socket >= 0) {
-        log_internal_message("Closing UDP socket %d", state->udp_socket);
+        log_debug("Closing UDP socket %d", state->udp_socket);
         close(state->udp_socket);
         state->udp_socket = -1;
     }
-    log_internal_message("Destroying peers mutex");
+    log_debug("Destroying peers mutex");
     pthread_mutex_destroy(&state->peers_mutex);
-    log_internal_message("POSIX cleanup complete");
+    log_debug("POSIX cleanup complete");
     g_state = NULL;
 }
 int add_peer(app_state_t *state, const char *ip, const char *username)
