@@ -3,7 +3,7 @@
 #include "protocol.h"
 #include "../shared/discovery.h"
 #include "peer.h"
-#include "network.h"
+#include "mactcp_network.h"
 #include "dialog.h"
 #include "dialog_peerlist.h"
 #include <Devices.h>

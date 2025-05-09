@@ -1,6 +1,6 @@
 #include "dialog.h"
 #include "logging.h"
-#include "network.h"
+#include "mactcp_network.h"
 #include "peer.h"
 #include "./mactcp_messaging.h"
 #include "../shared/logging.h"

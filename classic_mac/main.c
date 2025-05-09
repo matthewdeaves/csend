@@ -14,7 +14,7 @@
 #include <Sound.h>
 #include <stdio.h>
 #include "logging.h"
-#include "network.h"
+#include "mactcp_network.h"
 #include "dialog.h"
 #include "peer.h"
 #include "dialog_peerlist.h"

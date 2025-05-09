@@ -4,7 +4,7 @@
 #include "peer.h"
 #include "dialog.h"
 #include "dialog_peerlist.h"
-#include "network.h"
+#include "mactcp_network.h"
 #include "../shared/messaging.h"
 #include <Devices.h>
 #include <Errors.h>
