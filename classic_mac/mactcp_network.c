@@ -20,92 +20,92 @@ OSErr InitializeNetworking(void)
     OSErr err;
     ParamBlockRec pbOpen;
     CntrlParam cntrlPB;
-    log_internal_message("Initializing Networking...");
+    log_debug("Initializing Networking...");
     memset(&pbOpen, 0, sizeof(ParamBlockRec));
     pbOpen.ioParam.ioNamePtr = (StringPtr)kTCPDriverName;
     pbOpen.ioParam.ioPermssn = fsCurPerm;
-    log_internal_message("Attempting PBOpenSync for .IPP driver...");
+    log_debug("Attempting PBOpenSync for .IPP driver...");
     err = PBOpenSync(&pbOpen);
     if (err != noErr) {
-        log_internal_message("Error: PBOpenSync for MacTCP driver failed. Error: %d", err);
+        log_debug("Error: PBOpenSync for MacTCP driver failed. Error: %d", err);
         gMacTCPRefNum = 0;
         return err;
     }
     gMacTCPRefNum = pbOpen.ioParam.ioRefNum;
-    log_internal_message("PBOpenSync succeeded (RefNum: %d).", gMacTCPRefNum);
+    log_debug("PBOpenSync succeeded (RefNum: %d).", gMacTCPRefNum);
     memset(&cntrlPB, 0, sizeof(CntrlParam));
     cntrlPB.ioCRefNum = gMacTCPRefNum;
     cntrlPB.csCode = ipctlGetAddr;
-    log_internal_message("Attempting PBControlSync for ipctlGetAddr...");
+    log_debug("Attempting PBControlSync for ipctlGetAddr...");
     err = PBControlSync((ParmBlkPtr)&cntrlPB);
     if (err != noErr) {
-        log_internal_message("Error: PBControlSync(ipctlGetAddr) failed. Error: %d", err);
+        log_debug("Error: PBControlSync(ipctlGetAddr) failed. Error: %d", err);
         gMacTCPRefNum = 0;
         return err;
     }
-    log_internal_message("PBControlSync(ipctlGetAddr) succeeded.");
+    log_debug("PBControlSync(ipctlGetAddr) succeeded.");
     BlockMoveData(&cntrlPB.csParam[0], &gMyLocalIP, sizeof(ip_addr));
-    log_internal_message("Attempting OpenResolver...");
+    log_debug("Attempting OpenResolver...");
     err = OpenResolver(NULL);
     if (err != noErr) {
-        log_internal_message("Error: OpenResolver failed. Error: %d", err);
+        log_debug("Error: OpenResolver failed. Error: %d", err);
         gMacTCPRefNum = 0;
         return err;
     } else {
-        log_internal_message("OpenResolver succeeded.");
+        log_debug("OpenResolver succeeded.");
     }
-    log_internal_message("Attempting AddrToStr for IP: %lu...", gMyLocalIP);
+    log_debug("Attempting AddrToStr for IP: %lu...", gMyLocalIP);
     err = AddrToStr(gMyLocalIP, gMyLocalIPStr);
     if (err != noErr) {
-        log_internal_message("Warning: AddrToStr returned error %d. Result string: '%s'", err, gMyLocalIPStr);
+        log_debug("Warning: AddrToStr returned error %d. Result string: '%s'", err, gMyLocalIPStr);
         if (gMyLocalIP == 0 || gMyLocalIPStr[0] == '\0' || strcmp(gMyLocalIPStr, "0.0.0.0") == 0) {
-            log_internal_message("Error: AddrToStr failed to get a valid IP string. Using fallback 127.0.0.1 for display/formatting.");
+            log_debug("Error: AddrToStr failed to get a valid IP string. Using fallback 127.0.0.1 for display/formatting.");
             strcpy(gMyLocalIPStr, "127.0.0.1");
             if (gMyLocalIP == 0) {
                 ParseIPv4("127.0.0.1", &gMyLocalIP);
             }
         }
     } else {
-        log_internal_message("AddrToStr finished. Local IP: '%s'", gMyLocalIPStr);
+        log_debug("AddrToStr finished. Local IP: '%s'", gMyLocalIPStr);
     }
     err = InitUDPDiscoveryEndpoint(gMacTCPRefNum);
     if (err != noErr) {
-        log_internal_message("Fatal: UDP Discovery initialization failed (%d). Cleaning up.", err);
+        log_debug("Fatal: UDP Discovery initialization failed (%d). Cleaning up.", err);
         CloseResolver();
         gMacTCPRefNum = 0;
         return err;
     }
     err = InitTCP(gMacTCPRefNum);
     if (err != noErr) {
-        log_internal_message("Fatal: TCP initialization failed (%d). Cleaning up.", err);
+        log_debug("Fatal: TCP initialization failed (%d). Cleaning up.", err);
         CleanupUDPDiscoveryEndpoint(gMacTCPRefNum);
         CloseResolver();
         gMacTCPRefNum = 0;
         return err;
     }
-    log_internal_message("Networking initialization complete.");
+    log_debug("Networking initialization complete.");
     return noErr;
 }
 void CleanupNetworking(void)
 {
     OSErr err;
-    log_internal_message("Cleaning up Networking (Streams, DNR, Driver)...");
+    log_debug("Cleaning up Networking (Streams, DNR, Driver)...");
     CleanupTCP(gMacTCPRefNum);
     CleanupUDPDiscoveryEndpoint(gMacTCPRefNum);
-    log_internal_message("Attempting CloseResolver...");
+    log_debug("Attempting CloseResolver...");
     err = CloseResolver();
     if (err != noErr) {
-        log_internal_message("Warning: CloseResolver failed. Error: %d", err);
+        log_debug("Warning: CloseResolver failed. Error: %d", err);
     } else {
-        log_internal_message("CloseResolver succeeded.");
+        log_debug("CloseResolver succeeded.");
     }
     if (gMacTCPRefNum != 0) {
-        log_internal_message("MacTCP driver (RefNum: %d) was opened by this application. It will remain open for the system.", gMacTCPRefNum);
+        log_debug("MacTCP driver (RefNum: %d) was opened by this application. It will remain open for the system.", gMacTCPRefNum);
         gMacTCPRefNum = 0;
     } else {
-        log_internal_message("MacTCP driver was not opened by this application or already cleaned up.");
+        log_debug("MacTCP driver was not opened by this application or already cleaned up.");
     }
-    log_internal_message("Networking cleanup complete.");
+    log_debug("Networking cleanup complete.");
 }
 void YieldTimeToSystem(void)
 {
@@ -129,14 +129,14 @@ OSErr ParseIPv4(const char *ip_str, ip_addr *out_addr)
         char *endptr;
         parts[i] = strtoul(token, &endptr, 10);
         if (*endptr != '\0' || parts[i] > 255) {
-            log_internal_message("ParseIPv4: Invalid part '%s' in IP string '%s'", token, ip_str);
+            log_debug("ParseIPv4: Invalid part '%s' in IP string '%s'", token, ip_str);
             *out_addr = 0;
             return paramErr;
         }
         i++;
     }
     if (i != 4) {
-        log_internal_message("ParseIPv4: Incorrect number of parts (%d) in IP string '%s'", i, ip_str);
+        log_debug("ParseIPv4: Incorrect number of parts (%d) in IP string '%s'", i, ip_str);
         *out_addr = 0;
         return paramErr;
     }

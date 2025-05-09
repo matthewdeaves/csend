@@ -33,7 +33,7 @@ void print_peers(app_state_t *state)
     for (int i = 0; i < MAX_PEERS; i++) {
         if (state->peer_manager.peers[i].active) {
             if (difftime(now, state->peer_manager.peers[i].last_seen) > PEER_TIMEOUT) {
-                log_internal_message("Peer %s@%s timed out (detected in print_peers).",
+                log_debug("Peer %s@%s timed out (detected in print_peers).",
                                      state->peer_manager.peers[i].username,
                                      state->peer_manager.peers[i].ip);
                 state->peer_manager.peers[i].active = 0;
@@ -106,7 +106,7 @@ int handle_command(app_state_t *state, const char *input)
         pthread_mutex_unlock(&state->peers_mutex);
         if (found) {
             if (send_message(target_ip, msg_start, MSG_TEXT, state->username) < 0) {
-                log_internal_message("Failed to send message to %s", target_ip);
+                log_debug("Failed to send message to %s", target_ip);
             } else {
                 log_app_event("Message sent to peer %d (%s)", peer_num_input, target_ip);
                 terminal_display_app_message("Message sent to peer %d (%s)", peer_num_input, target_ip);
@@ -126,7 +126,7 @@ int handle_command(app_state_t *state, const char *input)
             if (state->peer_manager.peers[i].active &&
                     (difftime(time(NULL), state->peer_manager.peers[i].last_seen) <= PEER_TIMEOUT)) {
                 if (send_message(state->peer_manager.peers[i].ip, message_content, MSG_TEXT, state->username) < 0) {
-                    log_internal_message("Failed to send broadcast message to %s", state->peer_manager.peers[i].ip);
+                    log_debug("Failed to send broadcast message to %s", state->peer_manager.peers[i].ip);
                 } else {
                     sent_count++;
                 }
@@ -137,27 +137,27 @@ int handle_command(app_state_t *state, const char *input)
         terminal_display_app_message("Broadcast message sent to %d active peer(s).", sent_count);
         return 0;
     } else if (strcmp(input, "/quit") == 0) {
-        log_internal_message("Initiating quit sequence...");
+        log_debug("Initiating quit sequence...");
         pthread_mutex_lock(&state->peers_mutex);
-        log_internal_message("Sending QUIT notifications to peers...");
+        log_debug("Sending QUIT notifications to peers...");
         int notify_count = 0;
         for (int i = 0; i < MAX_PEERS; i++) {
             if (state->peer_manager.peers[i].active) {
                 if (send_message(state->peer_manager.peers[i].ip, "", MSG_QUIT, state->username) < 0) {
-                    log_internal_message("Failed to send quit notification to %s", state->peer_manager.peers[i].ip);
+                    log_debug("Failed to send quit notification to %s", state->peer_manager.peers[i].ip);
                 } else {
                     notify_count++;
                 }
             }
         }
         pthread_mutex_unlock(&state->peers_mutex);
-        log_internal_message("Quit notifications sent to %d peer(s).", notify_count);
+        log_debug("Quit notifications sent to %d peer(s).", notify_count);
         if (g_state) {
             g_state->running = 0;
         } else {
             state->running = 0;
         }
-        log_internal_message("Exiting application via /quit command...");
+        log_debug("Exiting application via /quit command...");
         return 1;
     } else {
         log_app_event("Unknown command: '%s'. Type /help for available commands.", input);
@@ -197,7 +197,7 @@ void *user_input_thread(void *arg)
         if (fgets(input, BUFFER_SIZE, stdin) == NULL) {
             if (state->running) {
                 if (feof(stdin)) {
-                    log_internal_message("EOF detected on stdin. Exiting input loop.");
+                    log_debug("EOF detected on stdin. Exiting input loop.");
                     if (g_state) g_state->running = 0;
                     else state->running = 0;
                 } else {
@@ -218,7 +218,7 @@ void *user_input_thread(void *arg)
         printf("> ");
         fflush(stdout);
     }
-    log_internal_message("User input thread stopped.");
+    log_debug("User input thread stopped.");
     return NULL;
 }
 void terminal_display_app_message(const char *format, ...)
