@@ -9,6 +9,8 @@ The **Classic Mac version** is a GUI application for System 7.x (via Retro68). I
 Both versions utilize a shared C codebase for core protocol handling, peer list management, and the underlying discovery and messaging logic.
 You can watch a [demo video on YouTube](https://www.youtube.com/watch?v=_9iXCBZ_FjE) (Note: Video shows an older version; current functionality is more advanced!).
 
+Detailed information on the evolving versions of the project can be found [here](TAGS.md).
+
 ## Project Structure
 
 *   `posix/`: Source code specific to the POSIX (Linux, macOS) version.
