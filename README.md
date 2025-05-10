@@ -1,13 +1,12 @@
 # P2P Terminal Chat Application (csend)
 
-A peer-to-peer chat application built in C. This project aims to support multiple platforms, starting with POSIX systems (Linux, macOS) and Classic Macintosh (System 7.x via Retro68).
+`csend` is a cross-platform peer-to-peer chat application in C, with functional versions for POSIX systems and Classic Macintosh.
 
-Currently, the POSIX version is functional and utilizes UDP for peer discovery on the local network and TCP for direct messaging between peers. It is multi-threaded and includes a basic command-line interface. Docker support is provided for easy setup and testing of the POSIX version.
+The **POSIX version** is a multi-threaded, command-line application. It uses UDP for local network peer discovery and TCP for direct messaging. Docker support is provided for testing.
 
-The Classic Mac version is also functional, providing a GUI-based chat experience. It initializes MacTCP networking, discovers peers using UDP broadcasts (similar to POSIX), manages a peer list, and handles TCP communication for sending and receiving messages (TEXT and QUIT). Due to the nature of MacTCP and the single-threaded event loop, it employs a strategy of asynchronously listening for incoming TCP connections and temporarily aborting this listen to perform synchronous-style outgoing TCP operations on a single, shared TCP stream.
+The **Classic Mac version** is a GUI application for System 7.x (via Retro68). It utilizes MacTCP for UDP peer discovery and TCP messaging (TEXT and QUIT types). Its single-threaded event loop manages a shared TCP stream by primarily listening asynchronously for incoming connections, and temporarily aborting this to perform synchronous outgoing TCP operations before resuming the listen.
 
-Detailed information on the versions of the project can be found [here](TAGS.md). I'm building this out in a way to help others learn and follow along with tags to document the major stages of development from simple client/server apps through to a combined and then shared set C source for different platforms.
-
+Both versions utilize a shared C codebase for core protocol handling, peer list management, and the underlying discovery and messaging logic.
 You can watch a [demo video on YouTube](https://www.youtube.com/watch?v=_9iXCBZ_FjE) (Note: Video shows an older version; current functionality is more advanced!).
 
 ## Project Structure
@@ -30,70 +29,71 @@ You can watch a [demo video on YouTube](https://www.youtube.com/watch?v=_9iXCBZ_
 
 The `shared/` directory contains the core logic that is platform-independent:
 
-*   **Common Definitions (`common_defs.h`):** Provides essential constants like `BUFFER_SIZE`, `MAX_PEERS`, `PORT_TCP`, `PORT_UDP`, `DISCOVERY_INTERVAL`, `PEER_TIMEOUT`, and the definition of the `peer_t` structure used for storing peer information.
-*   **Protocol (`protocol.c`/`.h`):** Defines the message format (`MAGIC_NUMBER|TYPE|SENDER@IP|CONTENT`) and provides functions for formatting and parsing messages. Handles byte order differences between platforms.
-*   **Peer Management (`peer_shared.c`/`.h`):** Manages the list of peers (`peer_t`), including adding, updating, finding, and pruning timed-out peers. Handles platform-specific time functions (`TickCount()` vs `time()`).
-*   **Discovery Logic (`discovery_logic.c`/`.h`):** Processes incoming UDP packets (`DISCOVERY`, `DISCOVERY_RESPONSE`). Uses platform-specific callbacks to send responses, update the peer list, and notify the UI.
-*   **Messaging Logic (`messaging_logic.c`/`.h`):** Processes the content of received TCP messages (`TEXT`, `QUIT`). Uses platform-specific callbacks to update peer status, display messages, and handle quit notifications.
+*   **Common Definitions (`common_defs.h`):** Provides essential constants like `BUFFER_SIZE`, `INET_ADDRSTRLEN`, `PORT_TCP`, `PORT_UDP`, `MAX_PEERS`, `DISCOVERY_INTERVAL`, `PEER_TIMEOUT`, and the definition of the `peer_t` structure used for storing peer information (IP, username, last_seen, active status).
+*   **Protocol (`protocol.c`/`.h`):** Defines the message format (`MSG_MAGIC_NUMBER|TYPE|SENDER@IP|CONTENT`) and provides functions for formatting (`format_message`) and parsing (`parse_message`) messages. Handles byte order differences for `MSG_MAGIC_NUMBER` using `htonl`/`ntohl` (or platform-specific equivalents for Classic Mac). Defines message types `MSG_DISCOVERY`, `MSG_DISCOVERY_RESPONSE`, `MSG_TEXT`, and `MSG_QUIT`.
+*   **Peer Management (`peer.c`/`.h`):** Manages the list of peers (`peer_t` array within `peer_manager_t`), including initializing the list (`peer_shared_init_list`), adding/updating peers (`peer_shared_add_or_update`), finding peers by IP (`peer_shared_find_by_ip`), finding empty slots (`peer_shared_find_empty_slot`), and pruning timed-out peers (`peer_shared_prune_timed_out`). Handles platform-specific time functions (`TickCount()` for Classic Mac, `time()` for POSIX) for `last_seen` and timeout calculations.
+*   **Discovery Logic (`discovery.c`/`.h`):** Processes incoming UDP packets (`discovery_logic_process_packet`) for `MSG_DISCOVERY` and `MSG_DISCOVERY_RESPONSE`. Uses platform-specific callbacks (`discovery_platform_callbacks_t`) to send responses, add/update peers in the platform's peer list, and notify the UI/peer list display of updates.
+*   **Messaging Logic (`messaging.c`/`.h`):** Processes the content of received TCP messages (`handle_received_tcp_message`) for `MSG_TEXT` and `MSG_QUIT`. Uses platform-specific callbacks (`tcp_platform_callbacks_t`) to add/update peer status, display text messages in the UI, and mark peers as inactive upon receiving a `MSG_QUIT`.
+*   **Logging (`logging.c`/`.h`):** Provides a common logging interface (`log_init`, `log_shutdown`, `log_debug`, `log_app_event`). Uses platform-specific callbacks (`platform_logging_callbacks_t`) for timestamp generation and displaying debug messages to the UI/console. Also handles writing logs to a platform-specific file (e.g., `app_posix.log`, `app_classic_mac.log`).
 
 ## Features (POSIX Version)
 
-*   **Peer Discovery:** Automatically discovers other peers on the same local network using UDP broadcasts. Implements `discovery_platform_callbacks_t` for POSIX-specific network operations and peer list updates (`posix/discovery.c`).
-*   **Direct Messaging (TCP):** Sends and receives text messages and quit notifications directly between peers using TCP connections. Implements `tcp_platform_callbacks_t` for POSIX behavior (`posix/messaging.c`).
-*   **Peer Management:** Maintains a list of active peers using the shared peer logic, protected by a mutex, and updates their status based on network activity and timeouts (`posix/peer.c`).
+*   **Peer Discovery:** Automatically discovers other peers on the same local network using UDP broadcasts. Implements `discovery_platform_callbacks_t` for POSIX-specific network operations (sending UDP responses via `posix_send_discovery_response`) and peer list updates (via `posix_add_or_update_peer` which calls `add_peer`) (`posix/discovery.c`).
+*   **Direct Messaging (TCP):** Sends and receives text messages and quit notifications directly between peers using TCP connections. Implements `tcp_platform_callbacks_t` for POSIX behavior, including adding/updating peers (`posix_tcp_add_or_update_peer`), displaying messages to the terminal (`posix_tcp_display_text_message`), and marking peers inactive (`posix_tcp_mark_peer_inactive`) (`posix/messaging.c`).
+*   **Peer Management:** Maintains a list of active peers in an `app_state_t` structure, using the shared peer logic. Access to the peer list is protected by a `pthread_mutex_t`. Updates peer status based on network activity and timeouts (`posix/peer.c`).
 *   **Terminal UI:** Provides a simple command-line interface for user interaction (`posix/ui_terminal.c`).
-*   **Command Handling:** Supports commands like `/list`, `/send <peer_number> <message>`, `/broadcast <message>`, `/quit`, and `/help`. The `/broadcast` command sends individual TCP messages to all known active peers.
-*   **Multi-threading:** Uses Pthreads to handle user input, network listening (TCP), and peer discovery (UDP) concurrently (`posix/peer.c`).
-*   **Graceful Shutdown:** Handles `SIGINT` (Ctrl+C) and `SIGTERM` signals for clean termination, notifying other peers by sending QUIT messages (`posix/signal_handler.c`).
-*   **Network Utilities:** Includes helpers for getting the local IP address and setting socket timeouts (`posix/network.c`).
-*   **Logging:** Basic timestamped logging to stdout (`posix/logging.c`).
+*   **Command Handling:** Supports commands like `/list`, `/send <peer_number> <message>`, `/broadcast <message>`, `/debug` (toggles debug output visibility), `/quit`, and `/help`. The `/broadcast` command sends individual TCP messages to all known active peers.
+*   **Multi-threading:** Uses Pthreads to handle user input (`user_input_thread`), network listening for TCP connections (`listener_thread`), and peer discovery/UDP listening (`discovery_thread`) concurrently (`posix/main.c`).
+*   **Graceful Shutdown:** Handles `SIGINT` (Ctrl+C) and `SIGTERM` signals for clean termination (`posix/signal_handler.c`). The `/quit` command also initiates shutdown, notifying other peers by sending `MSG_QUIT` messages (`posix/ui_terminal.c`).
+*   **Network Utilities:** Includes helpers for getting the local IP address (`get_local_ip`) and setting socket timeouts (`set_socket_timeout`) (`posix/network.c`).
+*   **Logging:** Uses the shared logging system. Platform-specific callbacks provide POSIX-style timestamps and print debug messages to `stdout` (`posix/logging.c`). Log messages are also written to `csend_posix.log`.
 *   **Docker Support:** Includes `Dockerfile`, `docker-compose.yml` (and a helper script `docker.sh`) to easily build and run multiple peer instances.
 
 ## Features (Classic Mac Version)
 
 *   **Networking Stack:**
-    *   Initializes MacTCP driver and DNR (Domain Name Resolver) using `DNR.c` for IP-to-string conversion (`classic_mac/network.c`).
-    *   Obtains the local IP address from MacTCP.
+    *   Initializes MacTCP driver using `PBOpenSync` (`classic_mac/mactcp_network.c`).
+    *   Initializes DNR (Domain Name Resolver) using `DNR.c` for IP-to-string conversion (`AddrToStr`) and string-to-IP (`ParseIPv4` helper).
+    *   Obtains the local IP address from MacTCP using `ipctlGetAddr`.
 *   **Peer Discovery (UDP):**
-    *   Initializes a UDP endpoint using MacTCP (`classic_mac/discovery.c`).
-    *   Sends periodic discovery broadcasts (`MSG_DISCOVERY`) synchronously.
-    *   Listens for UDP packets by polling an asynchronous `UDPRead` operation.
-    *   Processes received UDP packets (discovery and responses) using the shared `discovery_logic.c`, with Mac-specific callbacks for sending responses (`SendDiscoveryResponseSync`) and updating the peer list.
+    *   Initializes a UDP endpoint using MacTCP's `UDPCreate` (`classic_mac/mactcp_discovery.c`).
+    *   Sends periodic discovery broadcasts (`MSG_DISCOVERY`) synchronously using `SendDiscoveryBroadcastSync`.
+    *   Listens for UDP packets by polling an asynchronous `UDPRead` operation (`PollUDPListener`).
+    *   Processes received UDP packets using the shared `discovery.c` (`discovery_logic_process_packet`), with Mac-specific callbacks: `mac_send_discovery_response` (uses `SendDiscoveryResponseSync`) for sending responses, `mac_add_or_update_peer` (uses `AddOrUpdatePeer`) for updating the peer list, and `mac_notify_peer_list_updated` for triggering GUI updates.
     *   Manages UDP receive buffers via asynchronous `UDPBfrReturn` (polled).
 *   **Direct Messaging (TCP):**
-    *   Manages a **single TCP stream** for both incoming and outgoing connections (`classic_mac/tcp.c`).
+    *   Manages a **single TCP stream** for both incoming and outgoing connections (`classic_mac/mactcp_messaging.c`).
     *   **Incoming Connections:**
-        *   Listens for incoming TCP connections on `PORT_TCP` using an asynchronous `TCPPassiveOpen` call, which is polled in the main event loop.
-        *   When a connection is established, it reads data using synchronous-style polling on `TCPRcv`.
-        *   Received data is parsed using the shared `protocol.c` and then processed by the shared `messaging_logic.c` with Mac-specific callbacks to display messages and update peer status.
-    *   **Outgoing Connections (`TCP_SendTextMessageSync`, `TCP_SendQuitMessagesSync`):**
-        *   To send a message, if a passive listen is pending, it is **aborted**.
-        *   An active TCP connection is then established to the target peer using synchronous-style polling of `TCPActiveOpen`.
-        *   The formatted message (TEXT or QUIT) is sent using synchronous-style polling of `TCPSend`.
-        *   The connection is then immediately closed using `TCPAbort`.
+        *   Listens for incoming TCP connections on `PORT_TCP` using an asynchronous `TCPPassiveOpen` call, which is polled in the main event loop (`PollTCP`).
+        *   When a connection is established, it reads data using synchronous-style polling of `TCPRcv` (via `LowTCPRcvSyncPoll`).
+        *   Received data is parsed using the shared `protocol.c` and then processed by the shared `messaging.c` (`handle_received_tcp_message`) with Mac-specific callbacks: `mac_tcp_add_or_update_peer`, `mac_tcp_display_text_message`, and `mac_tcp_mark_peer_inactive`.
+    *   **Outgoing Connections (`MacTCP_SendMessageSync`):**
+        *   To send a message, if a passive listen (`TCPPassiveOpen`) is pending, it is **aborted** using `LowTCPAbortSyncPoll`.
+        *   An active TCP connection is then established to the target peer using synchronous-style polling of `TCPActiveOpen` (via `LowTCPActiveOpenSyncPoll`).
+        *   The formatted message (TEXT or QUIT) is sent using synchronous-style polling of `TCPSend` (via `LowTCPSendSyncPoll`).
+        *   The connection is then immediately closed using `TCPAbort` (via `LowTCPAbortSyncPoll`).
         *   The system then returns to attempting a passive listen.
     *   This strategy allows a single stream to handle both listening and sending in a cooperative multitasking environment.
 *   **Peer Management:**
-    *   Initializes and maintains the peer list using shared code (`classic_mac/peer_mac.c`, `shared/peer_shared.c`).
+    *   Initializes and maintains the peer list (`gPeerManager`) using shared code (`classic_mac/peer.c`, `shared/peer.c`).
     *   Prunes timed-out peers based on `TickCount()`.
-    *   Updates the peer list display in the GUI.
+    *   Updates the peer list display in the GUI (`UpdatePeerDisplayList`).
 *   **Graphical User Interface (GUI):**
     *   Uses ResEdit-defined resources (`MPW_resources/csend.r`, `MPW_resources/csend.rsrc`) managed by the Dialog Manager (`classic_mac/dialog.c`).
-    *   **Message Display Area:** A TextEdit field for displaying incoming messages, logs, and sent messages (`classic_mac/dialog_messages.c`). Includes a functional scrollbar.
-    *   **Message Input Area:** A TextEdit field for typing messages (`classic_mac/dialog_input.c`).
-    *   **Peer List Display:** Uses a List Manager control to display active peers (username@IP) dynamically (`classic_mac/dialog_peerlist.c`). Users can select a peer from this list for direct messaging.
-    *   **Controls:** "Send" button and "Broadcast" checkbox. The "Broadcast" checkbox currently only affects local display for sent messages; network transmission for broadcasted messages is not yet implemented via this checkbox.
+    *   **Message Display Area:** A TextEdit field (`gMessagesTE`) for displaying incoming messages, logs, and sent messages (`classic_mac/dialog_messages.c`). Includes a functional scrollbar (`gMessagesScrollBar`).
+    *   **Message Input Area:** A TextEdit field (`gInputTE`) for typing messages (`classic_mac/dialog_input.c`).
+    *   **Peer List Display:** Uses a List Manager control (`gPeerListHandle`) to display active peers (username@IP) dynamically (`classic_mac/dialog_peerlist.c`). Users can select a peer from this list for direct messaging.
+    *   **Controls:** "Send" button (`kSendButton`), "Broadcast" checkbox (`kBroadcastCheckbox`), and "Debug" checkbox (`kDebugCheckbox`). The "Broadcast" checkbox, when checked, causes messages to be sent to all active peers. The "Debug" checkbox toggles display of debug messages in the Message Display Area.
 *   **Event Loop:** A standard Classic Mac event loop (`classic_mac/main.c`):
-    *   Handles mouse clicks (button presses, list selection, scrollbar interaction, window dragging/closing).
-    *   Manages window updates and activation/deactivation of UI elements.
+    *   Handles mouse clicks (button presses, list selection, scrollbar interaction, window dragging/closing), key down events for input, window updates, and activation/deactivation of UI elements.
     *   Calls `TEIdle` for TextEdit fields.
-    *   Periodically polls network services (`PollUDPListener`, `PollTCP`), checks for discovery broadcast intervals, and updates the peer list display.
+    *   Periodically polls network services (`PollUDPListener`, `PollTCP`) in `HandleIdleTasks`, checks for discovery broadcast intervals, and updates the peer list display.
 *   **Logging:**
-    *   Logs messages to a file (`csend_log.txt`) for debugging (`classic_mac/logging.c`).
-    *   Appends important log messages and received/sent chat messages to the GUI's message display area.
+    *   Uses the shared logging system. Platform-specific callbacks provide Classic Mac timestamps (`classic_mac_platform_get_timestamp`) and display debug messages in the GUI's message display area (`classic_mac_platform_display_debug_log`) (`classic_mac/logging.c`).
+    *   Logs messages to a file (`csend_mac.log`) for debugging.
 *   **Quit Support:**
     *   Allows quitting via the window's close box.
-    *   Upon quitting, attempts to send `MSG_QUIT` notifications to all known active peers using `TCP_SendQuitMessagesSync`.
+    *   Upon quitting, attempts to send `MSG_QUIT` notifications to all known active peers using `MacTCP_SendMessageSync`.
 
 ## Prerequisites
 
@@ -198,6 +198,7 @@ Once the POSIX application is running (locally or in Docker), you can use the fo
 *   `/list`: Show the list of currently known active peers, their assigned number, username, IP address, and when they were last seen.
 *   `/send <peer_number> <message>`: Send a private `<message>` to the peer identified by `<peer_number>` from the `/list` command.
 *   `/broadcast <message>`: Send a `<message>` to all currently active peers (iteratively sends TCP unicast messages).
+*   `/debug`: Toggle detailed debug message visibility in the console.
 *   `/quit`: Send a quit notification to all peers, gracefully shut down the application, and exit.
 *   `/help`: Display the list of available commands.
 
@@ -206,13 +207,14 @@ Once the POSIX application is running (locally or in Docker), you can use the fo
 1.  Transfer the compiled `build/classic_mac/csend-mac.bin` file to your Classic Mac OS environment (e.g., using a shared folder with an emulator, or transferring the `.dsk` image).
 2.  On the Classic Mac, use `binUnpk` to decode the `csend-mac.bin` file. This will extract the actual application file (named `csend-mac`).
 3.  Double-click the unpacked application file to run it.
-4.  **To send a message: NOT YET IMPLEMENTED**
+4.  **To send a message:**
     *   Type your message in the lower input field.
     *   **For a direct message to a selected peer:**
         *   Ensure the "Broadcast" checkbox is **unchecked**.
         *   Select the desired recipient from the peer list by clicking on their entry.
         *   Click the "Send" button. The message will be sent via TCP to the selected peer. Your sent message will appear in the main message area, prefixed with "You (to <username>):".
-    *   **For a "broadcast" message (simulated locally):**
-        *   Check the "Broadcast" checkbox.
-        *   Click the "Send" button. **Currently, this does not send the message over the network to all peers.** It will only display your message locally in the message area, prefixed with "You (Broadcast):". Full network broadcast functionality for messages is not yet implemented for this option.
-5.  **To quit:** Click the close box on the application window. It will attempt to send QUIT messages to peers.
+    *   **For a broadcast message:**
+        *   Check the "Broadcast" checkbox. (This will automatically deselect any peer in the list).
+        *   Click the "Send" button. The message will be sent via TCP to all currently active peers. Your message will appear in the main message area, prefixed with "You (Broadcast):".
+5.  **To toggle debug message visibility:** Click the "Debug" checkbox. Debug messages will appear in the main message area.
+6.  **To quit:** Click the close box on the application window. It will attempt to send QUIT messages to all active peers before shutting down.

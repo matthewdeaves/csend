@@ -6,6 +6,221 @@ I'll be tagging various points of evolution of this code base with a write up of
 
 ---
 
+## [v0.1.0](https://github.com/matthewdeaves/csend/tree/v0.1.0)
+
+This version deserves a point release number now. I've done several rounds of refactoring to better organise and structure of both code bases and the shared code.
+
+## I. Major Refactoring: Shared Logging System
+
+A new, more robust shared logging system has been implemented, replacing the previous separate logging mechanisms in `posix/` and `classic_mac/`.
+
+### 1. New Shared Logging Files:
+
+*   **`shared/logging.h`** (replaces `shared/logging_shared.h`)
+    *   Defines `platform_logging_callbacks_t` struct with function pointers for `get_timestamp` and `display_debug_log`. This allows platform-specific implementations for how timestamps are generated and how debug messages are shown in the UI.
+    *   Declares new public API:
+        *   `void log_init(const char *log_file_name_suggestion, platform_logging_callbacks_t *callbacks);`
+        *   `void log_shutdown(void);`
+        *   `void log_debug(const char *format, ...);` (for detailed internal/debug logs)
+        *   `void log_app_event(const char *format, ...);` (for general application events, potentially user-visible or important internal milestones)
+    *   `set_debug_output_enabled()` and `is_debug_output_enabled()` remain.
+    *   Includes `<stdarg.h>` and `<stddef.h>`.
+*   **`shared/logging.c`** (replaces `shared/logging_shared.c`)
+    *   Implements the new shared logging API.
+    *   Manages a global log file (`g_log_file`).
+    *   `log_init()`: Opens the log file (filename can be suggested, defaults based on platform) and stores platform callbacks. Writes a "Log Session Started" message.
+    *   `log_shutdown()`: Writes a "Log Session Ended" message and closes the log file.
+    *   `log_debug()`: Writes formatted messages prefixed with "[DEBUG]" to the log file. If debug output is enabled and a `display_debug_log` callback is provided, it calls the callback to show the message in the platform's UI.
+    *   `log_app_event()`: Writes formatted messages to the log file (without a "[DEBUG]" prefix). These are generally not displayed in the UI via the callback, intended more for persistent event tracking.
+    *   Uses a `fallback_get_timestamp()` if no platform callback is provided.
+    *   Uses `vsprintf` for `__MACOS__` and `vsnprintf` otherwise for message formatting within the logging functions to prevent buffer overflows.
+
+### 2. POSIX Logging Adaptation (`posix/logging.c`, `posix/logging.h`):
+
+*   **`posix/logging.h`**:
+    *   Removed old `log_message()` and `display_user_message()` declarations.
+    *   Added declarations for `posix_platform_get_timestamp()` and `posix_platform_display_debug_log()`.
+*   **`posix/logging.c`**:
+    *   Removed old logging implementations.
+    *   Implements `posix_platform_get_timestamp()` using `time()`, `localtime()`, and `strftime()`.
+    *   Implements `posix_platform_display_debug_log()` using `printf()` to console.
+*   **`posix/main.c`**: Calls `log_init()` with these POSIX-specific callbacks and `log_shutdown()` on exit.
+*   **All other POSIX files**: Replaced calls to old `log_message()` with `log_debug()` or `log_app_event()`. Replaced `display_user_message()` with `terminal_display_app_message()` (from `ui_terminal.c`) which itself now also calls `log_app_event()`.
+
+### 3. Classic Mac Logging Adaptation (`classic_mac/logging.c`, `classic_mac/logging.h`):
+
+*   **`classic_mac/logging.h`**:
+    *   Removed old logging function declarations (`InitLogFile`, `CloseLogFile`, `log_message`, etc.) and globals (`kLogFileName`, `gLogFile`).
+    *   Added declarations for `classic_mac_platform_get_timestamp()` and `classic_mac_platform_display_debug_log()`.
+*   **`classic_mac/logging.c`**:
+    *   Removed old logging implementations.
+    *   Implements `classic_mac_platform_get_timestamp()` using `GetTime()` and `sprintf()`.
+    *   Implements `classic_mac_platform_display_debug_log()` which appends the formatted message to the `gMessagesTE` TextEdit field in the dialog. It uses a flag `g_classic_mac_logging_to_te_in_progress` to prevent recursion.
+*   **`classic_mac/main.c`**: Calls `log_init()` with these Classic Mac specific callbacks and `log_shutdown()` on exit.
+*   **All other Classic Mac files**: Replaced calls to old `log_message()` and `log_to_file_only()` with `log_debug()` or `log_app_event()`. Direct UI messages are now typically handled by `AppendToMessagesTE` after an appropriate `log_app_event` or `log_debug` call.
+
+## II. File Renaming and Reorganization
+
+### 1. Shared Directory:
+
+*   `discovery_logic.h` -> `discovery.h`
+*   `discovery_logic.c` -> `discovery.c`
+*   `logging_shared.h` -> `logging.h` (covered above)
+*   `logging_shared.c` -> `logging.c` (covered above)
+*   `messaging_logic.h` -> `messaging.h`
+*   `messaging_logic.c` -> `messaging.c`
+*   `peer_shared.h` -> `peer.h`
+*   `peer_shared.c` -> `peer.c`
+
+### 2. Classic Mac Directory:
+
+*   `discovery.h` -> `mactcp_discovery.h`
+*   `discovery.c` -> `mactcp_discovery.c`
+*   `network.h` -> `mactcp_network.h`
+*   `network.c` -> `mactcp_network.c`
+*   `peer_mac.h` -> `peer.h`
+*   `peer_mac.c` -> `peer.c`
+*   `tcp.h` -> `mactcp_messaging.h`
+*   `tcp.c` -> `mactcp_messaging.c`
+
+### 3. POSIX Directory:
+
+*   **`posix/main.c`**: New file. The `main()` function was moved here from `posix/peer.c`.
+*   **`posix/peer.c`**: No longer contains `main()`.
+
+## III. Changes in `shared/` Files (excluding logging)
+
+### 1. `shared/discovery.c` (formerly `discovery_logic.c`):
+
+*   Includes new shared `logging.h`.
+*   All `log_message()` calls changed to `log_debug()`.
+
+### 2. `shared/messaging.c` (formerly `messaging_logic.c`):
+
+*   Includes new shared `logging.h`.
+*   All `log_message()` calls changed to `log_debug()`.
+
+### 3. `shared/peer.c` (formerly `peer_shared.c`):
+
+*   Includes new shared `logging.h`.
+*   All `log_message()` calls changed to `log_debug()`.
+
+### 4. `shared/protocol.h`:
+
+*   Introduced `csend_uint32_t` typedef: `UInt32` for `__MACOS__`, `uint32_t` otherwise. This is used for the magic number in message protocol.
+
+### 5. `shared/protocol.c`:
+
+*   Includes new shared `logging.h`.
+*   All `log_message()` calls changed to `log_debug()`.
+*   Uses `csend_uint32_t` for magic number variables.
+*   Removed `my_htonl` and `my_ntohl` macros.
+*   For `__MACOS__`, new static inline identity functions `csend_plat_htonl` and `csend_plat_ntohl` are defined and then `#define htonl(x) csend_plat_htonl(x)` etc. are used. For non-Mac, standard `htonl/ntohl` from `<arpa/inet.h>` are used. This ensures the magic number is explicitly processed for network byte order.
+*   **Potential Issue:** `snprintf` calls in `format_message` are not conditionally compiled for Classic Mac, which might lack a standard `snprintf`. This was also an issue in the old version.
+
+## IV. Changes in `posix/` Files
+
+### 1. `posix/main.c` (New):
+
+*   Contains the `main` function moved from `posix/peer.c`.
+*   Initializes and shuts down the new shared logging system with POSIX-specific callbacks.
+*   Uses `log_app_event()` for high-level application status messages.
+*   Uses `terminal_display_app_message()` for messages directly visible to the user on the console.
+*   Improved thread cancellation and joining logic during startup failure or shutdown.
+
+### 2. `posix/peer.c`:
+
+*   `main()` function removed.
+*   `cleanup_app_state()` now sets `g_state = NULL;`.
+
+### 3. `posix/discovery.c`, `posix/messaging.c`, `posix/signal_handler.c`:
+
+*   Updated to use the new shared logging functions (`log_debug`, `log_app_event`).
+*   `posix/messaging.c`: `posix_tcp_display_text_message` now calls both `log_app_event` (for file log) and `terminal_display_app_message` (for console UI).
+
+### 4. `posix/ui_terminal.h`:
+
+*   Added `terminal_display_app_message(const char *format, ...)` declaration.
+
+### 5. `posix/ui_terminal.c`:
+
+*   Implemented `terminal_display_app_message()` which prepends a timestamp to messages printed to the console.
+*   Replaced most `display_user_message()` calls with `terminal_display_app_message()` and often added corresponding `log_app_event()` calls for file logging.
+*   Updated to use new shared logging functions (`log_debug`).
+
+## V. Changes in `classic_mac/` Files
+
+### 1. General:
+
+*   All files updated to use the new shared logging functions (`log_debug`, `log_app_event`).
+*   Includes for renamed headers (e.g., `mactcp_network.h` instead of `network.h`).
+
+### 2. `classic_mac/main.c`:
+
+*   Initializes and shuts down the new shared logging system with Classic Mac specific callbacks.
+*   The shutdown sequence for sending QUIT messages is now directly in `main.c`:
+    *   It iterates through active peers.
+    *   Calls the generalized `MacTCP_SendMessageSync()` with `MSG_QUIT`.
+    *   Adds a `kQuitMessageDelayTicks` delay between sending QUIT messages to different peers.
+    *   Logs and displays a summary of QUIT messages sent.
+*   `IdleInputTE()` is now called in the main event loop.
+*   `mouseDown` handling for `gMessagesScrollBar` (thumb drag): Now calls `ScrollMessagesTEToValue()` for cleaner scroll logic.
+*   `DialogSelect` handling for `kBroadcastCheckbox`: Calls `DialogPeerList_DeselectAll()` when broadcast is checked.
+*   `HandleInputTEKeyDown()` is called for `keyDown` and `autoKey` events.
+
+### 3. `classic_mac/dialog.c`:
+
+*   `HandleSendButtonClick()` updated to use the new `MacTCP_SendMessageSync()` signature, passing `MSG_TEXT`, `gMyUsername`, and `gMyLocalIPStr`.
+
+### 4. `classic_mac/dialog_input.h` & `classic_mac/dialog_input.c`:
+
+*   Added `IdleInputTE()` function (calls `TEIdle()`).
+*   Added `HandleInputTEKeyDown()` function (calls `TEKey()` if appropriate).
+
+### 5. `classic_mac/dialog_messages.h` & `classic_mac/dialog_messages.c`:
+
+*   Added `ScrollMessagesTEToValue(short newScrollValue)` to directly scroll the TE to a specific line value.
+*   `MyScrollAction()` now explicitly ignores `kControlIndicatorPart` (thumb drags), as this is handled in `main.c`.
+*   `AppendToMessagesTE()`: When auto-scrolling, now uses `SetControlValue` and `ScrollMessagesTEToValue`.
+*   `HandleMessagesTEUpdate()`: Added `EraseRect(&(**gMessagesTE).viewRect)` before `TEUpdate` to prevent visual artifacts.
+
+### 6. `classic_mac/dialog_peerlist.h` & `classic_mac/dialog_peerlist.c`:
+
+*   `GetSelectedPeerInfo()` renamed to `DialogPeerList_GetSelectedPeer()`.
+*   Added `DialogPeerList_DeselectAll()` to deselect any item in the list and update the view.
+*   `CleanupPeerListControl()` now resets `gLastSelectedCell.v = -1;`.
+
+### 7. `classic_mac/mactcp_messaging.h` (formerly `tcp.h`):
+
+*   `TCP_SendTextMessageSync()` renamed to `MacTCP_SendMessageSync()`.
+*   Signature of `MacTCP_SendMessageSync()` changed to:
+    `OSErr MacTCP_SendMessageSync(const char *peerIPStr, const char *message_content, const char *msg_type, const char *local_username, const char *local_ip_str, GiveTimePtr giveTime);`
+    This makes it more general for sending different message types.
+
+### 8. `classic_mac/mactcp_messaging.c` (formerly `tcp.c`):
+
+*   `TCP_SendTextMessageSync()` renamed and reimplemented as `MacTCP_SendMessageSync()` with the new signature. It now handles formatting the message using `format_message()` with the provided type, username, IP, and content.
+*   `TCP_SendQuitMessagesSync()` function was removed. Quit messages are now sent by `classic_mac/main.c` calling `MacTCP_SendMessageSync` with `MSG_QUIT`.
+*   `MacTCP_SendMessageSync` has specific handling for `kConnectionExistsErr` when sending `MSG_QUIT`, treating it as a non-fatal error in that context.
+
+### 9. `classic_mac/peer.h` (formerly `peer_mac.h`):
+
+*   Removed `GetSelectedPeerInfo()` declaration (functionality moved to `dialog_peerlist.c/h`).
+
+### 10. `classic_mac/peer.c` (formerly `peer_mac.c`):
+
+*   Removed `GetSelectedPeerInfo()` implementation.
+*   `GetPeerByIndex()`: Changed `active_index <= 0` check to `active_index < 0`. This means an index of `0` is now considered valid for the first active peer.
+
+## VI. Other Minor Changes & Observations
+
+*   **`shared/protocol.h` `csend_uint32_t`**: This is a good step for explicit type sizing.
+*   **Error Handling in `MacTCP_SendMessageSync`**: Specific handling for `kConnectionExistsErr` when sending `MSG_QUIT` is a nuanced improvement.
+*   **Classic Mac UI Updates**: Several small improvements to UI responsiveness and correctness, like `EraseRect` in `HandleMessagesTEUpdate` and better scrollbar handling.
+*   **Consistency**: Renaming of files and functions (e.g. `DialogPeerList_GetSelectedPeer`) improves consistency.
+
+---
+
 ## [v0.0.12](https://github.com/matthewdeaves/csend/tree/v0.0.12)
 
 This release focuses on significant GUI bug fixes and usability enhancements for the Classic Macintosh client, addressing key interaction issues identified in v0.0.11. The core networking and shared logic remain stable. We have reached feature parity with the POSIX version.
