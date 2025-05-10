@@ -11,6 +11,12 @@ You can watch a [demo video on YouTube](https://www.youtube.com/watch?v=_9iXCBZ_
 
 Detailed information on the evolving versions of the project can be found [here](TAGS.md).
 
+## Screen Shots
+
+<img src="images/system7.png" alt="Mac OS 7" width="640">
+<img src="images/ubuntu.png" alt="Ubuntu" width="640">
+
+
 ## Project Structure
 
 *   `posix/`: Source code specific to the POSIX (Linux, macOS) version.
