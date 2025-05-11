@@ -119,34 +119,45 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum)
 }
 void CleanupUDPDiscoveryEndpoint(short macTCPRefNum)
 {
-    UDPiopb pbRelease;
-    OSErr err;
     log_debug("Cleaning up UDP Discovery Endpoint (Async)...");
-    if (gUDPStream != NULL) {
-        log_debug("UDP Stream 0x%lX was open. Attempting synchronous release...", (unsigned long)gUDPStream);
-        gUDPReadPending = false;
-        gUDPBfrReturnPending = false;
-        memset(&pbRelease, 0, sizeof(UDPiopb));
-        pbRelease.ioCompletion = nil;
-        pbRelease.ioCRefNum = macTCPRefNum;
-        pbRelease.csCode = UDPRelease;
-        pbRelease.udpStream = gUDPStream;
-        pbRelease.csParam.create.rcvBuff = NULL;
-        pbRelease.csParam.create.rcvBuffLen = 0;
-        err = PBControlSync((ParmBlkPtr)&pbRelease);
-        if (err != noErr) {
-            log_debug("Warning: Synchronous UDPRelease failed during cleanup (Error: %d).", err);
-        } else {
-            log_debug("Synchronous UDPRelease succeeded.");
-        }
+    if (gSystemInitiatedQuit) {
+        log_debug("CleanupUDPDiscoveryEndpoint: System initiated quit. Aggressive cleanup.");
         gUDPStream = NULL;
+        if (gUDPRecvBuffer != NULL) {
+            log_debug("CleanupUDPDiscoveryEndpoint (Aggressive): Disposing UDP receive buffer.");
+            DisposePtr(gUDPRecvBuffer);
+            gUDPRecvBuffer = NULL;
+        }
+        log_debug("CleanupUDPDiscoveryEndpoint (Aggressive): Skipped MacTCP stream release.");
     } else {
-        log_debug("UDP Stream was not open or already cleaned up.");
-    }
-    if (gUDPRecvBuffer != NULL) {
-        log_debug("Disposing UDP receive buffer at 0x%lX.", (unsigned long)gUDPRecvBuffer);
-        DisposePtr(gUDPRecvBuffer);
-        gUDPRecvBuffer = NULL;
+        UDPiopb pbRelease;
+        OSErr err;
+        if (gUDPStream != NULL) {
+            log_debug("UDP Stream 0x%lX was open. Attempting synchronous release...", (unsigned long)gUDPStream);
+            gUDPReadPending = false;
+            gUDPBfrReturnPending = false;
+            memset(&pbRelease, 0, sizeof(UDPiopb));
+            pbRelease.ioCompletion = nil;
+            pbRelease.ioCRefNum = macTCPRefNum;
+            pbRelease.csCode = UDPRelease;
+            pbRelease.udpStream = gUDPStream;
+            pbRelease.csParam.create.rcvBuff = NULL;
+            pbRelease.csParam.create.rcvBuffLen = 0;
+            err = PBControlSync((ParmBlkPtr)&pbRelease);
+            if (err != noErr) {
+                log_debug("Warning: Synchronous UDPRelease failed during cleanup (Error: %d).", err);
+            } else {
+                log_debug("Synchronous UDPRelease succeeded.");
+            }
+            gUDPStream = NULL;
+        } else {
+            log_debug("UDP Stream was not open or already cleaned up.");
+        }
+        if (gUDPRecvBuffer != NULL) {
+            log_debug("Disposing UDP receive buffer at 0x%lX.", (unsigned long)gUDPRecvBuffer);
+            DisposePtr(gUDPRecvBuffer);
+            gUDPRecvBuffer = NULL;
+        }
     }
     gUDPReadPending = false;
     gUDPBfrReturnPending = false;
@@ -195,7 +206,6 @@ static OSErr SendUDPSyncInternal(short macTCPRefNum, const char *myUsername, con
 {
     OSErr err;
     int formatted_len;
-    UDPiopb pbSync;
     if (gUDPStream == NULL) return invalidStreamPtr;
     if (macTCPRefNum == 0) return paramErr;
     if (myUsername == NULL || myLocalIPStr == NULL) return paramErr;
@@ -208,6 +218,7 @@ static OSErr SendUDPSyncInternal(short macTCPRefNum, const char *myUsername, con
     staticWDS[0].ptr = staticBuffer;
     staticWDS[1].length = 0;
     staticWDS[1].ptr = nil;
+    UDPiopb pbSync;
     memset(&pbSync, 0, sizeof(UDPiopb));
     pbSync.ioCompletion = nil;
     pbSync.ioCRefNum = macTCPRefNum;
@@ -315,9 +326,9 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
                             sprintf(senderIPStr, "%lu.%lu.%lu.%lu", (senderIPNet >> 24) & 0xFF, (senderIPNet >> 16) & 0xFF, (senderIPNet >> 8) & 0xFF, senderIPNet & 0xFF);
                             log_debug("PollUDPListener: AddrToStr failed (%d) for sender IP %lu. Using fallback '%s'.", addrErr, (unsigned long)senderIPNet, senderIPStr);
                         }
-                        uint32_t sender_ip_addr_host_order_for_shared = (uint32_t)senderIPNet;
+                        uint32_t sender_ip_addr_for_shared = (uint32_t)senderIPNet;
                         discovery_logic_process_packet((const char *)dataPtr, dataLength,
-                                                       senderIPStr, sender_ip_addr_host_order_for_shared, senderPortHost,
+                                                       senderIPStr, sender_ip_addr_for_shared, senderPortHost,
                                                        &mac_callbacks,
                                                        NULL);
                     } else {

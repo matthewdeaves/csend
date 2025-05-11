@@ -135,40 +135,59 @@ OSErr InitTCP(short macTCPRefNum)
 void CleanupTCP(short macTCPRefNum)
 {
     log_debug("Cleaning up Single TCP Stream...");
-    StreamPtr streamToRelease = gTCPStream;
-    TCPState stateBeforeCleanup = gTCPState;
-    gTCPState = TCP_STATE_RELEASING;
-    gTCPStream = NULL;
-    if (stateBeforeCleanup == TCP_STATE_CONNECTED_IN || stateBeforeCleanup == TCP_STATE_PASSIVE_OPEN_PENDING) {
-        log_debug("Cleanup: Attempting synchronous abort (best effort)...");
-        if (streamToRelease != NULL) {
-            StreamPtr currentGlobalStream = gTCPStream;
-            gTCPStream = streamToRelease;
-            LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, YieldTimeToSystem);
-            gTCPStream = currentGlobalStream;
+    if (gSystemInitiatedQuit) {
+        log_debug("CleanupTCP: System initiated quit. Aggressive cleanup.");
+        gTCPState = TCP_STATE_UNINITIALIZED;
+        gTCPStream = NULL;
+        gIsSending = false;
+        gPassiveOpenPBInitialized = false;
+        if (gTCPRecvBuffer != NULL) {
+            log_debug("CleanupTCP (Aggressive): Disposing TCP receive buffer.");
+            DisposePtr(gTCPRecvBuffer);
+            gTCPRecvBuffer = NULL;
+        }
+        if (gTCPInternalBuffer != NULL) {
+            log_debug("CleanupTCP (Aggressive): Disposing TCP internal buffer.");
+            DisposePtr(gTCPInternalBuffer);
+            gTCPInternalBuffer = NULL;
+        }
+        log_debug("CleanupTCP (Aggressive): Skipped MacTCP stream abort/release.");
+    } else {
+        StreamPtr streamToRelease = gTCPStream;
+        TCPState stateBeforeCleanup = gTCPState;
+        gTCPState = TCP_STATE_RELEASING;
+        gTCPStream = NULL;
+        if (stateBeforeCleanup == TCP_STATE_CONNECTED_IN || stateBeforeCleanup == TCP_STATE_PASSIVE_OPEN_PENDING) {
+            log_debug("Cleanup: Attempting synchronous abort (best effort)...");
+            if (streamToRelease != NULL) {
+                StreamPtr currentGlobalStreamState = gTCPStream;
+                gTCPStream = streamToRelease;
+                LowTCPAbortSyncPoll(kAbortULPTimeoutSeconds, YieldTimeToSystem);
+                gTCPStream = currentGlobalStreamState;
+            }
+        }
+        if (streamToRelease != NULL && macTCPRefNum != 0) {
+            log_debug("Attempting sync release of stream 0x%lX...", (unsigned long)streamToRelease);
+            OSErr relErr = LowTCPReleaseSync(macTCPRefNum, streamToRelease);
+            if (relErr != noErr) log_debug("Warning: Sync release failed: %d", relErr);
+            else log_debug("Sync release successful.");
+        } else if (streamToRelease != NULL) {
+            log_debug("Warning: Cannot release stream, MacTCP refnum is 0.");
+        }
+        gTCPState = TCP_STATE_UNINITIALIZED;
+        gIsSending = false;
+        gPassiveOpenPBInitialized = false;
+        if (gTCPRecvBuffer != NULL) {
+            DisposePtr(gTCPRecvBuffer);
+            gTCPRecvBuffer = NULL;
+        }
+        if (gTCPInternalBuffer != NULL) {
+            DisposePtr(gTCPInternalBuffer);
+            gTCPInternalBuffer = NULL;
         }
     }
-    if (streamToRelease != NULL && macTCPRefNum != 0) {
-        log_debug("Attempting sync release of stream 0x%lX...", (unsigned long)streamToRelease);
-        OSErr relErr = LowTCPReleaseSync(macTCPRefNum, streamToRelease);
-        if (relErr != noErr) log_debug("Warning: Sync release failed: %d", relErr);
-        else log_debug("Sync release successful.");
-    } else if (streamToRelease != NULL) {
-        log_debug("Warning: Cannot release stream, MacTCP refnum is 0.");
-    }
-    gTCPState = TCP_STATE_UNINITIALIZED;
-    gIsSending = false;
     gPeerIP = 0;
     gPeerPort = 0;
-    gPassiveOpenPBInitialized = false;
-    if (gTCPRecvBuffer != NULL) {
-        DisposePtr(gTCPRecvBuffer);
-        gTCPRecvBuffer = NULL;
-    }
-    if (gTCPInternalBuffer != NULL) {
-        DisposePtr(gTCPInternalBuffer);
-        gTCPInternalBuffer = NULL;
-    }
     log_debug("TCP cleanup finished.");
 }
 void PollTCP(GiveTimePtr giveTime)

@@ -13,6 +13,9 @@
 #include <OSUtils.h>
 #include <Sound.h>
 #include <stdio.h>
+#ifndef resumeMask
+#define resumeMask 0x00000001L
+#endif
 #include "../shared/logging.h"
 #include "../shared/protocol.h"
 #include "logging.h"
@@ -68,41 +71,48 @@ int main(void)
     log_debug("Exited main event loop.");
     log_app_event("Initiating shutdown sequence...");
     AppendToMessagesTE("Shutting down...\r");
-    int quit_sent_count = 0;
-    int quit_active_peers = 0;
-    OSErr last_quit_err = noErr;
-    unsigned long dummyTimerForDelay;
-    for (int i = 0; i < MAX_PEERS; i++) {
-        if (gPeerManager.peers[i].active) {
-            quit_active_peers++;
-            log_debug("Attempting to send QUIT to %s@%s", gPeerManager.peers[i].username, gPeerManager.peers[i].ip);
-            OSErr current_quit_err = MacTCP_SendMessageSync(
-                                         gPeerManager.peers[i].ip, "", MSG_QUIT, gMyUsername, gMyLocalIPStr, YieldTimeToSystem);
-            if (current_quit_err == noErr) {
-                quit_sent_count++;
-            } else {
-                log_debug("Failed to send QUIT to %s@%s: Error %d", gPeerManager.peers[i].username, gPeerManager.peers[i].ip, (int)current_quit_err);
-                if (last_quit_err == noErr || (last_quit_err == streamBusyErr && current_quit_err != streamBusyErr)) {
-                    last_quit_err = current_quit_err;
+    if (!gSystemInitiatedQuit) {
+        int quit_sent_count = 0;
+        int quit_active_peers = 0;
+        OSErr last_quit_err = noErr;
+        unsigned long dummyTimerForDelay;
+        log_app_event("User-initiated quit: Sending QUIT messages to peers...");
+        for (int i = 0; i < MAX_PEERS; i++) {
+            if (gPeerManager.peers[i].active) {
+                quit_active_peers++;
+                log_debug("Attempting to send QUIT to %s@%s", gPeerManager.peers[i].username, gPeerManager.peers[i].ip);
+                OSErr current_quit_err = MacTCP_SendMessageSync(
+                                             gPeerManager.peers[i].ip, "", MSG_QUIT, gMyUsername, gMyLocalIPStr, YieldTimeToSystem);
+                if (current_quit_err == noErr) {
+                    quit_sent_count++;
+                } else {
+                    log_debug("Failed to send QUIT to %s@%s: Error %d", gPeerManager.peers[i].username, gPeerManager.peers[i].ip, (int)current_quit_err);
+                    if (last_quit_err == noErr || (last_quit_err == streamBusyErr && current_quit_err != streamBusyErr)) {
+                        last_quit_err = current_quit_err;
+                    }
                 }
+                YieldTimeToSystem();
+                Delay(kQuitMessageDelayTicks, &dummyTimerForDelay);
             }
-            YieldTimeToSystem();
-            Delay(kQuitMessageDelayTicks, &dummyTimerForDelay);
         }
-    }
-    if (quit_active_peers > 0) {
-        sprintf(ui_message_buffer, "Finished sending QUIT messages. Sent to %d of %d active peers. Last error (if any): %d", quit_sent_count, quit_active_peers, (int)last_quit_err);
-        log_app_event("%s", ui_message_buffer);
-        AppendToMessagesTE(ui_message_buffer);
-        AppendToMessagesTE("\r");
+        if (quit_active_peers > 0) {
+            sprintf(ui_message_buffer, "Finished sending QUIT messages. Sent to %d of %d active peers. Last error (if any): %d", quit_sent_count, quit_active_peers, (int)last_quit_err);
+            log_app_event("%s", ui_message_buffer);
+            AppendToMessagesTE(ui_message_buffer);
+            AppendToMessagesTE("\r");
+        } else {
+            log_app_event("No active peers to send QUIT messages to.");
+            AppendToMessagesTE("No active peers to send QUIT messages to.\r");
+        }
+        if (last_quit_err == streamBusyErr) {
+            log_debug("Warning: Sending QUIT messages encountered a stream busy error.");
+        } else if (last_quit_err != noErr) {
+            log_debug("Warning: Sending QUIT messages encountered error: %d.", (int)last_quit_err);
+        }
     } else {
-        log_app_event("No active peers to send QUIT messages to.");
-        AppendToMessagesTE("No active peers to send QUIT messages to.\r");
-    }
-    if (last_quit_err == streamBusyErr) {
-        log_debug("Warning: Sending QUIT messages encountered a stream busy error.");
-    } else if (last_quit_err != noErr) {
-        log_debug("Warning: Sending QUIT messages encountered error: %d.", (int)last_quit_err);
+        log_app_event("System shutdown: Skipping QUIT messages to peers for faster exit.");
+        AppendToMessagesTE("System shutdown: Skipping QUIT messages.\r");
+        YieldTimeToSystem();
     }
     CleanupDialog();
     CleanupNetworking();
@@ -262,6 +272,7 @@ void HandleEvent(EventRecord *event)
 {
     short windowPart;
     WindowPtr whichWindow;
+    char theChar;
     switch (event->what) {
     case mouseDown:
         windowPart = FindWindow(event->where, &whichWindow);
@@ -295,8 +306,16 @@ void HandleEvent(EventRecord *event)
         break;
     case keyDown:
     case autoKey:
-        if (HandleInputTEKeyDown(event)) {
+        theChar = event->message & charCodeMask;
+        if ((event->modifiers & cmdKey) != 0) {
+            if (theChar == 'q' || theChar == 'Q') {
+                log_debug("Command-Q pressed. Setting gDone = true.");
+                gDone = true;
+            }
         } else {
+            if (HandleInputTEKeyDown(event)) {
+            } else {
+            }
         }
         break;
     case updateEvt:
@@ -322,6 +341,19 @@ void HandleEvent(EventRecord *event)
                 }
                 HiliteControl(gMessagesScrollBar, hiliteValue);
             }
+        }
+        break;
+    case osEvt:
+        switch ((event->message >> 24) & 0xFF) {
+        case suspendResumeMessage:
+            if ((event->message & resumeMask) == 0) {
+                log_debug("osEvt: Quit Application request received (suspendResumeMessage with resumeMask=0). Setting gDone and gSystemInitiatedQuit.");
+                gSystemInitiatedQuit = true;
+                gDone = true;
+            } else {
+                log_debug("osEvt: Resume event received. Message: 0x%08lX", event->message);
+            }
+            break;
         }
         break;
     default:

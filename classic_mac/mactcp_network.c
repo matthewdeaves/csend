@@ -15,12 +15,14 @@ short gMacTCPRefNum = 0;
 ip_addr gMyLocalIP = 0;
 char gMyLocalIPStr[INET_ADDRSTRLEN] = "0.0.0.0";
 char gMyUsername[32] = "MacUser";
+Boolean gSystemInitiatedQuit = false;
 OSErr InitializeNetworking(void)
 {
     OSErr err;
     ParamBlockRec pbOpen;
     CntrlParam cntrlPB;
     log_debug("Initializing Networking...");
+    gSystemInitiatedQuit = false;
     memset(&pbOpen, 0, sizeof(ParamBlockRec));
     pbOpen.ioParam.ioNamePtr = (StringPtr)kTCPDriverName;
     pbOpen.ioParam.ioPermssn = fsCurPerm;
@@ -110,7 +112,7 @@ void CleanupNetworking(void)
 void YieldTimeToSystem(void)
 {
     EventRecord event;
-    WaitNextEvent(0, &event, 1L, NULL);
+    (void) WaitNextEvent(0, &event, 1L, NULL);
 }
 OSErr ParseIPv4(const char *ip_str, ip_addr *out_addr)
 {
@@ -125,7 +127,10 @@ OSErr ParseIPv4(const char *ip_str, ip_addr *out_addr)
     strncpy(buffer, ip_str, INET_ADDRSTRLEN);
     buffer[INET_ADDRSTRLEN] = '\0';
     rest_of_string = buffer;
-    while ((token = strtok_r(rest_of_string, ".", &rest_of_string)) != NULL && i < 4) {
+    while ((token = strtok(rest_of_string, ".")) != NULL && i < 4) {
+        if (rest_of_string == buffer) {
+            rest_of_string = NULL;
+        }
         char *endptr;
         parts[i] = strtoul(token, &endptr, 10);
         if (*endptr != '\0' || parts[i] > 255) {
