@@ -95,11 +95,16 @@ void CleanupNetworking(void)
     CleanupTCP(gMacTCPRefNum);
     CleanupUDPDiscoveryEndpoint(gMacTCPRefNum);
     log_debug("Attempting CloseResolver...");
-    err = CloseResolver();
-    if (err != noErr) {
-        log_debug("Warning: CloseResolver failed. Error: %d", err);
+    if (gSystemInitiatedQuit) {
+        log_debug("CleanupNetworking (Aggressive): Skipping CloseResolver().");
     } else {
-        log_debug("CloseResolver succeeded.");
+        log_debug("Attempting CloseResolver...");
+        err = CloseResolver();
+        if (err != noErr) {
+            log_debug("Warning: CloseResolver failed. Error: %d", err);
+        } else {
+            log_debug("CloseResolver succeeded.");
+        }
     }
     if (gMacTCPRefNum != 0) {
         log_debug("MacTCP driver (RefNum: %d) was opened by this application. It will remain open for the system.", gMacTCPRefNum);
