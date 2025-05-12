@@ -9,10 +9,19 @@
 #include <Devices.h>
 #include <Lists.h>
 #include <Controls.h>
+#include <AppleEvents.h>
+#include <Resources.h>
 #include <stdlib.h>
 #include <OSUtils.h>
 #include <Sound.h>
 #include <stdio.h>
+#include <string.h>
+#ifndef HiWord
+#define HiWord(x) ((short)(((long)(x) >> 16) & 0xFFFF))
+#endif
+#ifndef LoWord
+#define LoWord(x) ((short)((long)(x) & 0xFFFF))
+#endif
 #include "../shared/logging.h"
 #include "../shared/protocol.h"
 #include "logging.h"
@@ -28,7 +37,16 @@ Boolean gDone = false;
 unsigned long gLastPeerListUpdateTime = 0;
 const unsigned long kPeerListUpdateIntervalTicks = 5 * 60;
 const unsigned long kQuitMessageDelayTicks = 120;
+#define kAppleMenuID 1
+#define kFileMenuID 128
+#define kEditMenuID 129
+#define kAboutItem 1
+#define kQuitItem 1
+static AEEventHandlerUPP gAEQuitAppUPP = NULL;
 void InitializeToolbox(void);
+void InstallAppleEventHandlers(void);
+pascal OSErr MyAEQuitApplication(const AppleEvent *theAppleEvent, AppleEvent *reply, long handlerRefCon);
+void HandleMenuChoice(long menuResult);
 void MainEventLoop(void);
 void HandleEvent(EventRecord *event);
 void HandleIdleTasks(void);
@@ -50,6 +68,7 @@ int main(void)
     networkErr = InitializeNetworking();
     if (networkErr != noErr) {
         log_app_event("Fatal: Network initialization failed (%d). Exiting.", (int)networkErr);
+        if (gAEQuitAppUPP) DisposeAEEventHandlerUPP(gAEQuitAppUPP);
         log_shutdown();
         return 1;
     }
@@ -59,6 +78,7 @@ int main(void)
     if (!dialogOk) {
         log_app_event("Fatal: Dialog initialization failed. Exiting.");
         CleanupNetworking();
+        if (gAEQuitAppUPP) DisposeAEEventHandlerUPP(gAEQuitAppUPP);
         log_shutdown();
         return 1;
     }
@@ -106,19 +126,99 @@ int main(void)
     }
     CleanupDialog();
     CleanupNetworking();
+    if (gAEQuitAppUPP) {
+        log_debug("Disposing AEQuitAppUPP.");
+        DisposeAEEventHandlerUPP(gAEQuitAppUPP);
+        gAEQuitAppUPP = NULL;
+    }
     log_app_event("Application terminated gracefully.");
     log_shutdown();
     return 0;
 }
 void InitializeToolbox(void)
 {
+    Handle menuBar;
+    MenuHandle appleMenu;
     InitGraf(&qd.thePort);
     InitFonts();
     InitWindows();
     InitMenus();
     TEInit();
     InitDialogs(NULL);
+    menuBar = GetNewMBar(128);
+    if (menuBar == NULL) {
+        log_debug("CRITICAL: GetNewMBar(128) failed! Check MBAR resource.");
+    } else {
+        SetMenuBar(menuBar);
+        appleMenu = GetMenuHandle(kAppleMenuID);
+        if (appleMenu) {
+            AppendResMenu(appleMenu, 'DRVR');
+        } else {
+            log_debug("Warning: Could not get Apple Menu (ID %d).", kAppleMenuID);
+        }
+        DrawMenuBar();
+        log_debug("Menu bar initialized and drawn.");
+    }
+    InstallAppleEventHandlers();
     InitCursor();
+}
+void InstallAppleEventHandlers(void)
+{
+    OSErr err;
+    log_debug("InstallAppleEventHandlers: Entry.");
+    if (gAEQuitAppUPP == NULL) {
+        gAEQuitAppUPP = NewAEEventHandlerUPP(MyAEQuitApplication);
+        if (gAEQuitAppUPP == NULL) {
+            log_debug("CRITICAL: NewAEEventHandlerUPP failed for MyAEQuitApplication!");
+            return;
+        }
+    }
+    err = AEInstallEventHandler(kCoreEventClass, kAEQuitApplication, gAEQuitAppUPP, 0L, false);
+    if (err != noErr) {
+        log_debug("CRITICAL: AEInstallEventHandler failed for kAEQuitApplication: %d", err);
+    } else {
+        log_debug("InstallAppleEventHandlers: kAEQuitApplication handler installed.");
+    }
+    log_debug("InstallAppleEventHandlers: Exit.");
+}
+pascal OSErr MyAEQuitApplication(const AppleEvent *theAppleEvent, AppleEvent *reply, long handlerRefCon)
+{
+#pragma unused(theAppleEvent, reply, handlerRefCon)
+    log_app_event("MyAEQuitApplication: Received kAEQuitApplication Apple Event. Setting gDone=true.");
+    gDone = true;
+    return noErr;
+}
+void HandleMenuChoice(long menuResult)
+{
+    short menuID = HiWord(menuResult);
+    short menuItem = LoWord(menuResult);
+    Str255 daName;
+    log_debug("HandleMenuChoice: menuID=%d, menuItem=%d", menuID, menuItem);
+    switch (menuID) {
+    case kAppleMenuID:
+        if (menuItem == kAboutItem) {
+            log_app_event("HandleMenuChoice: 'About csend-mac...' selected.");
+            Alert(129, nil);
+        } else {
+            MenuHandle appleMenu = GetMenuHandle(kAppleMenuID);
+            if (appleMenu) {
+                GetMenuItemText(appleMenu, menuItem, daName);
+                OpenDeskAcc(daName);
+                log_debug("HandleMenuChoice: Desk Accessory '%p' selected.", daName);
+            }
+        }
+        break;
+    case kFileMenuID:
+        if (menuItem == kQuitItem) {
+            log_app_event("HandleMenuChoice: File->Quit selected by user. Setting gDone=true.");
+            gDone = true;
+        }
+        break;
+    default:
+        log_debug("HandleMenuChoice: Unhandled menuID %d.", menuID);
+        break;
+    }
+    HiliteMenu(0);
 }
 void MainEventLoop(void)
 {
@@ -135,7 +235,14 @@ void MainEventLoop(void)
             if (event.what == mouseDown) {
                 WindowPtr whichWindow;
                 short windowPart = FindWindow(event.where, &whichWindow);
-                if (whichWindow == (WindowPtr)gMainWindow && windowPart == inContent) {
+                if (windowPart == inMenuBar) {
+                    log_debug("MainEventLoop: MouseDown inMenuBar.");
+                    long menuResult = MenuSelect(event.where);
+                    if (HiWord(menuResult) != 0) {
+                        HandleMenuChoice(menuResult);
+                    }
+                    eventHandledByApp = true;
+                } else if (whichWindow == (WindowPtr)gMainWindow && windowPart == inContent) {
                     Point localPt = event.where;
                     ControlHandle foundControl;
                     short foundControlPart;
@@ -239,7 +346,6 @@ void MainEventLoop(void)
                 HandleEvent(&event);
             }
         } else {
-            HandleIdleTasks();
         }
     }
 }
@@ -262,12 +368,11 @@ void HandleEvent(EventRecord *event)
 {
     short windowPart;
     WindowPtr whichWindow;
+    char theChar;
     switch (event->what) {
     case mouseDown:
         windowPart = FindWindow(event->where, &whichWindow);
         switch (windowPart) {
-        case inMenuBar:
-            break;
         case inSysWindow:
             SystemClick(event, whichWindow);
             break;
@@ -282,10 +387,12 @@ void HandleEvent(EventRecord *event)
             }
             break;
         case inContent:
-            if (whichWindow != FrontWindow()) {
+            if (whichWindow == (WindowPtr)gMainWindow && whichWindow != FrontWindow()) {
+                SelectWindow(whichWindow);
+            } else if (whichWindow != (WindowPtr)gMainWindow && whichWindow != FrontWindow()) {
                 SelectWindow(whichWindow);
             } else {
-                log_debug("HandleEvent: mouseDown in content of front window (unhandled by specific checks).");
+                log_debug("HandleEvent: mouseDown in content of front window (unhandled by specific checks). Window: 0x%lX", (unsigned long)whichWindow);
             }
             break;
         default:
@@ -295,8 +402,15 @@ void HandleEvent(EventRecord *event)
         break;
     case keyDown:
     case autoKey:
-        if (HandleInputTEKeyDown(event)) {
+        theChar = event->message & charCodeMask;
+        if ((event->modifiers & cmdKey) != 0) {
+            long menuResult = MenuKey(theChar);
+            if (HiWord(menuResult) != 0) {
+                HandleMenuChoice(menuResult);
+            }
         } else {
+            if (!HandleInputTEKeyDown(event)) {
+            }
         }
         break;
     case updateEvt:
@@ -305,13 +419,14 @@ void HandleEvent(EventRecord *event)
         if (whichWindow == (WindowPtr)gMainWindow) {
             DrawDialog(whichWindow);
             UpdateDialogControls();
+        } else {
         }
         EndUpdate(whichWindow);
         break;
     case activateEvt:
         whichWindow = (WindowPtr)event->message;
+        Boolean becomingActive = ((event->modifiers & activeFlag) != 0);
         if (whichWindow == (WindowPtr)gMainWindow) {
-            Boolean becomingActive = ((event->modifiers & activeFlag) != 0);
             ActivateDialogTE(becomingActive);
             ActivatePeerList(becomingActive);
             if (gMessagesScrollBar != NULL) {
@@ -322,7 +437,20 @@ void HandleEvent(EventRecord *event)
                 }
                 HiliteControl(gMessagesScrollBar, hiliteValue);
             }
+        } else {
         }
+        break;
+    case kHighLevelEvent:
+        log_debug("HandleEvent: kHighLevelEvent received. Calling AEProcessAppleEvent.");
+        OSErr aeErr = AEProcessAppleEvent(event);
+        if (aeErr != noErr && aeErr != errAEEventNotHandled) {
+            log_debug("HandleEvent: AEProcessAppleEvent returned error: %d", aeErr);
+        } else if (aeErr == errAEEventNotHandled) {
+            log_debug("HandleEvent: AEProcessAppleEvent: errAEEventNotHandled.");
+        }
+        break;
+    case osEvt:
+        log_debug("HandleEvent: osEvt, message high byte: 0x%lX", (event->message >> 24) & 0xFF);
         break;
     default:
         break;
