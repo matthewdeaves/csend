@@ -77,6 +77,20 @@ int main(void)
     }
     log_app_event("Starting Classic Mac P2P Messenger...");
     log_debug("main: Toolbox Initialized.");
+    err = InitializeNetworking();
+    if (gSystemInitiatedQuit) {
+        log_app_event("main: System quit during InitializeNetworking. Exiting.");
+        if (gAEQuitAppUPP) DisposeAEEventHandlerUPP(gAEQuitAppUPP);
+        log_shutdown();
+        return 0;
+    }
+    if (err != noErr) {
+        log_app_event("Fatal: Network initialization failed (%d). Exiting.", (int)err);
+        if (gAEQuitAppUPP) DisposeAEEventHandlerUPP(gAEQuitAppUPP);
+        log_shutdown();
+        return 1;
+    }
+    log_debug("main: Networking initialized.");
     InitPeerList();
     if (gSystemInitiatedQuit) { log_app_event("main: System quit after InitPeerList. Exiting."); if (gAEQuitAppUPP) DisposeAEEventHandlerUPP(gAEQuitAppUPP); log_shutdown(); return 0; }
     log_debug("main: Peer list initialized.");
@@ -420,12 +434,21 @@ void HandleEvent(EventRecord *event)
     case updateEvt:
         if (gSystemInitiatedQuit) { return; }
         whichWindow = (WindowPtr)event->message;
-        BeginUpdate(whichWindow);
-        if (whichWindow == (WindowPtr)gMainWindow) {
+        log_debug("HandleEvent: >>> updateEvt for window 0x%lX. <<<", (unsigned long)whichWindow);
+        if (whichWindow == (WindowPtr)gMainWindow && GetWindowPort(gMainWindow) != NULL) {
+            GrafPtr oldPort;
+            GetPort(&oldPort);
+            SetPort(GetWindowPort(gMainWindow));
+            BeginUpdate(whichWindow);
+            log_debug("HandleEvent: updateEvt - Drawing Dialog for gMainWindow.");
             DrawDialog(whichWindow);
-            UpdateDialogControls();
+            log_debug("HandleEvent: updateEvt - Finished DrawDialog for gMainWindow.");
+            EndUpdate(whichWindow);
+            SetPort(oldPort);
+        } else if (whichWindow == (WindowPtr)gMainWindow && GetWindowPort(gMainWindow) == NULL) {
+            log_debug("HandleEvent: updateEvt for gMainWindow, but its port is NULL!");
         }
-        EndUpdate(whichWindow);
+        log_debug("HandleEvent: >>> updateEvt processing complete for window 0x%lX. <<<", (unsigned long)whichWindow);
         break;
     case activateEvt:
         whichWindow = (WindowPtr)event->message;
@@ -433,28 +456,26 @@ void HandleEvent(EventRecord *event)
         log_debug("HandleEvent: >>> activateEvt for window 0x%lX. BecomingActive: %d. <<<", (unsigned long)whichWindow, becomingActive);
         if (whichWindow == (WindowPtr)gMainWindow) {
             GrafPtr oldPort;
+            WindowPtr mainWinPort = GetWindowPort(gMainWindow);
             log_debug("HandleEvent: activateEvt - gMainWindow (0x%lX) is target.", (unsigned long)gMainWindow);
-            GetPort(&oldPort);
-            if (GetWindowPort(gMainWindow)) {
-                SetPort(GetWindowPort(gMainWindow));
-                ActivateDialogTE(becomingActive);
-                ActivatePeerList(becomingActive);
-                if (gMessagesScrollBar != NULL) {
-                    short hiliteValue = (becomingActive && GetControlMaximum(gMessagesScrollBar) > 0 && (**gMessagesScrollBar).contrlVis) ? 0 : 255;
-                    HiliteControl(gMessagesScrollBar, hiliteValue);
-                }
+            if (mainWinPort != NULL) {
+                GetPort(&oldPort);
+                SetPort(mainWinPort);
+                log_debug("HandleEvent: activateEvt - Port set to gMainWindow's port.");
+                log_debug("HandleEvent: activateEvt - SKIPPED internal activations for gMainWindow.");
                 SetPort(oldPort);
+                log_debug("HandleEvent: activateEvt - Port restored.");
             } else {
-                log_debug("HandleEvent: activateEvt - gMainWindow port is NULL, skipping SetPort and activations.");
+                log_debug("HandleEvent: activateEvt - gMainWindow port is NULL! Cannot activate contents.");
             }
         } else {
-            log_debug("HandleEvent: activateEvt for a window OTHER than gMainWindow: 0x%lX (likely a DA).", (unsigned long)whichWindow);
+            log_debug("HandleEvent: activateEvt for a window OTHER than gMainWindow: 0x%lX.", (unsigned long)whichWindow);
             if (IsDialogEvent(event)) {
                 log_debug("HandleEvent: activateEvt for DA was also a DialogEvent. DialogSelect might handle it.");
             }
             if (!becomingActive && FrontWindow() == (WindowPtr)gMainWindow) {
                 log_debug("HandleEvent: activateEvt - DA window 0x%lX deactivated, gMainWindow is now front. Invalidating gMainWindow portRect.", (unsigned long)whichWindow);
-                if (gMainWindow) InvalRect(&gMainWindow->portRect);
+                if (gMainWindow && GetWindowPort(gMainWindow)) InvalRect(&gMainWindow->portRect);
             }
         }
         log_debug("HandleEvent: >>> activateEvt processing complete for window 0x%lX. <<<", (unsigned long)whichWindow);

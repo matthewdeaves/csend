@@ -1,5 +1,5 @@
 #ifndef MESSAGING_LOGIC_H
-#define MESSAGING_LOGIC_H
+#define MESSAGING_LOGIC_H 
 #include "common_defs.h"
 typedef struct {
     int (*add_or_update_peer)(const char *ip, const char *username, void *platform_context);

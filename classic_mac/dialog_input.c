@@ -59,12 +59,21 @@ void HandleInputTEClick(DialogPtr dialog, EventRecord *theEvent)
     if (gInputTE != NULL) {
         Point localPt = theEvent->where;
         GrafPtr oldPort;
-        Rect teViewRect = (**gInputTE).viewRect;
+        Rect teViewRectFromDITL;
+        DialogItemType itemTypeIgnored;
+        Handle itemHandleIgnored;
+        SignedByte teState;
         GetPort(&oldPort);
         SetPort(GetWindowPort(dialog));
         GlobalToLocal(&localPt);
-        if (PtInRect(localPt, &teViewRect)) {
-            TEClick(localPt, (theEvent->modifiers & shiftKey) != 0, gInputTE);
+        GetDialogItem(dialog, kInputTextEdit, &itemTypeIgnored, &itemHandleIgnored, &teViewRectFromDITL);
+        if (PtInRect(localPt, &teViewRectFromDITL)) {
+            teState = HGetState((Handle)gInputTE);
+            HLock((Handle)gInputTE);
+            if (*gInputTE != NULL) {
+                TEClick(localPt, (theEvent->modifiers & shiftKey) != 0, gInputTE);
+            }
+            HSetState((Handle)gInputTE, teState);
         }
         SetPort(oldPort);
     }
@@ -77,6 +86,7 @@ void HandleInputTEUpdate(DialogPtr dialog)
         Handle itemHandleIgnored;
         GrafPtr oldPort;
         Rect teActualViewRect;
+        SignedByte teState;
         GetPort(&oldPort);
         SetPort(GetWindowPort(dialog));
         GetDialogItem(dialog, kInputTextEdit, &itemTypeIgnored, &itemHandleIgnored, &userItemRect);
@@ -84,7 +94,7 @@ void HandleInputTEUpdate(DialogPtr dialog)
                   userItemRect.top, userItemRect.left, userItemRect.bottom, userItemRect.right);
         FrameRect(&userItemRect);
         log_debug("HandleInputTEUpdate: FrameRect called.");
-        SignedByte teState = HGetState((Handle)gInputTE);
+        teState = HGetState((Handle)gInputTE);
         HLock((Handle)gInputTE);
         if (*gInputTE != NULL) {
             teActualViewRect = (**gInputTE).viewRect;
@@ -159,8 +169,12 @@ void ClearInputText(void)
         }
         HSetState((Handle)gInputTE, teState);
         log_debug("Input field cleared.");
-        if (gMainWindow != NULL) {
+        if (gMainWindow != NULL && GetWindowPort(gMainWindow) != NULL) {
+            GrafPtr oldPort;
+            GetPort(&oldPort);
+            SetPort(GetWindowPort(gMainWindow));
             HandleInputTEUpdate(gMainWindow);
+            SetPort(oldPort);
         }
     }
 }

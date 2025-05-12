@@ -22,6 +22,7 @@ Boolean InitPeerListControl(DialogPtr dialog)
     Point cellSize;
     FontInfo fontInfo;
     Boolean listOk = false;
+    SignedByte listState;
     log_debug("Initializing Peer List Control...");
     GetDialogItem(dialog, kPeerListUserItem, &itemType, &itemHandle, &destRectList);
     if (itemType == userItem) {
@@ -50,7 +51,12 @@ Boolean InitPeerListControl(DialogPtr dialog)
             listOk = false;
         } else {
             log_debug("LNew succeeded for Peer List. Handle: 0x%lX", (unsigned long)gPeerListHandle);
-            (*gPeerListHandle)->selFlags = lOnlyOne;
+            listState = HGetState((Handle)gPeerListHandle);
+            HLock((Handle)gPeerListHandle);
+            if (*gPeerListHandle != NULL) {
+                (*gPeerListHandle)->selFlags = lOnlyOne;
+            }
+            HSetState((Handle)gPeerListHandle, listState);
             LActivate(true, gPeerListHandle);
             listOk = true;
         }
@@ -70,6 +76,7 @@ void CleanupPeerListControl(void)
         gPeerListHandle = NULL;
     }
     gLastSelectedCell.v = -1;
+    gLastSelectedCell.h = 0;
     log_debug("Peer List Control cleanup finished.");
 }
 Boolean HandlePeerListClick(DialogPtr dialog, EventRecord *theEvent)
@@ -78,11 +85,12 @@ Boolean HandlePeerListClick(DialogPtr dialog, EventRecord *theEvent)
     if (gPeerListHandle != NULL) {
         Point localClick = theEvent->where;
         GrafPtr oldPort;
+        SignedByte listState;
         GetPort(&oldPort);
         SetPort(GetWindowPort(dialog));
         GlobalToLocal(&localClick);
         SetPort(oldPort);
-        SignedByte listState = HGetState((Handle)gPeerListHandle);
+        listState = HGetState((Handle)gPeerListHandle);
         HLock((Handle)gPeerListHandle);
         if (*gPeerListHandle == NULL) {
             log_debug("HandlePeerListClick Error: gPeerListHandle deref failed after HLock!");
@@ -264,11 +272,12 @@ void DialogPeerList_DeselectAll(void)
 {
     if (gPeerListHandle != NULL && gLastSelectedCell.v >= 0) {
         GrafPtr oldPortForList;
+        SignedByte listState;
         GetPort(&oldPortForList);
         SetPort(GetWindowPort(gMainWindow));
         LSetSelect(false, gLastSelectedCell, gPeerListHandle);
         SetPt(&gLastSelectedCell, 0, -1);
-        SignedByte listState = HGetState((Handle)gPeerListHandle);
+        listState = HGetState((Handle)gPeerListHandle);
         HLock((Handle)gPeerListHandle);
         if (*gPeerListHandle != NULL) {
             InvalRect(&(**gPeerListHandle).rView);
