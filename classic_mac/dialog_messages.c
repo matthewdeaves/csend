@@ -128,7 +128,9 @@ void AppendToMessagesTE(const char *text)
         if (gMessagesScrollBar != NULL) {
             currentScrollVal = GetControlValue(gMessagesScrollBar);
             maxScroll = GetControlMaximum(gMessagesScrollBar);
-            scrolledToBottom = (currentScrollVal >= maxScroll);
+            scrolledToBottom = (currentScrollVal >= maxScroll || maxScroll == 0);
+        } else {
+            scrolledToBottom = true;
         }
         if (currentLength + textLen < 30000) {
             TESetSelect(currentLength, currentLength, gMessagesTE);
@@ -182,7 +184,7 @@ void AdjustMessagesScrollbar(void)
         SetControlValue(gMessagesScrollBar, currentVal);
         Boolean shouldBeVisible = (maxScroll > 0);
         Boolean isVisible = ((**gMessagesScrollBar).contrlVis != 0);
-        Boolean windowIsActive = (gMainWindow != NULL && FrontWindow() == (WindowPtr)gMainWindow);
+        Boolean windowIsActive = (gMainWindow != NULL && FrontWindow() == (WindowPtr)gMainWindow && ((WindowPeek)gMainWindow)->hilited);
         short hiliteValue = 255;
         if (shouldBeVisible) {
             if (!isVisible) ShowControl(gMessagesScrollBar);
@@ -280,17 +282,12 @@ void ScrollMessagesTEToValue(short newScrollValue)
 void HandleMessagesTEUpdate(DialogPtr dialog)
 {
     if (gMessagesTE != NULL) {
-        Rect itemRect;
-        DialogItemType itemTypeIgnored;
-        Handle itemHandleIgnored;
         GrafPtr oldPort;
         GetPort(&oldPort);
         SetPort(GetWindowPort(dialog));
-        GetDialogItem(dialog, kMessagesTextEdit, &itemTypeIgnored, &itemHandleIgnored, &itemRect);
         SignedByte teState = HGetState((Handle)gMessagesTE);
         HLock((Handle)gMessagesTE);
         if (*gMessagesTE != NULL) {
-            EraseRect(&(**gMessagesTE).viewRect);
             TEUpdate(&(**gMessagesTE).viewRect, gMessagesTE);
         }
         HSetState((Handle)gMessagesTE, teState);
@@ -301,8 +298,11 @@ void ActivateMessagesTEAndScrollbar(Boolean activating)
 {
     if (gMessagesTE != NULL) {
         if (activating) {
+            TEActivate(gMessagesTE);
+            log_debug("ActivateMessagesTEAndScrollbar: Activating Messages TE (0x%lX).", (unsigned long)gMessagesTE);
         } else {
             TEDeactivate(gMessagesTE);
+            log_debug("ActivateMessagesTEAndScrollbar: Deactivating Messages TE (0x%lX).", (unsigned long)gMessagesTE);
         }
     }
     if (gMessagesScrollBar != NULL) {
@@ -312,6 +312,7 @@ void ActivateMessagesTEAndScrollbar(Boolean activating)
             hiliteValue = 0;
         }
         HiliteControl(gMessagesScrollBar, hiliteValue);
+        log_debug("ActivateMessagesTEAndScrollbar: Scrollbar 0x%lX hilite set to %d.", (unsigned long)gMessagesScrollBar, hiliteValue);
     }
 }
 void ScrollMessagesTE(short deltaPixels)
@@ -330,6 +331,8 @@ void ScrollMessagesTE(short deltaPixels)
             Rect viewRectToInvalidate = (**gMessagesTE).viewRect;
             TEScroll(0, deltaPixels, gMessagesTE);
             InvalRect(&viewRectToInvalidate);
+            log_debug("ScrollMessagesTE: Scrolled by %d pixels. Invalidated viewRect (%d,%d,%d,%d).",
+                      deltaPixels, viewRectToInvalidate.top, viewRectToInvalidate.left, viewRectToInvalidate.bottom, viewRectToInvalidate.right);
         } else {
             log_debug("ScrollMessagesTE Error: gMessagesTE dereference failed before TEScroll!");
         }
