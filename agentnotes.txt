@@ -26,28 +26,47 @@
 
 **Classic MacTCP Programming Notes:**
 
-*   **Single Stream Listener Model:** For servers handling sequential connections (one at a time), the typical MacTCP approach uses a single `StreamPtr`:
-    1.  Create the stream once using `TCPCreate`.
-    2.  Listen for an incoming connection using `TCPPassiveOpen` on that stream.
-    3.  Upon successful completion of `TCPPassiveOpen`, use `TCPRcv` on the *same stream* to receive data.
-    4.  After the connection ends (error, remote close, application decision), explicitly `TCPClose` the connection on the stream.
-    5.  After `TCPClose` completes, go back to step 2 (`TCPPassiveOpen`) on the *same stream* to wait for the next connection.
-*   **`TCPCreate` Buffer (`csParam.create.rcvBuff`):**
-    *   This call requires a non-zero buffer pointer and length. This buffer is for MacTCP's internal use with the stream.
-    *   Errors like `-23006` (`duplicateSocket`) during `TCPCreate` might indicate an issue with this buffer (e.g., size too small). Providing a reasonably large buffer (e.g., 8192 bytes, matching the application's receive buffer) can resolve such issues.
-*   **Re-Listening Issue (`-23007 connectionExists`):**
-    *   Attempting to call `TCPPassiveOpen` again on a stream immediately after a connection on it has finished (e.g., after `TCPRcv` returns `connectionClosing` or after processing a `QUIT` message) often fails with `-23007` (`connectionExists`).
-    *   MacTCP needs an explicit action to fully disassociate the previous connection from the stream/port before it can listen again.
-*   **Solution: Explicit `TCPClose` Before Re-Listen:**
-    *   To reliably allow `TCPPassiveOpen` to succeed after a connection finishes, call `TCPClose` on the stream.
-    *   Wait for the asynchronous `TCPClose` to complete.
-    *   *Then* initiate `TCPPassiveOpen` again.
-*   **`TCPClose` Action (`csParam.close.ulpTimeoutAction`):**
-    *   Using the `Abort` action (`ulpTimeoutAction = 1`) for `TCPClose` seems effective in quickly clearing the connection state and resolving the `-23007` error when re-listening. Set `csParam.close.validityFlags` to include `timeoutAction`.
-*   **Asynchronous Operation State Management:**
-    *   Maintain boolean flags (e.g., `gTCPListenPending`, `gTCPRecvPending`, `gTCPClosePending`) for each asynchronous operation.
-    *   Set the flag to `true` *before* calling `PBControlAsync`.
-    *   In the polling loop, check `ioResult <= 0` to detect completion.
-    *   Clear the corresponding flag *before* handling the completion result or initiating the next operation in the sequence.
-    *   Ensure incompatible operations aren't started while another is pending on the same stream (e.g., don't `TCPPassiveOpen` if `TCPClose` is pending).
-*   **Error Handling:** Check `ioResult` after asynchronous operations complete. Handle specific errors like `connectionClosing` (graceful), `connectionTerminated` (abort), `invalidStreamPtr` (critical), etc., according to the desired application logic and MacTCP documentation. Critical errors might require releasing the stream (`TCPRelease`) instead of just closing.
+*   **MacTCP Driver Lifecycle (`.IPP`):**
+    *   The MacTCP driver (`.IPP`) is opened **once** by the application using `PBOpenSync`.
+    *   **Crucially, the application should NOT issue a `PBClose` call to the MacTCP driver.** The driver is shared system-wide and remains open until the machine is restarted. Attempting `PBClose` will return `closeErr` (-24).
+    *   During application shutdown, only application-specific resources (like UDP/TCP streams, DNR context) should be cleaned up. The driver reference number (`gMacTCPRefNum`) can be zeroed out by the application to indicate it's no longer actively using the driver.
+*   **Single Stream Listener Model for TCP (Server/Passive Open):**
+    *   A single `StreamPtr` is typically used for sequential, one-at-a-time incoming connections.
+    1.  **`TCPCreate`**: Create a TCP stream once using `TCPCreate`. Provide a reasonably sized receive buffer in `csParam.create.rcvBuff` (e.g., 8KB-16KB). This buffer is for MacTCP's internal use with the stream.
+    2.  **`TCPPassiveOpenAsync`**: Initiate an asynchronous passive open on this stream to listen for incoming connection requests. Set an ASR (Asynchronous Notification Routine).
+    3.  **ASR `TCPDataArrival`**: When a peer connects and sends data, the ASR is called with a `TCPDataArrival` event.
+        *   Use `TCPNoCopyRcv` (or `TCPRcv` if copying) on the *same stream* to get the incoming data.
+        *   The connection is now established (`gTCPState = ESTABLISHED`).
+    4.  **ASR `TCPClosing`**: If the remote peer initiates a graceful close (sends FIN), the ASR receives a `TCPClosing` event.
+        *   The application should then promptly `TCPAbort` its side of the connection on the *same stream*.
+    5.  **ASR `TCPTerminate`**: This event signals the connection is fully terminated.
+        *   **If the `TCPTerminate` was a result of an explicit `TCPAbort` by the local application (e.g., after `TCPClosing` from remote, or after sending a `QUIT`)**:
+            *   Enter a `POST_ABORT_COOLDOWN` state for a short period (e.g., ~0.75 seconds, ~45 ticks). This allows MacTCP to fully release the port.
+            *   After the cooldown, transition to `IDLE` and re-initiate `TCPPassiveOpenAsync` on the *same stream*.
+        *   **If it was an unexpected `TCPTerminate` (e.g., network error), or from a graceful close initiated by our application**: Transition appropriately, potentially to `IDLE` to re-listen after a cooldown if applicable.
+    *   **State Machine**: A robust state machine (`gTCPState`) is essential to manage these transitions and operations (e.g., `IDLE`, `LISTENING`, `OPENING_ACTIVE`, `ESTABLISHED`, `CLOSING_GRACEFUL`, `POST_ABORT_COOLDOWN`).
+*   **Outgoing TCP Connections (Client/Active Open):**
+    1.  If a passive listen (`TCPPassiveOpenAsync`) is pending on the stream, it must be **aborted** first using `TCPAbort` to free up the stream for an active open.
+    2.  Use `TCPActiveOpen` (sync or async) on the *same stream* to connect to the remote peer.
+    3.  Use `TCPSend` (sync or async) to send data.
+    4.  Close the connection:
+        *   For normal data transfer followed by close: `TCPCloseGraceful` (sync or async). Wait for the `TCPTerminate` ASR.
+        *   For immediate termination (e.g., after sending a `QUIT` message to a peer): `TCPAbort`.
+    5.  After the send sequence and close are complete, if the application was previously listening, re-initiate `TCPPassiveOpenAsync`.
+*   **Resolving `-23007 (connectionExists / duplicateSocketErr)` for `TCPPassiveOpen`:**
+    *   This error typically occurs if `TCPPassiveOpen` is attempted too soon after a previous connection on the same port has ended, especially if the port hasn't been fully released by MacTCP.
+    *   **Solution:** Use the `TCP_STATE_POST_ABORT_COOLDOWN` mechanism. After an incoming connection is handled and `TCPAbort` is called (e.g., in response to a remote `TCPClosing`), wait for a brief period before attempting `TCPPassiveOpenAsync` again. This gives MacTCP time.
+*   **Universal Procedure Pointers (UPPs):**
+    *   ASRs for MacTCP (like the `TCPNotifyProc`) must be UPPs.
+    *   Create them once using `NewTCPNotifyUPP(MyASRHandler)`.
+    *   Store the UPP.
+    *   Dispose of them using `DisposeRoutineDescriptor(myASR_UPP)` during application cleanup (e.g., in `CleanupNetworking` if created in `InitializeNetworking`).
+*   **Asynchronous Operation Management (General):**
+    *   Use a flag like `gAsyncOperationInProgress` in conjunction with the `ioCompletion` routine being `nil` (for driver-queued async) or the ASR itself to manage the state of pending asynchronous operations.
+    *   When using ASRs, the ASR effectively *is* the completion handler for the operation that enabled it (e.g., `TCPPassiveOpenAsync` leads to ASR events).
+*   **Error Handling:** Examine `ioResult` from synchronous calls and the `reason` code in ASRs. MacTCP errors can be cryptic; refer to documentation. Common ones:
+    *   `connTerm` (-23008): Connection terminated.
+    *   `duplicateSocketErr` (-23007 / -23006): Often related to port already in use or stream state issues.
+    *   `invalidStreamPtr` (-23001): Critical stream error.
+*   **Stream Pointers (`gTCPStream`, `gUDPStream`):**
+    *   For some MacTCP versions/implementations, the "stream pointer" returned by `TCPCreate` or `UDPCreate` might be the same address as the receive buffer pointer passed in. This seems to be an implementation detail. Conceptually, treat them as separate (the stream ID vs. the memory buffer) but be aware they might be the same value. Cleanup involves releasing the stream via `TCPRelease`/`UDPRelease`, then disposing of the allocated buffer.
