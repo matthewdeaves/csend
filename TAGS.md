@@ -6,6 +6,37 @@ I'll be tagging various points of evolution of this code base with a write up of
 
 ---
 
+## [v0.1.1](https://github.com/matthewdeaves/csend/tree/v0.1.1)
+
+Major stability enhancements for Classic Mac networking, focusing on MacTCP driver interaction and TCP connection management. This release resolves critical shutdown errors, improves TCP listening reliability, and integrates standard Apple Menu and Quit functionality for better system citizenship.
+
+**User Interface & System Integration (Classic Mac):**
+
+*   **Standard Menu Support:**
+    *   Added a functional Apple Menu.
+    *   Implemented a File menu with a Quit option (`Cmd+Q` shortcut).
+*   **Graceful System Shutdown/Restart Handling:**
+    *   The application now correctly handles system shutdown/restart Apple Events (`kAEQuitApplication`), ensuring proper network and resource cleanup occurs, identical to a user-initiated Quit.
+
+**Networking Core (Classic Mac):**
+
+*   **MacTCP Driver Lifecycle Correction:**
+    *   Resolved persistent `-24 (closeErr)` during application shutdown by ensuring the MacTCP driver (`.IPP`) is no longer incorrectly closed by the application. The driver is now correctly left open for system-wide use, as per MacTCP documentation.
+*   **TCP Re-Listen Stability (`duplicateSocketErr` Fix):**
+    *   Addressed `-23007 (duplicateSocketErr / connectionExists)` when re-listening for incoming TCP connections.
+    *   Implemented a `POST_ABORT_COOLDOWN` state and timer in the TCP state machine, allowing MacTCP sufficient time to release the port before a new `TCPPassiveOpenAsync` is initiated. This ensures reliable, continuous server functionality.
+*   **UPP Management for TCP ASR:**
+    *   Ensured the `TCPNotifyUPP` for the Asynchronous Notification Routine is created once during network initialization and correctly disposed of during cleanup, preventing potential resource leaks or errors.
+*   **Robust TCP Send/Receive Cycle:**
+    *   Improved logic for handling active TCP sends by correctly aborting pending passive listens and re-initiating them after the send operation completes, ensuring a smooth transition between listening and sending states.
+*   **Buffer Sizing and Definitions:**
+    *   Standardized string buffer sizes (`INET_ADDRSTRLEN`, username lengths) across modules, aligning with `common_defs.h` and ensuring correct null-terminator handling.
+    *   Added a local definition for `kTCPDriverName` to resolve compilation issues.
+
+This version represents a significant step forward in the robustness and correctness of the Classic Mac networking implementation, leading to a more stable user experience.
+
+---
+
 ## [v0.1.0](https://github.com/matthewdeaves/csend/tree/v0.1.0)
 
 This version deserves a point release number now. I've done several rounds of refactoring to better organise and structure of both code bases and the shared code.
