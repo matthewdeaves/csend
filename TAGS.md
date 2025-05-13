@@ -17,6 +17,8 @@ Major stability enhancements for Classic Mac networking, focusing on MacTCP driv
     *   Implemented a File menu with a Quit option (`Cmd+Q` shortcut).
 *   **Graceful System Shutdown/Restart Handling:**
     *   The application now correctly handles system shutdown/restart Apple Events (`kAEQuitApplication`), ensuring proper network and resource cleanup occurs, identical to a user-initiated Quit.
+*   **Bigger Window:**
+    *   Made the fixed window larger to fill a 640x480 display.
 
 **Networking Core (Classic Mac):**
 
