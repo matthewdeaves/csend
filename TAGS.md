@@ -1,6 +1,6 @@
 ## [v1.2.0](https://github.com/matthewdeaves/csend/tree/v1.2.0)
 
-Revolutionary architectural improvements for Classic Mac networking, introducing a network abstraction layer and dual-stream TCP architecture. This release fundamentally reimagines the networking stack to provide better reliability, maintainability, and future extensibility while eliminating the complex single-stream juggling of previous versions.
+ Architectural improvements for Classic Mac networking, introducing a network abstraction layer and dual-stream TCP architecture. This release fundamentally refacotors the networking stack to provide better reliability, maintainability, and future extensibility while eliminating the complex single-stream juggling of previous versions.
 
 **Network Architecture Revolution (Classic Mac):**
 
