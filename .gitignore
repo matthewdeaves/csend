@@ -60,3 +60,6 @@ misc/MPW_Interfaces
 
 # SheepShaver
 .finf
+
+# Doxygen
+doxygen_docs
