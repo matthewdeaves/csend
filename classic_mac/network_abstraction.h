@@ -17,13 +17,13 @@ typedef enum {
 } NetworkImplementation;
 
 /* Forward declarations for implementation-specific types */
-typedef void* NetworkStreamRef;
-typedef void* NetworkEndpointRef;
+typedef void *NetworkStreamRef;
+typedef void *NetworkEndpointRef;
 
 /* Callback types */
-typedef void (*NetworkNotifyProcPtr)(NetworkStreamRef stream, unsigned short eventCode, 
-                                    Ptr userDataPtr, unsigned short terminReason, 
-                                    struct ICMPReport *icmpMsg);
+typedef void (*NetworkNotifyProcPtr)(NetworkStreamRef stream, unsigned short eventCode,
+                                     Ptr userDataPtr, unsigned short terminReason,
+                                     struct ICMPReport *icmpMsg);
 typedef void (*NetworkGiveTimeProcPtr)(void);
 
 /* Network operation result codes (implementation-agnostic) */
@@ -60,52 +60,52 @@ typedef struct {
 /* Network operations function table */
 typedef struct {
     /* System-level operations */
-    OSErr (*Initialize)(short *refNum, ip_addr *localIP, char *localIPStr);
+    OSErr(*Initialize)(short *refNum, ip_addr *localIP, char *localIPStr);
     void (*Shutdown)(short refNum);
-    
+
     /* TCP operations */
-    OSErr (*TCPCreate)(short refNum, NetworkStreamRef *streamRef, 
+    OSErr(*TCPCreate)(short refNum, NetworkStreamRef *streamRef,
                       unsigned long rcvBufferSize, Ptr rcvBuffer,
                       NetworkNotifyProcPtr notifyProc);
-    OSErr (*TCPRelease)(short refNum, NetworkStreamRef streamRef);
-    OSErr (*TCPListen)(NetworkStreamRef streamRef, tcp_port localPort, 
+    OSErr(*TCPRelease)(short refNum, NetworkStreamRef streamRef);
+    OSErr(*TCPListen)(NetworkStreamRef streamRef, tcp_port localPort,
                       Byte timeout, Boolean async);
-    OSErr (*TCPConnect)(NetworkStreamRef streamRef, ip_addr remoteHost, 
-                       tcp_port remotePort, Byte timeout, 
+    OSErr(*TCPConnect)(NetworkStreamRef streamRef, ip_addr remoteHost,
+                       tcp_port remotePort, Byte timeout,
                        NetworkGiveTimeProcPtr giveTime);
-    OSErr (*TCPSend)(NetworkStreamRef streamRef, Ptr data, unsigned short length,
+    OSErr(*TCPSend)(NetworkStreamRef streamRef, Ptr data, unsigned short length,
                     Boolean push, Byte timeout, NetworkGiveTimeProcPtr giveTime);
-    OSErr (*TCPReceiveNoCopy)(NetworkStreamRef streamRef, Ptr rdsPtr, 
-                             short maxEntries, Byte timeout, 
+    OSErr(*TCPReceiveNoCopy)(NetworkStreamRef streamRef, Ptr rdsPtr,
+                             short maxEntries, Byte timeout,
                              Boolean *urgent, Boolean *mark,
                              NetworkGiveTimeProcPtr giveTime);
-    OSErr (*TCPReturnBuffer)(NetworkStreamRef streamRef, Ptr rdsPtr,
+    OSErr(*TCPReturnBuffer)(NetworkStreamRef streamRef, Ptr rdsPtr,
                             NetworkGiveTimeProcPtr giveTime);
-    OSErr (*TCPClose)(NetworkStreamRef streamRef, Byte timeout,
+    OSErr(*TCPClose)(NetworkStreamRef streamRef, Byte timeout,
                      NetworkGiveTimeProcPtr giveTime);
-    OSErr (*TCPAbort)(NetworkStreamRef streamRef);
-    OSErr (*TCPStatus)(NetworkStreamRef streamRef, NetworkTCPInfo *info);
-    
+    OSErr(*TCPAbort)(NetworkStreamRef streamRef);
+    OSErr(*TCPStatus)(NetworkStreamRef streamRef, NetworkTCPInfo *info);
+
     /* UDP operations */
-    OSErr (*UDPCreate)(short refNum, NetworkEndpointRef *endpointRef,
-                      udp_port localPort, Ptr recvBuffer, 
+    OSErr(*UDPCreate)(short refNum, NetworkEndpointRef *endpointRef,
+                      udp_port localPort, Ptr recvBuffer,
                       unsigned short bufferSize);
-    OSErr (*UDPRelease)(short refNum, NetworkEndpointRef endpointRef);
-    OSErr (*UDPSend)(NetworkEndpointRef endpointRef, ip_addr remoteHost,
+    OSErr(*UDPRelease)(short refNum, NetworkEndpointRef endpointRef);
+    OSErr(*UDPSend)(NetworkEndpointRef endpointRef, ip_addr remoteHost,
                     udp_port remotePort, Ptr data, unsigned short length);
-    OSErr (*UDPReceive)(NetworkEndpointRef endpointRef, ip_addr *remoteHost,
-                       udp_port *remotePort, Ptr buffer, 
+    OSErr(*UDPReceive)(NetworkEndpointRef endpointRef, ip_addr *remoteHost,
+                       udp_port *remotePort, Ptr buffer,
                        unsigned short *length, Boolean async);
-    OSErr (*UDPReturnBuffer)(NetworkEndpointRef endpointRef, Ptr buffer,
+    OSErr(*UDPReturnBuffer)(NetworkEndpointRef endpointRef, Ptr buffer,
                             unsigned short bufferSize, Boolean async);
-    
+
     /* Utility operations */
-    OSErr (*ResolveAddress)(const char *hostname, ip_addr *address);
-    OSErr (*AddressToString)(ip_addr address, char *addressStr);
-    
+    OSErr(*ResolveAddress)(const char *hostname, ip_addr *address);
+    OSErr(*AddressToString)(ip_addr address, char *addressStr);
+
     /* Implementation info */
-    const char* (*GetImplementationName)(void);
-    Boolean (*IsAvailable)(void);
+    const char *(*GetImplementationName)(void);
+    Boolean(*IsAvailable)(void);
 } NetworkOperations;
 
 /* Global network state */
@@ -116,12 +116,12 @@ extern NetworkImplementation gCurrentNetworkImpl;
 OSErr InitNetworkAbstraction(void);
 void ShutdownNetworkAbstraction(void);
 NetworkImplementation GetCurrentNetworkImplementation(void);
-const char* GetNetworkImplementationName(void);
+const char *GetNetworkImplementationName(void);
 
 /* Error translation and handling */
 NetworkError TranslateOSErrToNetworkError(OSErr err);
-const char* GetNetworkErrorString(NetworkError err);
-const char* GetMacTCPErrorString(OSErr err);
+const char *GetNetworkErrorString(NetworkError err);
+const char *GetMacTCPErrorString(OSErr err);
 void LogNetworkError(const char *context, OSErr err);
 
 #endif /* NETWORK_ABSTRACTION_H */

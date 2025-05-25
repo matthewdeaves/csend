@@ -2,8 +2,8 @@
 // FILE: ./classic_mac/network_init.h
 //====================================
 
-#ifndef network_init_H
-#define network_init_H
+#ifndef NETWORK_INIT_H
+#define NETWORK_INIT_H
 
 #include <MacTypes.h>
 #include <MacTCP.h>

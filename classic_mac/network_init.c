@@ -31,7 +31,9 @@ ip_addr gMyLocalIP = 0;
 char gMyLocalIPStr[INET_ADDRSTRLEN] = "0.0.0.0";
 char gMyUsername[GLOBAL_USERNAME_BUFFER_SIZE] = "MacUser";
 
-static TCPNotifyUPP gTCPASR_UPP = NULL;
+/* Separate UPPs for listen and send streams */
+static TCPNotifyUPP gTCPListenASR_UPP = NULL;
+static TCPNotifyUPP gTCPSendASR_UPP = NULL;
 
 OSErr InitializeNetworking(void)
 {
@@ -67,7 +69,7 @@ OSErr InitializeNetworking(void)
         log_app_event("Critical Warning: Local IP address is 0.0.0.0. Check network configuration.");
     }
     
-    /* Initialize UDP Discovery (still using direct MacTCP for now) */
+    /* Initialize UDP Discovery */
     err = InitUDPDiscoveryEndpoint(gMacTCPRefNum);
     if (err != noErr) {
         log_app_event("Fatal: UDP Discovery initialization failed (%d).", err);
@@ -80,7 +82,7 @@ OSErr InitializeNetworking(void)
     }
     log_debug("UDP Discovery Endpoint Initialized.");
     
-    /* Initialize TCP Messaging (still using direct MacTCP for now) */
+    /* Initialize TCP Messaging with dual streams */
     tcpStreamBufferSize = PREFERRED_TCP_STREAM_RCV_BUFFER_SIZE;
     if (tcpStreamBufferSize < MINIMUM_TCP_STREAM_RCV_BUFFER_SIZE) {
         tcpStreamBufferSize = MINIMUM_TCP_STREAM_RCV_BUFFER_SIZE;
@@ -88,10 +90,11 @@ OSErr InitializeNetworking(void)
     
     log_debug("Initializing TCP with stream receive buffer size: %lu bytes.", tcpStreamBufferSize);
     
-    if (gTCPASR_UPP == NULL) {
-        gTCPASR_UPP = NewTCPNotifyUPP(TCP_ASR_Handler);
-        if (gTCPASR_UPP == NULL) {
-            log_app_event("Fatal: Failed to create UPP for TCP_ASR_Handler.");
+    /* Create separate UPPs for listen and send streams */
+    if (gTCPListenASR_UPP == NULL) {
+        gTCPListenASR_UPP = NewTCPNotifyUPP(TCP_Listen_ASR_Handler);
+        if (gTCPListenASR_UPP == NULL) {
+            log_app_event("Fatal: Failed to create UPP for TCP_Listen_ASR_Handler.");
             CleanupUDPDiscoveryEndpoint(gMacTCPRefNum);
             if (gNetworkOps && gNetworkOps->Shutdown) {
                 gNetworkOps->Shutdown(gMacTCPRefNum);
@@ -100,16 +103,36 @@ OSErr InitializeNetworking(void)
             gMacTCPRefNum = 0;
             return memFullErr;
         }
-        log_debug("TCP ASR UPP created at 0x%lX.", (unsigned long)gTCPASR_UPP);
+        log_debug("TCP Listen ASR UPP created at 0x%lX.", (unsigned long)gTCPListenASR_UPP);
     }
     
-    err = InitTCP(gMacTCPRefNum, tcpStreamBufferSize, gTCPASR_UPP);
+    if (gTCPSendASR_UPP == NULL) {
+        gTCPSendASR_UPP = NewTCPNotifyUPP(TCP_Send_ASR_Handler);
+        if (gTCPSendASR_UPP == NULL) {
+            log_app_event("Fatal: Failed to create UPP for TCP_Send_ASR_Handler.");
+            DisposeRoutineDescriptor(gTCPListenASR_UPP);
+            gTCPListenASR_UPP = NULL;
+            CleanupUDPDiscoveryEndpoint(gMacTCPRefNum);
+            if (gNetworkOps && gNetworkOps->Shutdown) {
+                gNetworkOps->Shutdown(gMacTCPRefNum);
+            }
+            ShutdownNetworkAbstraction();
+            gMacTCPRefNum = 0;
+            return memFullErr;
+        }
+        log_debug("TCP Send ASR UPP created at 0x%lX.", (unsigned long)gTCPSendASR_UPP);
+    }
+    
+    err = InitTCP(gMacTCPRefNum, tcpStreamBufferSize, gTCPListenASR_UPP, gTCPSendASR_UPP);
     if (err != noErr) {
         log_app_event("Fatal: TCP messaging initialization failed (%d).", err);
-        if (gTCPASR_UPP != NULL) {
-            log_debug("Disposing TCP ASR UPP due to InitTCP failure.");
-            DisposeRoutineDescriptor(gTCPASR_UPP);
-            gTCPASR_UPP = NULL;
+        if (gTCPListenASR_UPP != NULL) {
+            DisposeRoutineDescriptor(gTCPListenASR_UPP);
+            gTCPListenASR_UPP = NULL;
+        }
+        if (gTCPSendASR_UPP != NULL) {
+            DisposeRoutineDescriptor(gTCPSendASR_UPP);
+            gTCPSendASR_UPP = NULL;
         }
         CleanupUDPDiscoveryEndpoint(gMacTCPRefNum);
         if (gNetworkOps && gNetworkOps->Shutdown) {
@@ -120,7 +143,7 @@ OSErr InitializeNetworking(void)
         return err;
     }
     
-    log_debug("TCP Messaging Initialized.");
+    log_debug("TCP Messaging Initialized with dual streams.");
     log_app_event("Networking initialization complete. Local IP: %s using %s", 
                   gMyLocalIPStr, GetNetworkImplementationName());
     
@@ -139,11 +162,17 @@ void CleanupNetworking(void)
     CleanupUDPDiscoveryEndpoint(gMacTCPRefNum);
     log_debug("UDP Discovery Cleaned up.");
     
-    /* Dispose of TCP ASR UPP */
-    if (gTCPASR_UPP != NULL) {
-        log_debug("Disposing TCP ASR UPP at 0x%lX.", (unsigned long)gTCPASR_UPP);
-        DisposeRoutineDescriptor(gTCPASR_UPP);
-        gTCPASR_UPP = NULL;
+    /* Dispose of TCP ASR UPPs */
+    if (gTCPListenASR_UPP != NULL) {
+        log_debug("Disposing TCP Listen ASR UPP at 0x%lX.", (unsigned long)gTCPListenASR_UPP);
+        DisposeRoutineDescriptor(gTCPListenASR_UPP);
+        gTCPListenASR_UPP = NULL;
+    }
+    
+    if (gTCPSendASR_UPP != NULL) {
+        log_debug("Disposing TCP Send ASR UPP at 0x%lX.", (unsigned long)gTCPSendASR_UPP);
+        DisposeRoutineDescriptor(gTCPSendASR_UPP);
+        gTCPSendASR_UPP = NULL;
     }
     
     /* Shutdown network implementation */

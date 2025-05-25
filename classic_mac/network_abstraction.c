@@ -26,16 +26,16 @@ static Boolean IsOpenTransportAvailable(void)
 OSErr InitNetworkAbstraction(void)
 {
     OSErr err = noErr;
-    
+
     log_debug("InitNetworkAbstraction: Starting network abstraction initialization");
-    
+
     /* Check if already initialized */
     if (gNetworkOps != NULL) {
-        log_debug("InitNetworkAbstraction: Already initialized with %s", 
+        log_debug("InitNetworkAbstraction: Already initialized with %s",
                   GetNetworkImplementationName());
         return noErr;
     }
-    
+
     /* Determine which implementation to use */
     if (IsOpenTransportAvailable()) {
         /* TODO: Initialize OpenTransport implementation */
@@ -45,39 +45,39 @@ OSErr InitNetworkAbstraction(void)
         log_debug("InitNetworkAbstraction: Using MacTCP implementation");
         gCurrentNetworkImpl = NETWORK_IMPL_MACTCP;
     }
-    
+
     /* Initialize the appropriate implementation */
     switch (gCurrentNetworkImpl) {
-        case NETWORK_IMPL_MACTCP:
-            gNetworkOps = GetMacTCPOperations();
-            if (gNetworkOps == NULL) {
-                log_app_event("Fatal: Failed to get MacTCP operations table");
-                return memFullErr;
-            }
-            break;
-            
-        case NETWORK_IMPL_OPENTRANSPORT:
-            /* TODO: gNetworkOps = GetOpenTransportOperations(); */
-            log_app_event("Fatal: OpenTransport not yet implemented");
-            return unimpErr;
-            
-        default:
-            log_app_event("Fatal: Unknown network implementation type: %d", 
-                         gCurrentNetworkImpl);
-            return paramErr;
+    case NETWORK_IMPL_MACTCP:
+        gNetworkOps = GetMacTCPOperations();
+        if (gNetworkOps == NULL) {
+            log_app_event("Fatal: Failed to get MacTCP operations table");
+            return memFullErr;
+        }
+        break;
+
+    case NETWORK_IMPL_OPENTRANSPORT:
+        /* TODO: gNetworkOps = GetOpenTransportOperations(); */
+        log_app_event("Fatal: OpenTransport not yet implemented");
+        return unimpErr;
+
+    default:
+        log_app_event("Fatal: Unknown network implementation type: %d",
+                      gCurrentNetworkImpl);
+        return paramErr;
     }
-    
+
     /* Verify the implementation is available */
     if (!gNetworkOps->IsAvailable()) {
-        log_app_event("Fatal: %s is not available on this system", 
-                     gNetworkOps->GetImplementationName());
+        log_app_event("Fatal: %s is not available on this system",
+                      gNetworkOps->GetImplementationName());
         gNetworkOps = NULL;
         gCurrentNetworkImpl = NETWORK_IMPL_NONE;
         return notOpenErr;
     }
-    
-    log_app_event("Network abstraction initialized with %s", 
-                 gNetworkOps->GetImplementationName());
+
+    log_app_event("Network abstraction initialized with %s",
+                  gNetworkOps->GetImplementationName());
     return noErr;
 }
 
@@ -85,11 +85,11 @@ OSErr InitNetworkAbstraction(void)
 void ShutdownNetworkAbstraction(void)
 {
     log_debug("ShutdownNetworkAbstraction: Shutting down network abstraction");
-    
+
     /* The operations table is static, just clear the pointer */
     gNetworkOps = NULL;
     gCurrentNetworkImpl = NETWORK_IMPL_NONE;
-    
+
     log_debug("ShutdownNetworkAbstraction: Complete");
 }
 
@@ -100,19 +100,19 @@ NetworkImplementation GetCurrentNetworkImplementation(void)
 }
 
 /* Get network implementation name */
-const char* GetNetworkImplementationName(void)
+const char *GetNetworkImplementationName(void)
 {
     if (gNetworkOps != NULL && gNetworkOps->GetImplementationName != NULL) {
         return gNetworkOps->GetImplementationName();
     }
-    
+
     switch (gCurrentNetworkImpl) {
-        case NETWORK_IMPL_MACTCP:
-            return "MacTCP";
-        case NETWORK_IMPL_OPENTRANSPORT:
-            return "OpenTransport";
-        default:
-            return "None";
+    case NETWORK_IMPL_MACTCP:
+        return "MacTCP";
+    case NETWORK_IMPL_OPENTRANSPORT:
+        return "OpenTransport";
+    default:
+        return "None";
     }
 }
 
@@ -120,146 +120,146 @@ const char* GetNetworkImplementationName(void)
 NetworkError TranslateOSErrToNetworkError(OSErr err)
 {
     switch (err) {
-        /* Success */
-        case noErr:
-            return NETWORK_SUCCESS;
-            
-        /* Memory errors */
-        case memFullErr:
-        case memWZErr:
-        case nilHandleErr:
-        case memSCErr:
-        case memBCErr:
-        case memPCErr:
-        case memAZErr:
-        case memPurErr:
-        case memAdrErr:
-        case memROZErr:
-            return NETWORK_ERROR_NO_MEMORY;
-            
-        /* Parameter errors */
-        case paramErr:
-        case invalidStreamPtr:
-        case invalidBufPtr:
-        case invalidRDS:
-            return NETWORK_ERROR_INVALID_PARAM;
-            
-        /* Connection errors */
-        case openFailed:
-        case connectionDoesntExist:
-        case connectionExists:
-        case duplicateSocket:
-        case noResultProc:
-        case noDataArea:
-            return NETWORK_ERROR_CONNECTION_FAILED;
-            
-        /* Connection closed errors */
-        case connectionClosing:
-        case connectionTerminated:
-        case TCPRemoteAbort:
-            return NETWORK_ERROR_CONNECTION_CLOSED;
-            
-        /* Timeout errors */
-        case commandTimeout:
-            return NETWORK_ERROR_TIMEOUT;
-            
-        /* Resource busy errors */
-        case streamAlreadyOpen:
-        case insufficientResources:
-            return NETWORK_ERROR_BUSY;
-            
-        /* Not initialized errors */
-        case notOpenErr:
-        case invalidLength:
-            return NETWORK_ERROR_NOT_INITIALIZED;
-            
-        /* Not supported errors */
-        case unimpErr:
-        case badReqErr:
-            return NETWORK_ERROR_NOT_SUPPORTED;
-            
-        default:
-            return NETWORK_ERROR_UNKNOWN;
+    /* Success */
+    case noErr:
+        return NETWORK_SUCCESS;
+
+    /* Memory errors */
+    case memFullErr:
+    case memWZErr:
+    case nilHandleErr:
+    case memSCErr:
+    case memBCErr:
+    case memPCErr:
+    case memAZErr:
+    case memPurErr:
+    case memAdrErr:
+    case memROZErr:
+        return NETWORK_ERROR_NO_MEMORY;
+
+    /* Parameter errors */
+    case paramErr:
+    case invalidStreamPtr:
+    case invalidBufPtr:
+    case invalidRDS:
+        return NETWORK_ERROR_INVALID_PARAM;
+
+    /* Connection errors */
+    case openFailed:
+    case connectionDoesntExist:
+    case connectionExists:
+    case duplicateSocket:
+    case noResultProc:
+    case noDataArea:
+        return NETWORK_ERROR_CONNECTION_FAILED;
+
+    /* Connection closed errors */
+    case connectionClosing:
+    case connectionTerminated:
+    case TCPRemoteAbort:
+        return NETWORK_ERROR_CONNECTION_CLOSED;
+
+    /* Timeout errors */
+    case commandTimeout:
+        return NETWORK_ERROR_TIMEOUT;
+
+    /* Resource busy errors */
+    case streamAlreadyOpen:
+    case insufficientResources:
+        return NETWORK_ERROR_BUSY;
+
+    /* Not initialized errors */
+    case notOpenErr:
+    case invalidLength:
+        return NETWORK_ERROR_NOT_INITIALIZED;
+
+    /* Not supported errors */
+    case unimpErr:
+    case badReqErr:
+        return NETWORK_ERROR_NOT_SUPPORTED;
+
+    default:
+        return NETWORK_ERROR_UNKNOWN;
     }
 }
 
 /* Get human-readable error string */
-const char* GetNetworkErrorString(NetworkError err)
+const char *GetNetworkErrorString(NetworkError err)
 {
     switch (err) {
-        case NETWORK_SUCCESS:
-            return "Success";
-        case NETWORK_ERROR_NOT_INITIALIZED:
-            return "Network not initialized";
-        case NETWORK_ERROR_INVALID_PARAM:
-            return "Invalid parameter";
-        case NETWORK_ERROR_NO_MEMORY:
-            return "Out of memory";
-        case NETWORK_ERROR_TIMEOUT:
-            return "Operation timed out";
-        case NETWORK_ERROR_CONNECTION_FAILED:
-            return "Connection failed";
-        case NETWORK_ERROR_CONNECTION_CLOSED:
-            return "Connection closed";
-        case NETWORK_ERROR_BUSY:
-            return "Resource busy";
-        case NETWORK_ERROR_NOT_SUPPORTED:
-            return "Operation not supported";
-        case NETWORK_ERROR_UNKNOWN:
-        default:
-            return "Unknown error";
+    case NETWORK_SUCCESS:
+        return "Success";
+    case NETWORK_ERROR_NOT_INITIALIZED:
+        return "Network not initialized";
+    case NETWORK_ERROR_INVALID_PARAM:
+        return "Invalid parameter";
+    case NETWORK_ERROR_NO_MEMORY:
+        return "Out of memory";
+    case NETWORK_ERROR_TIMEOUT:
+        return "Operation timed out";
+    case NETWORK_ERROR_CONNECTION_FAILED:
+        return "Connection failed";
+    case NETWORK_ERROR_CONNECTION_CLOSED:
+        return "Connection closed";
+    case NETWORK_ERROR_BUSY:
+        return "Resource busy";
+    case NETWORK_ERROR_NOT_SUPPORTED:
+        return "Operation not supported";
+    case NETWORK_ERROR_UNKNOWN:
+    default:
+        return "Unknown error";
     }
 }
 
 /* Extended error information helper */
-const char* GetMacTCPErrorString(OSErr err)
+const char *GetMacTCPErrorString(OSErr err)
 {
     switch (err) {
-        /* MacTCP-specific errors */
-        case ipBadLapErr:
-            return "Bad network configuration";
-        case ipBadCnfgErr:
-            return "Bad IP configuration";
-        case ipNoCnfgErr:
-            return "No IP configuration";
-        case ipLoadErr:
-            return "Error loading MacTCP";
-        case ipBadAddr:
-            return "Bad IP address";
-        case connectionClosing:
-            return "Connection closing";
-        case invalidLength:
-            return "Invalid length";
-        case connectionExists:
-            return "Connection already exists";
-        case duplicateSocket:
-            return "Duplicate socket";
-        case commandTimeout:
-            return "Command timeout";
-        case openFailed:
-            return "Open failed";
-        case connectionDoesntExist:
-            return "Connection doesn't exist";
-        case connectionTerminated:
-            return "Connection terminated";
-        case invalidBufPtr:
-            return "Invalid buffer pointer";
-        case invalidStreamPtr:
-            return "Invalid stream pointer";
-        case invalidRDS:
-            return "Invalid RDS";
-        case streamAlreadyOpen:
-            return "Stream already open";
-        case noResultProc:
-            return "No result procedure";
-        case noDataArea:
-            return "No data area";
-        case insufficientResources:
-            return "Insufficient resources";
-        case TCPRemoteAbort:
-            return "Remote abort";
-        default:
-            return GetNetworkErrorString(TranslateOSErrToNetworkError(err));
+    /* MacTCP-specific errors */
+    case ipBadLapErr:
+        return "Bad network configuration";
+    case ipBadCnfgErr:
+        return "Bad IP configuration";
+    case ipNoCnfgErr:
+        return "No IP configuration";
+    case ipLoadErr:
+        return "Error loading MacTCP";
+    case ipBadAddr:
+        return "Bad IP address";
+    case connectionClosing:
+        return "Connection closing";
+    case invalidLength:
+        return "Invalid length";
+    case connectionExists:
+        return "Connection already exists";
+    case duplicateSocket:
+        return "Duplicate socket";
+    case commandTimeout:
+        return "Command timeout";
+    case openFailed:
+        return "Open failed";
+    case connectionDoesntExist:
+        return "Connection doesn't exist";
+    case connectionTerminated:
+        return "Connection terminated";
+    case invalidBufPtr:
+        return "Invalid buffer pointer";
+    case invalidStreamPtr:
+        return "Invalid stream pointer";
+    case invalidRDS:
+        return "Invalid RDS";
+    case streamAlreadyOpen:
+        return "Stream already open";
+    case noResultProc:
+        return "No result procedure";
+    case noDataArea:
+        return "No data area";
+    case insufficientResources:
+        return "Insufficient resources";
+    case TCPRemoteAbort:
+        return "Remote abort";
+    default:
+        return GetNetworkErrorString(TranslateOSErrToNetworkError(err));
     }
 }
 
@@ -268,7 +268,7 @@ void LogNetworkError(const char *context, OSErr err)
 {
     NetworkError netErr = TranslateOSErrToNetworkError(err);
     const char *errStr = GetMacTCPErrorString(err);
-    
+
     if (netErr == NETWORK_ERROR_UNKNOWN) {
         log_app_event("%s: MacTCP error %d - %s", context, err, errStr);
     } else {
