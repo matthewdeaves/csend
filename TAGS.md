@@ -1,8 +1,65 @@
-This repo is a record of my work to learn C programming with the aim of making a peer to peer enabled chat program in C that will run on Ubuntu, macOS and hopefully Mac OS System 6 with a Mac SE.
+## [v1.2.0](https://github.com/matthewdeaves/csend/tree/v1.2.0)
 
-To start with I am focussing on the Ubuntu and macOS support as that will be the easiest to get back into C programming on with easy to find documentation. However, there is briliant work available to learn from by Joshua Stein such as [https://jcs.org/wikipedia](https://jcs.org/wikipedia) that are using MacTCP etc under System 6 and written in C with the Think C IDE.
+Revolutionary architectural improvements for Classic Mac networking, introducing a network abstraction layer and dual-stream TCP architecture. This release fundamentally reimagines the networking stack to provide better reliability, maintainability, and future extensibility while eliminating the complex single-stream juggling of previous versions.
 
-I'll be tagging various points of evolution of this code base with a write up of important learnings and aspects of the code as I go.
+**Network Architecture Revolution (Classic Mac):**
+
+*   **Network Abstraction Layer:**
+    *   Introduced a comprehensive network abstraction layer (`network_abstraction.c`/`.h`) that decouples high-level networking code from MacTCP implementation details.
+    *   All network operations now go through a unified function table interface (`NetworkOperations`), making the codebase network-implementation agnostic.
+    *   Prepared infrastructure for future OpenTransport support without requiring changes to application logic.
+    *   Implemented proper error translation and detailed error reporting through the abstraction layer.
+
+*   **Dual-Stream TCP Architecture:**
+    *   Completely redesigned TCP handling to use two independent streams: one dedicated to listening for incoming connections, another for outgoing connections.
+    *   Eliminated the error-prone pattern of aborting/restarting the listen operation when sending messages.
+    *   Each stream has its own receive buffer, ASR (Asynchronous Status Routine) handler, and state tracking.
+    *   Listen stream continuously accepts incoming connections without interruption.
+    *   Send stream handles outgoing connections independently, dramatically improving reliability.
+
+*   **Advanced Message Queue System:**
+    *   Implemented a proper message queue for handling multiple outgoing messages, particularly beneficial for broadcast operations.
+    *   Queue automatically processes pending messages when the send stream becomes idle.
+    *   Broadcast messages to multiple peers now queue gracefully instead of potentially failing due to stream conflicts.
+
+**UDP Discovery Enhancements (Classic Mac):**
+
+*   **Asynchronous UDP Operations:**
+    *   Migrated UDP operations to use fully asynchronous receive and buffer return through the network abstraction layer.
+    *   Implemented proper async operation tracking with dedicated handle management.
+    *   Improved buffer management with automatic retry on buffer availability.
+    *   Better handling of concurrent UDP operations without blocking.
+
+**Stability and Reliability Improvements:**
+
+*   **ASR Event Handling:**
+    *   Separate ASR handlers for listen and send streams prevent event interference.
+    *   Improved ASR event queueing and processing to handle rapid network events.
+    *   Added periodic polling as a failsafe for data arrival detection.
+
+*   **Connection State Management:**
+    *   Implemented proper connection reset delays to ensure MacTCP has time to clean up resources.
+    *   Better handling of connection termination scenarios (graceful close vs. abort).
+    *   Improved error recovery with automatic state transitions on failures.
+
+*   **Resource Management:**
+    *   Proper allocation and cleanup of network endpoints through abstraction layer.
+    *   Improved memory management for async operations.
+    *   Better tracking of pending operations to prevent resource leaks.
+
+**Code Architecture Improvements:**
+
+*   **Modular Design:**
+    *   Clear separation between network abstraction, implementation, and application logic.
+    *   MacTCP-specific code isolated in `mactcp_impl.c`, making it easy to add alternative implementations.
+    *   Reduced coupling between modules through well-defined interfaces.
+
+*   **Enhanced Debugging:**
+    *   More detailed logging throughout the network stack.
+    *   Better error context preservation and reporting.
+    *   Clearer state machine transitions visible in debug output.
+
+This version represents a complete architectural overhaul of the Classic Mac networking stack, providing a robust foundation for reliable peer-to-peer communication while preparing for future network stack support. The dual-stream architecture eliminates the most significant source of networking errors in previous versions, while the abstraction layer ensures long-term maintainability and portability.
 
 ---
 
@@ -32,7 +89,7 @@ Major stability enhancements for Classic Mac networking, focusing on MacTCP driv
 *   **Robust TCP Send/Receive Cycle:**
     *   Improved logic for handling active TCP sends by correctly aborting pending passive listens and re-initiating them after the send operation completes, ensuring a smooth transition between listening and sending states.
 *   **Buffer Sizing and Definitions:**
-    *   Standardized string buffer sizes (`INET_ADDRSTRLEN`, username lengths) across modules, aligning with `common_defs.h` and ensuring correct null-terminator handling.
+    *   Standardised string buffer sizes (`INET_ADDRSTRLEN`, username lengths) across modules, aligning with `common_defs.h` and ensuring correct null-terminator handling.
     *   Added a local definition for `kTCPDriverName` to resolve compilation issues.
 
 This version represents a significant step forward in the robustness and correctness of the Classic Mac networking implementation, leading to a more stable user experience.
@@ -156,7 +213,7 @@ A new, more robust shared logging system has been implemented, replacing the pre
 ### 1. `posix/main.c` (New):
 
 *   Contains the `main` function moved from `posix/peer.c`.
-*   Initializes and shuts down the new shared logging system with POSIX-specific callbacks.
+*   Initialises and shuts down the new shared logging system with POSIX-specific callbacks.
 *   Uses `log_app_event()` for high-level application status messages.
 *   Uses `terminal_display_app_message()` for messages directly visible to the user on the console.
 *   Improved thread cancellation and joining logic during startup failure or shutdown.
@@ -190,10 +247,10 @@ A new, more robust shared logging system has been implemented, replacing the pre
 
 ### 2. `classic_mac/main.c`:
 
-*   Initializes and shuts down the new shared logging system with Classic Mac specific callbacks.
+*   Initialises and shuts down the new shared logging system with Classic Mac specific callbacks.
 *   The shutdown sequence for sending QUIT messages is now directly in `main.c`:
     *   It iterates through active peers.
-    *   Calls the generalized `MacTCP_SendMessageSync()` with `MSG_QUIT`.
+    *   Calls the generalised `MacTCP_SendMessageSync()` with `MSG_QUIT`.
     *   Adds a `kQuitMessageDelayTicks` delay between sending QUIT messages to different peers.
     *   Logs and displays a summary of QUIT messages sent.
 *   `IdleInputTE()` is now called in the main event loop.
@@ -366,7 +423,7 @@ This version marks a major milestone, for the Classic Macintosh client, by fully
     *   **`Makefile` (POSIX):**
         *   Object file lists and dependencies adjusted.
 
-v0.0.11 brings the Classic Macintosh version closer to feature-parity with the POSIX version in terms of core communication capabilities. Both platforms now utilize shared logic for discovery processing and TCP message handling. The Classic Mac version now fully supports sending and receiving chat messages and QUIT notifications. Key remaining differences lie in the UI (GUI vs. CLI) and threading models.
+v0.0.11 brings the Classic Macintosh version closer to feature-parity with the POSIX version in terms of core communication capabilities. Both platforms now utilise shared logic for discovery processing and TCP message handling. The Classic Mac version now fully supports sending and receiving chat messages and QUIT notifications. Key remaining differences lie in the UI (GUI vs. CLI) and threading models.
 
 ---
 
@@ -374,7 +431,7 @@ v0.0.11 brings the Classic Macintosh version closer to feature-parity with the P
 
 1.  **Major Refactoring: Shared Peer Management Logic:**
     *   **v0.0.9:** Peer management logic (like defining `peer_t`, adding/updating peers, checking timeouts) was implemented within the platform-specific `posix/peer.c` and absent in `classic_mac`.
-    *   **v0.0.10:** Introduces `shared/peer_shared.c` and `shared/peer_shared.h`. This centralizes the core, platform-independent logic for managing the peer list:
+    *   **v0.0.10:** Introduces `shared/peer_shared.c` and `shared/peer_shared.h`. This centralises the core, platform-independent logic for managing the peer list:
         *   The `peer_t` structure is now defined in `shared/common_defs.h`.
         *   Functions like `peer_shared_init_list`, `peer_shared_find_by_ip`, `peer_shared_find_empty_slot`, `peer_shared_update_entry`, `peer_shared_add_or_update`, and `peer_shared_prune_timed_out` handle the fundamental operations on a `peer_t` array.
         *   Platform-specific time handling (`TickCount` vs `time`) is managed within `peer_shared.c` using `#ifdef __MACOS__`.
@@ -392,7 +449,7 @@ v0.0.11 brings the Classic Macintosh version closer to feature-parity with the P
         *   `shared/utils.c/h` were removed.
         *   Logging functionality was moved into platform-specific implementations:
             *   `posix/logging.c/h`: Provides `log_message` which prints timestamped messages to `stdout`.
-            *   `classic_mac/logging.c/h`: Provides `log_message` (renamed from `LogToDialog`) which writes to a file (`csend_log.txt`) and, if the dialog is initialized, also appends the message to the dialog's message area (`gMessagesTE`).
+            *   `classic_mac/logging.c/h`: Provides `log_message` (renamed from `LogToDialog`) which writes to a file (`csend_log.txt`) and, if the dialog is initialised, also appends the message to the dialog's message area (`gMessagesTE`).
     *   **Benefit:** Allows each platform to log messages in the most appropriate way (console for POSIX, file/dialog for Classic Mac) while maintaining a consistent function name (`log_message`).
 
 4.  **Classic Mac UDP Discovery Implementation:**
@@ -408,7 +465,7 @@ v0.0.11 brings the Classic Macintosh version closer to feature-parity with the P
     *   **Benefit:** Implements the core discovery sending mechanism for the Classic Mac platform, separating it cleanly from general TCP/IP setup.
 
 5.  **Classic Mac Integration Updates:**
-    *   **`classic_mac/main.c`:** Updated to initialize the new peer list (`InitPeerList`), initialize the UDP endpoint (`InitUDPBroadcastEndpoint`), and call `CheckSendBroadcast` and `PruneTimedOutPeers` during the idle part of the event loop.
+    *   **`classic_mac/main.c`:** Updated to initialise the new peer list (`InitPeerList`), initialise the UDP endpoint (`InitUDPBroadcastEndpoint`), and call `CheckSendBroadcast` and `PruneTimedOutPeers` during the idle part of the event loop.
     *   **`classic_mac/dialog.c`:** `DoSendAction` was updated to integrate with the new peer management. It now includes logic (using the new `GetPeerByIndex`) to identify the target peer IP when sending a non-broadcast message (though the actual network send call is still a TODO). It also uses the global `gMyUsername` and `gMyLocalIPStr`. The logging function name was updated from `LogToDialog` to `log_message`.
 
 6.  **Build System Updates (Makefiles):**
@@ -435,7 +492,7 @@ Further work on code sharing between POSIX and ANSI C builds through strategic r
 Core Refactoring
 
 - Refactored peer management with new _update_peer_entry helper function
-    - Centralized timestamp and username update logic
+    - Centralised timestamp and username update logic
     - Reduced code duplication between updating existing peers and adding new ones
     - Ensured consistent handling of NULL or empty usernames
 - Moved utility code to shared directory
@@ -484,7 +541,7 @@ Add Classic Mac GUI Shell and Build System
     - Dynamically locates `RIncludes` based on compiler path.
     - Outputs `.APPL`, `.bin`, `.dsk` files to `build/classic_mac/`.
 - Refactor POSIX `Makefile`:
-    - Organize outputs into `build/posix/` (executable) and `build/obj/posix/` (objects).
+    - Organise outputs into `build/posix/` (executable) and `build/obj/posix/` (objects).
     - Update `clean` target to remove entire `build/` directory.
 - Update Docker configuration (`Dockerfile`, `docker-compose.yml`) to use the new POSIX executable path (`/app/build/posix/csend_posix`).
 
