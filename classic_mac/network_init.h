@@ -1,9 +1,9 @@
 //====================================
-// FILE: ./classic_mac/mactcp_network.h
+// FILE: ./classic_mac/network_init.h
 //====================================
 
-#ifndef MACTCP_NETWORK_H
-#define MACTCP_NETWORK_H
+#ifndef network_init_H
+#define network_init_H
 
 #include <MacTypes.h>
 #include <MacTCP.h>

@@ -5,15 +5,19 @@
 #include <MacTCP.h>
 #include "common_defs.h"
 #include "peer.h"
+
 #define BROADCAST_IP 0xFFFFFFFFUL
 #define kMinUDPBufSize 2048
-extern StreamPtr gUDPStream;
+
+/* These are now internal to the implementation */
+/* extern StreamPtr gUDPStream; - removed */
 extern Ptr gUDPRecvBuffer;
 extern UDPiopb gUDPReadPB;
 extern UDPiopb gUDPBfrReturnPB;
 extern Boolean gUDPReadPending;
 extern Boolean gUDPBfrReturnPending;
 extern unsigned long gLastBroadcastTimeTicks;
+
 OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum);
 void CleanupUDPDiscoveryEndpoint(short macTCPRefNum);
 OSErr StartAsyncUDPRead(void);
@@ -22,4 +26,5 @@ OSErr SendDiscoveryResponseSync(short macTCPRefNum, const char *myUsername, cons
 OSErr ReturnUDPBufferAsync(Ptr dataPtr, unsigned short bufferSize);
 void CheckSendBroadcast(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr);
 void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP);
+
 #endif

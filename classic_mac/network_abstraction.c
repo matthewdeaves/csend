@@ -120,25 +120,64 @@ const char* GetNetworkImplementationName(void)
 NetworkError TranslateOSErrToNetworkError(OSErr err)
 {
     switch (err) {
+        /* Success */
         case noErr:
             return NETWORK_SUCCESS;
+            
+        /* Memory errors */
         case memFullErr:
+        case memWZErr:
+        case nilHandleErr:
+        case memSCErr:
+        case memBCErr:
+        case memPCErr:
+        case memAZErr:
+        case memPurErr:
+        case memAdrErr:
+        case memROZErr:
             return NETWORK_ERROR_NO_MEMORY;
+            
+        /* Parameter errors */
         case paramErr:
+        case invalidStreamPtr:
+        case invalidBufPtr:
+        case invalidRDS:
             return NETWORK_ERROR_INVALID_PARAM;
+            
+        /* Connection errors */
         case openFailed:
         case connectionDoesntExist:
+        case connectionExists:
+        case duplicateSocket:
+        case noResultProc:
+        case noDataArea:
             return NETWORK_ERROR_CONNECTION_FAILED;
+            
+        /* Connection closed errors */
         case connectionClosing:
         case connectionTerminated:
+        case TCPRemoteAbort:
             return NETWORK_ERROR_CONNECTION_CLOSED;
+            
+        /* Timeout errors */
         case commandTimeout:
             return NETWORK_ERROR_TIMEOUT;
-        case duplicateSocket:
+            
+        /* Resource busy errors */
         case streamAlreadyOpen:
+        case insufficientResources:
             return NETWORK_ERROR_BUSY;
+            
+        /* Not initialized errors */
         case notOpenErr:
+        case invalidLength:
             return NETWORK_ERROR_NOT_INITIALIZED;
+            
+        /* Not supported errors */
+        case unimpErr:
+        case badReqErr:
+            return NETWORK_ERROR_NOT_SUPPORTED;
+            
         default:
             return NETWORK_ERROR_UNKNOWN;
     }
@@ -169,5 +208,70 @@ const char* GetNetworkErrorString(NetworkError err)
         case NETWORK_ERROR_UNKNOWN:
         default:
             return "Unknown error";
+    }
+}
+
+/* Extended error information helper */
+const char* GetMacTCPErrorString(OSErr err)
+{
+    switch (err) {
+        /* MacTCP-specific errors */
+        case ipBadLapErr:
+            return "Bad network configuration";
+        case ipBadCnfgErr:
+            return "Bad IP configuration";
+        case ipNoCnfgErr:
+            return "No IP configuration";
+        case ipLoadErr:
+            return "Error loading MacTCP";
+        case ipBadAddr:
+            return "Bad IP address";
+        case connectionClosing:
+            return "Connection closing";
+        case invalidLength:
+            return "Invalid length";
+        case connectionExists:
+            return "Connection already exists";
+        case duplicateSocket:
+            return "Duplicate socket";
+        case commandTimeout:
+            return "Command timeout";
+        case openFailed:
+            return "Open failed";
+        case connectionDoesntExist:
+            return "Connection doesn't exist";
+        case connectionTerminated:
+            return "Connection terminated";
+        case invalidBufPtr:
+            return "Invalid buffer pointer";
+        case invalidStreamPtr:
+            return "Invalid stream pointer";
+        case invalidRDS:
+            return "Invalid RDS";
+        case streamAlreadyOpen:
+            return "Stream already open";
+        case noResultProc:
+            return "No result procedure";
+        case noDataArea:
+            return "No data area";
+        case insufficientResources:
+            return "Insufficient resources";
+        case TCPRemoteAbort:
+            return "Remote abort";
+        default:
+            return GetNetworkErrorString(TranslateOSErrToNetworkError(err));
+    }
+}
+
+/* Log network error with context */
+void LogNetworkError(const char *context, OSErr err)
+{
+    NetworkError netErr = TranslateOSErrToNetworkError(err);
+    const char *errStr = GetMacTCPErrorString(err);
+    
+    if (netErr == NETWORK_ERROR_UNKNOWN) {
+        log_app_event("%s: MacTCP error %d - %s", context, err, errStr);
+    } else {
+        log_app_event("%s: %s (MacTCP error %d)", context, errStr, err);
     }
 }

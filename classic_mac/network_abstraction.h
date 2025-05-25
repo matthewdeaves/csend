@@ -118,8 +118,10 @@ void ShutdownNetworkAbstraction(void);
 NetworkImplementation GetCurrentNetworkImplementation(void);
 const char* GetNetworkImplementationName(void);
 
-/* Error translation */
+/* Error translation and handling */
 NetworkError TranslateOSErrToNetworkError(OSErr err);
 const char* GetNetworkErrorString(NetworkError err);
+const char* GetMacTCPErrorString(OSErr err);
+void LogNetworkError(const char *context, OSErr err);
 
 #endif /* NETWORK_ABSTRACTION_H */

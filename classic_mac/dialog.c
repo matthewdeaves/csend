@@ -1,8 +1,8 @@
 #include "dialog.h"
 #include "logging.h"
-#include "mactcp_network.h"
+#include "network_init.h"
 #include "peer.h"
-#include "./mactcp_messaging.h"
+#include "./messaging.h"
 #include "../shared/logging.h"
 #include "../shared/protocol.h"
 #include <MacTypes.h>
@@ -116,22 +116,26 @@ void HandleSendButtonClick(void)
     char displayMsg[BUFFER_SIZE + 100];
     OSErr sendErr = noErr;
     int i;
+    
     if (!gDialogTEInitialized || gInputTE == NULL) {
         log_debug("Error (HandleSendButtonClick): Input TE not initialized.");
         SysBeep(10);
         return;
     }
+    
     if (!GetInputText(inputCStr, sizeof(inputCStr))) {
         log_debug("Error: Could not get text from input field for sending.");
         SysBeep(10);
         ActivateInputTE(true);
         return;
     }
+    
     if (strlen(inputCStr) == 0) {
         log_debug("Send Action: Input field is empty. No action taken.");
         ActivateInputTE(true);
         return;
     }
+    
     GetDialogItem(gMainWindow, kBroadcastCheckbox, &itemType, &itemHandle, &itemRect);
     isBroadcast = false;
     if (itemHandle != NULL && itemType == (ctrlItem + chkCtrl)) {
@@ -141,44 +145,87 @@ void HandleSendButtonClick(void)
     } else {
         log_debug("Warning: Broadcast item %d is not a checkbox or handle is NULL! Assuming not broadcast.", kBroadcastCheckbox);
     }
+    
     if (isBroadcast) {
         int sent_count = 0;
+        int failed_count = 0;
+        TCPStreamState currentState;
+        
         log_debug("Attempting broadcast of: '%s'", inputCStr);
         sprintf(displayMsg, "You (Broadcast): %s", inputCStr);
         AppendToMessagesTE(displayMsg);
         AppendToMessagesTE("\r");
+        
+        /* Check if we can send before attempting broadcast */
+        currentState = GetTCPStreamState();
+        if (currentState == TCP_STATE_RETRY_LISTEN_DELAY || 
+            currentState == TCP_STATE_ERROR ||
+            currentState == TCP_STATE_POST_ABORT_COOLDOWN) {
+            log_debug("Cannot broadcast: TCP in recovery state %d", currentState);
+            sprintf(displayMsg, "Network is recovering from error. Please try again in a few seconds.");
+            AppendToMessagesTE(displayMsg);
+            AppendToMessagesTE("\r");
+            SysBeep(10);
+            ActivateInputTE(true);
+            return;
+        }
+        
         for (i = 0; i < MAX_PEERS; i++) {
             if (gPeerManager.peers[i].active) {
-                sendErr = MacTCP_SendMessageSync(gPeerManager.peers[i].ip,
-                                                 inputCStr,
-                                                 MSG_TEXT,
-                                                 gMyUsername,
-                                                 gMyLocalIPStr,
-                                                 YieldTimeToSystem);
+                /* For broadcast, queue messages instead of sending synchronously */
+                sendErr = MacTCP_QueueMessage(gPeerManager.peers[i].ip,
+                                            inputCStr,
+                                            MSG_TEXT);
                 if (sendErr == noErr) {
                     sent_count++;
+                    log_debug("Broadcast queued for %s@%s", 
+                            gPeerManager.peers[i].username, gPeerManager.peers[i].ip);
+                    
+                    /* Add a small delay between queuing for multiple peers */
+                    if (i < MAX_PEERS - 1) {
+                        unsigned long delayStart = TickCount();
+                        while ((TickCount() - delayStart) < 30) { // 0.5 second between peers
+                            YieldTimeToSystem();
+                        }
+                    }
                 } else {
-                    log_debug("Broadcast send to %s@%s failed: %d",
-                              gPeerManager.peers[i].username, gPeerManager.peers[i].ip, sendErr);
+                    failed_count++;
+                    log_debug("Broadcast queue failed for %s@%s: %d",
+                            gPeerManager.peers[i].username, gPeerManager.peers[i].ip, sendErr);
                 }
             }
         }
-        sprintf(displayMsg, "Broadcast sent to %d active peer(s).", sent_count);
+        
+        if (sent_count > 0) {
+            sprintf(displayMsg, "Broadcast queued for %d peer(s).", sent_count);
+        } else {
+            sprintf(displayMsg, "Broadcast failed. Could not queue for any peers.");
+        }
+        if (failed_count > 0) {
+            sprintf(displayMsg + strlen(displayMsg), " (%d failed)", failed_count);
+        }
         AppendToMessagesTE(displayMsg);
         AppendToMessagesTE("\r");
-        log_debug("Broadcast of '%s' completed. Sent to %d peers.", inputCStr, sent_count);
-        ClearInputText();
+        
+        log_debug("Broadcast of '%s' completed. Queued for %d peers, %d failed.", 
+                  inputCStr, sent_count, failed_count);
+        
+        if (sent_count > 0) {
+            ClearInputText();
+        }
     } else {
         peer_t targetPeer;
         if (DialogPeerList_GetSelectedPeer(&targetPeer)) {
             log_debug("Attempting sync send to selected peer %s@%s: '%s'",
                       targetPeer.username, targetPeer.ip, inputCStr);
+            
             sendErr = MacTCP_SendMessageSync(targetPeer.ip,
                                              inputCStr,
                                              MSG_TEXT,
                                              gMyUsername,
                                              gMyLocalIPStr,
                                              YieldTimeToSystem);
+            
             if (sendErr == noErr) {
                 sprintf(displayMsg, "You (to %s): %s", targetPeer.username, inputCStr);
                 AppendToMessagesTE(displayMsg);
@@ -202,6 +249,7 @@ void HandleSendButtonClick(void)
             SysBeep(10);
         }
     }
+    
     ActivateInputTE(true);
 }
 void ActivateDialogTE(Boolean activating)

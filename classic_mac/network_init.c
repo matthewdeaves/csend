@@ -1,13 +1,13 @@
 //====================================
-// FILE: ./classic_mac/mactcp_network.c
+// FILE: ./classic_mac/network_init.c
 //====================================
 
-#include "mactcp_network.h"
+#include "network_init.h"
 #include "network_abstraction.h"
 #include "logging.h"
 #include "../shared/logging.h"
-#include "mactcp_discovery.h"
-#include "mactcp_messaging.h"
+#include "discovery.h"
+#include "messaging.h"
 #include "common_defs.h"
 #include <Devices.h>
 #include <Errors.h>
