@@ -4,9 +4,9 @@
 
 The **POSIX version** is a multi-threaded, command-line application. It uses UDP for local network peer discovery and TCP for direct messaging. Docker support is provided for testing.
 
-The **Classic Mac version** is a GUI application for System 7.x (via Retro68). It utilizes MacTCP for UDP peer discovery and TCP messaging (TEXT and QUIT types). Its single-threaded event loop manages a shared TCP stream by primarily listening asynchronously for incoming connections, and temporarily aborting this to perform synchronous outgoing TCP operations before resuming the listen.
+The **Classic Mac version** is a GUI application for System 7.x (via Retro68). It utilises MacTCP for UDP peer discovery and TCP messaging (TEXT and QUIT types). The application now features a network abstraction layer that enables easier porting to OpenTransport in the future. It uses dual TCP streams - one dedicated to listening for incoming connections and another for outgoing connections, managed through a single-threaded event loop with asynchronous operations.
 
-Both versions utilize a shared C codebase for core protocol handling, peer list management, and the underlying discovery and messaging logic.
+Both versions utilise a shared C codebase for core protocol handling, peer list management, and the underlying discovery and messaging logic.
 You can watch a [demo video on YouTube](https://www.youtube.com/watch?v=_9iXCBZ_FjE) (Note: Video shows an older version; current functionality is more advanced!).
 
 Detailed information on the evolving versions of the project can be found [here](TAGS.md).
@@ -59,29 +59,34 @@ The `shared/` directory contains the core logic that is platform-independent:
 
 ## Features (Classic Mac Version)
 
+*   **Network Abstraction Layer:**
+    *   Introduces a platform-agnostic network abstraction layer (`classic_mac/network_abstraction.c`/`.h`) that provides a unified interface for network operations.
+    *   Currently implements MacTCP support through `mactcp_impl.c`, with infrastructure ready for OpenTransport implementation.
+    *   All network operations (TCP/UDP create, connect, send, receive, etc.) go through a function table interface, making the upper-level code network-implementation agnostic.
 *   **Networking Stack:**
-    *   Initializes MacTCP driver using `PBOpenSync` (`classic_mac/mactcp_network.c`).
+    *   Initializes network stack through the abstraction layer, which internally handles MacTCP driver initialization using `PBOpenSync` (`classic_mac/network_init.c`, `classic_mac/mactcp_impl.c`).
     *   Initializes DNR (Domain Name Resolver) using `DNR.c` for IP-to-string conversion (`AddrToStr`) and string-to-IP (`ParseIPv4` helper).
     *   Obtains the local IP address from MacTCP using `ipctlGetAddr`.
 *   **Peer Discovery (UDP):**
-    *   Initializes a UDP endpoint using MacTCP's `UDPCreate` (`classic_mac/mactcp_discovery.c`).
-    *   Sends periodic discovery broadcasts (`MSG_DISCOVERY`) synchronously using `SendDiscoveryBroadcastSync`.
-    *   Listens for UDP packets by polling an asynchronous `UDPRead` operation (`PollUDPListener`).
-    *   Processes received UDP packets using the shared `discovery.c` (`discovery_logic_process_packet`), with Mac-specific callbacks: `mac_send_discovery_response` (uses `SendDiscoveryResponseSync`) for sending responses, `mac_add_or_update_peer` (uses `AddOrUpdatePeer`) for updating the peer list, and `mac_notify_peer_list_updated` for triggering GUI updates.
-    *   Manages UDP receive buffers via asynchronous `UDPBfrReturn` (polled).
+    *   Initializes a UDP endpoint through the network abstraction layer (`classic_mac/discovery.c`).
+    *   Sends periodic discovery broadcasts (`MSG_DISCOVERY`) synchronously.
+    *   Uses asynchronous UDP operations with polling for receiving packets and returning buffers.
+    *   Processes received UDP packets using the shared `discovery.c` (`discovery_logic_process_packet`), with Mac-specific callbacks.
 *   **Direct Messaging (TCP):**
-    *   Manages a **single TCP stream** for both incoming and outgoing connections (`classic_mac/mactcp_messaging.c`).
-    *   **Incoming Connections:**
-        *   Listens for incoming TCP connections on `PORT_TCP` using an asynchronous `TCPPassiveOpen` call, which is polled in the main event loop (`PollTCP`).
-        *   When a connection is established, it reads data using synchronous-style polling of `TCPRcv` (via `LowTCPRcvSyncPoll`).
-        *   Received data is parsed using the shared `protocol.c` and then processed by the shared `messaging.c` (`handle_received_tcp_message`) with Mac-specific callbacks: `mac_tcp_add_or_update_peer`, `mac_tcp_display_text_message`, and `mac_tcp_mark_peer_inactive`.
-    *   **Outgoing Connections (`MacTCP_SendMessageSync`):**
-        *   To send a message, if a passive listen (`TCPPassiveOpen`) is pending, it is **aborted** using `LowTCPAbortSyncPoll`.
-        *   An active TCP connection is then established to the target peer using synchronous-style polling of `TCPActiveOpen` (via `LowTCPActiveOpenSyncPoll`).
-        *   The formatted message (TEXT or QUIT) is sent using synchronous-style polling of `TCPSend` (via `LowTCPSendSyncPoll`).
-        *   The connection is then immediately closed using `TCPAbort` (via `LowTCPAbortSyncPoll`).
-        *   The system then returns to attempting a passive listen.
-    *   This strategy allows a single stream to handle both listening and sending in a cooperative multitasking environment.
+    *   Uses **dual TCP streams** - one dedicated for listening and one for sending (`classic_mac/messaging.c`).
+    *   **Listen Stream:**
+        *   Continuously listens for incoming TCP connections on `PORT_TCP` using asynchronous operations.
+        *   Has its own dedicated receive buffer and ASR (Asynchronous Status Routine) handler.
+        *   Processes incoming messages through the shared protocol and messaging logic.
+    *   **Send Stream:**
+        *   Used exclusively for outgoing connections.
+        *   Has its own dedicated receive buffer and ASR handler.
+        *   Performs synchronous-style operations with polling for connect, send, and close.
+    *   **Message Queue:**
+        *   Implements a message queue system for broadcast operations.
+        *   Allows queuing of multiple messages when the send stream is busy.
+        *   Processes queued messages automatically when the send stream becomes idle.
+    *   This dual-stream architecture eliminates the need to interrupt listening when sending messages, providing more reliable operation.
 *   **Peer Management:**
     *   Initializes and maintains the peer list (`gPeerManager`) using shared code (`classic_mac/peer.c`, `shared/peer.c`).
     *   Prunes timed-out peers based on `TickCount()`.
@@ -95,7 +100,7 @@ The `shared/` directory contains the core logic that is platform-independent:
 *   **Event Loop:** A standard Classic Mac event loop (`classic_mac/main.c`):
     *   Handles mouse clicks (button presses, list selection, scrollbar interaction, window dragging/closing), key down events for input, window updates, and activation/deactivation of UI elements.
     *   Calls `TEIdle` for TextEdit fields.
-    *   Periodically polls network services (`PollUDPListener`, `PollTCP`) in `HandleIdleTasks`, checks for discovery broadcast intervals, and updates the peer list display.
+    *   Periodically polls network services (`PollUDPListener`, `ProcessTCPStateMachine`) in `HandleIdleTasks`, checks for discovery broadcast intervals, and updates the peer list display.
 *   **Logging:**
     *   Uses the shared logging system. Platform-specific callbacks provide Classic Mac timestamps (`classic_mac_platform_get_timestamp`) and display debug messages in the GUI's message display area (`classic_mac_platform_display_debug_log`) (`classic_mac/logging.c`).
     *   Logs messages to a file (`csend_mac.log`) for debugging.
@@ -223,6 +228,6 @@ Once the POSIX application is running (locally or in Docker), you can use the fo
         *   Click the "Send" button. The message will be sent via TCP to the selected peer. Your sent message will appear in the main message area, prefixed with "You (to <username>):".
     *   **For a broadcast message:**
         *   Check the "Broadcast" checkbox. (This will automatically deselect any peer in the list).
-        *   Click the "Send" button. The message will be sent via TCP to all currently active peers. Your message will appear in the main message area, prefixed with "You (Broadcast):".
+        *   Click the "Send" button. The message will be sent via TCP to all currently active peers (using the message queue if needed). Your message will appear in the main message area, prefixed with "You (Broadcast):".
 5.  **To toggle debug message visibility:** Click the "Debug" checkbox. Debug messages will appear in the main message area.
 6.  **To quit:** Click the close box on the application window. It will attempt to send QUIT messages to all active peers before shutting down.
