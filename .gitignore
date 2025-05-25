@@ -63,3 +63,6 @@ misc/MPW_Interfaces
 
 # Doxygen
 doxygen_docs
+
+# Claude files
+CLAUDE.local.md
