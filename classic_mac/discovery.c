@@ -204,25 +204,19 @@ OSErr SendDiscoveryBroadcastSync(short macTCPRefNum, const char *myUsername, con
     }
 
     /* Send using async abstraction layer */
-    if (gNetworkOps->UDPSendAsync) {
-        err = gNetworkOps->UDPSendAsync(gUDPEndpoint, BROADCAST_IP, PORT_UDP,
-                                        (Ptr)gBroadcastBuffer, formatted_len - 1,
-                                        &gUDPSendHandle);
-        if (err != noErr) {
-            log_debug("Error starting async broadcast: %d", err);
-            gUDPSendHandle = NULL;
-        } else {
-            log_debug("Broadcast send initiated asynchronously");
-        }
+    if (!gNetworkOps->UDPSendAsync) {
+        log_debug("Error: Async UDP send not available");
+        return notOpenErr;
+    }
+    
+    err = gNetworkOps->UDPSendAsync(gUDPEndpoint, BROADCAST_IP, PORT_UDP,
+                                    (Ptr)gBroadcastBuffer, formatted_len - 1,
+                                    &gUDPSendHandle);
+    if (err != noErr) {
+        log_debug("Error starting async broadcast: %d", err);
+        gUDPSendHandle = NULL;
     } else {
-        /* Fallback to sync if async not available */
-        err = gNetworkOps->UDPSend(gUDPEndpoint, BROADCAST_IP, PORT_UDP,
-                                   (Ptr)gBroadcastBuffer, formatted_len - 1);
-        if (err != noErr) {
-            log_debug("Error sending broadcast: %d", err);
-        } else {
-            log_debug("Broadcast sent successfully (sync)");
-        }
+        log_debug("Broadcast send initiated asynchronously");
     }
 
     return err;
@@ -239,6 +233,12 @@ OSErr SendDiscoveryResponseSync(short macTCPRefNum, const char *myUsername, cons
     if (!gNetworkOps || gUDPEndpoint == NULL) return notOpenErr;
     if (myUsername == NULL || myLocalIPStr == NULL) return paramErr;
 
+    /* Check if a send is already pending */
+    if (gUDPSendHandle != NULL) {
+        log_debug("SendDiscoveryResponseSync: Send already pending, skipping response");
+        return 1;  /* Indicate busy */
+    }
+
     log_debug("Sending Discovery Response to IP 0x%lX:%u...", (unsigned long)destIP, destPort);
 
     /* Format the message */
@@ -249,12 +249,20 @@ OSErr SendDiscoveryResponseSync(short macTCPRefNum, const char *myUsername, cons
         return paramErr;
     }
 
-    /* Send using abstraction layer */
-    err = gNetworkOps->UDPSend(gUDPEndpoint, destIP, destPort,
-                               (Ptr)gResponseBuffer, formatted_len - 1);
-
+    /* Send using async abstraction layer */
+    if (!gNetworkOps->UDPSendAsync) {
+        log_debug("Error: Async UDP send not available");
+        return notOpenErr;
+    }
+    
+    err = gNetworkOps->UDPSendAsync(gUDPEndpoint, destIP, destPort,
+                                    (Ptr)gResponseBuffer, formatted_len - 1,
+                                    &gUDPSendHandle);
     if (err != noErr) {
-        log_debug("Error sending response: %d", err);
+        log_debug("Error starting async response: %d", err);
+        gUDPSendHandle = NULL;
+    } else {
+        log_debug("Response send initiated asynchronously");
     }
 
     return err;

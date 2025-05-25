@@ -149,12 +149,30 @@ void HandleSendButtonClick(void)
     if (isBroadcast) {
         int sent_count = 0;
         int failed_count = 0;
+        int total_active_peers = 0;
         TCPStreamState currentState;
 
-        log_debug("Attempting broadcast of: '%s'", inputCStr);
+        /* Count active peers first */
+        for (i = 0; i < MAX_PEERS; i++) {
+            if (gPeerManager.peers[i].active) {
+                total_active_peers++;
+            }
+        }
+
+        log_debug("Attempting broadcast of: '%s' to %d active peers", inputCStr, total_active_peers);
         sprintf(displayMsg, "You (Broadcast): %s", inputCStr);
         AppendToMessagesTE(displayMsg);
         AppendToMessagesTE("\r");
+
+        /* Check if there are any peers to broadcast to */
+        if (total_active_peers == 0) {
+            log_debug("No active peers to broadcast to");
+            sprintf(displayMsg, "No active peers found. Waiting for peers to join...");
+            AppendToMessagesTE(displayMsg);
+            AppendToMessagesTE("\r");
+            ActivateInputTE(true);
+            return;
+        }
 
         /* Check if we can send before attempting broadcast */
         currentState = GetTCPSendStreamState();
@@ -178,14 +196,6 @@ void HandleSendButtonClick(void)
                     sent_count++;
                     log_debug("Broadcast queued for %s@%s",
                               gPeerManager.peers[i].username, gPeerManager.peers[i].ip);
-
-                    /* Add a small delay between queuing for multiple peers */
-                    if (i < MAX_PEERS - 1) {
-                        unsigned long delayStart = TickCount();
-                        while ((TickCount() - delayStart) < 30) { // 0.5 second between peers
-                            YieldTimeToSystem();
-                        }
-                    }
                 } else {
                     failed_count++;
                     log_debug("Broadcast queue failed for %s@%s: %d",
@@ -205,8 +215,8 @@ void HandleSendButtonClick(void)
         AppendToMessagesTE(displayMsg);
         AppendToMessagesTE("\r");
 
-        log_debug("Broadcast of '%s' completed. Queued for %d peers, %d failed.",
-                  inputCStr, sent_count, failed_count);
+        log_debug("Broadcast of '%s' completed. Queued for %d/%d peers, %d failed.",
+                  inputCStr, sent_count, total_active_peers, failed_count);
 
         if (sent_count > 0) {
             ClearInputText();
