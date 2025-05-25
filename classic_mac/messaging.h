@@ -47,12 +47,6 @@ typedef struct {
 OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNotifyUPP listenAsrUPP, TCPNotifyUPP sendAsrUPP);
 void CleanupTCP(short macTCPRefNum);
 void ProcessTCPStateMachine(GiveTimePtr giveTime);
-OSErr MacTCP_SendMessageSync(const char *peerIPStr,
-                             const char *message_content,
-                             const char *msg_type,
-                             const char *local_username,
-                             const char *local_ip_str,
-                             GiveTimePtr giveTime);
 OSErr MacTCP_QueueMessage(const char *peerIPStr,
                           const char *message_content,
                           const char *msg_type);

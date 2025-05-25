@@ -224,15 +224,12 @@ void HandleSendButtonClick(void)
     } else {
         peer_t targetPeer;
         if (DialogPeerList_GetSelectedPeer(&targetPeer)) {
-            log_debug("Attempting sync send to selected peer %s@%s: '%s'",
+            log_debug("Attempting to send to selected peer %s@%s: '%s'",
                       targetPeer.username, targetPeer.ip, inputCStr);
 
-            sendErr = MacTCP_SendMessageSync(targetPeer.ip,
-                                             inputCStr,
-                                             MSG_TEXT,
-                                             gMyUsername,
-                                             gMyLocalIPStr,
-                                             YieldTimeToSystem);
+            sendErr = MacTCP_QueueMessage(targetPeer.ip,
+                                         inputCStr,
+                                         MSG_TEXT);
 
             if (sendErr == noErr) {
                 sprintf(displayMsg, "You (to %s): %s", targetPeer.username, inputCStr);

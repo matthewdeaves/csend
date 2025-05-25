@@ -104,13 +104,10 @@ int main(void)
         if (gPeerManager.peers[i].active) {
             quit_active_peers++;
             log_debug("Attempting to send QUIT to %s@%s", gPeerManager.peers[i].username, gPeerManager.peers[i].ip);
-            OSErr current_quit_err = MacTCP_SendMessageSync(
+            OSErr current_quit_err = MacTCP_QueueMessage(
                                          gPeerManager.peers[i].ip,
                                          "",
-                                         MSG_QUIT,
-                                         gMyUsername,
-                                         gMyLocalIPStr,
-                                         YieldTimeToSystem);
+                                         MSG_QUIT);
             if (current_quit_err == noErr) {
                 quit_sent_count++;
             } else {
@@ -123,6 +120,28 @@ int main(void)
             Delay(kQuitMessageDelayTicks, &dummyTimerForDelay);
         }
     }
+    
+    /* Process the message queue to ensure QUIT messages are sent */
+    if (quit_sent_count > 0) {
+        log_debug("Processing message queue for QUIT messages...");
+        unsigned long startTime = TickCount();
+        unsigned long timeoutTicks = 180; /* 3 seconds timeout */
+        
+        while ((TickCount() - startTime) < timeoutTicks) {
+            /* Process TCP state machine to handle async operations */
+            ProcessTCPStateMachine(YieldTimeToSystem);
+            
+            /* Check if all messages have been sent */
+            if (GetQueuedMessageCount() == 0 && GetTCPSendStreamState() == TCP_STATE_IDLE) {
+                log_debug("All QUIT messages processed");
+                break;
+            }
+            
+            /* Give time to system */
+            YieldTimeToSystem();
+        }
+    }
+    
     if (quit_active_peers > 0) {
         sprintf(ui_message_buffer, "Finished sending QUIT. Sent to %d of %d active peers. Last error (if any): %d", quit_sent_count, quit_active_peers, (int)last_quit_err);
         log_app_event("%s", ui_message_buffer);
