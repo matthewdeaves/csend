@@ -5,6 +5,7 @@
 #include "../shared/logging.h"
 #include "logging.h"
 #include "ui_terminal.h"
+#include "ui_interface.h"
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -26,9 +27,15 @@ static int posix_tcp_add_or_update_peer(const char *ip, const char *username, vo
 }
 static void posix_tcp_display_text_message(const char *username, const char *ip, const char *message_content, void *platform_context)
 {
-    (void)platform_context;
+    app_state_t *state = (app_state_t *)platform_context;
     log_app_event("%s@%s: %s", username, ip, message_content);
-    terminal_display_app_message("%s@%s: %s", username, ip, message_content);
+    
+    if (state && state->ui) {
+        UI_CALL(state->ui, display_message, username, ip, message_content);
+    } else {
+        /* Fallback if no UI available */
+        terminal_display_app_message("%s@%s: %s", username, ip, message_content);
+    }
 }
 static void posix_tcp_mark_peer_inactive(const char *ip, void *platform_context)
 {

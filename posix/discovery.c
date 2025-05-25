@@ -5,6 +5,7 @@
 #include "../shared/logging.h"
 #include "network.h"
 #include "peer.h"
+#include "ui_interface.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -51,8 +52,13 @@ static int posix_add_or_update_peer(const char *ip, const char *username, void *
 }
 static void posix_notify_peer_list_updated(void *platform_context)
 {
-    (void)platform_context;
-    log_debug("posix_notify_peer_list_updated called (no-op for terminal).");
+    app_state_t *state = (app_state_t *)platform_context;
+    
+    if (state && state->ui) {
+        UI_CALL(state->ui, notify_peer_update);
+    } else {
+        log_debug("posix_notify_peer_list_updated called (no UI available).");
+    }
 }
 int init_discovery(app_state_t *state)
 {
