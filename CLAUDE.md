@@ -12,4 +12,4 @@ To build the Classic Mac application:
 - Run `make -f Makefile.retro68`
 
 ### Testing
-- Test the POSIX build with: `./build/posix/csend_posix ubuntu`
+- Run the POSIX build with: `./build/posix/csend_posix ubuntu`

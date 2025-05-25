@@ -114,6 +114,10 @@ typedef struct {
                             unsigned short bufferSize, Boolean async);
 
     /* Async UDP operations */
+    OSErr(*UDPSendAsync)(NetworkEndpointRef endpointRef, ip_addr remoteHost,
+                         udp_port remotePort, Ptr data, unsigned short length,
+                         NetworkAsyncHandle *asyncHandle);
+    OSErr(*UDPCheckSendStatus)(NetworkAsyncHandle asyncHandle);
     OSErr(*UDPReceiveAsync)(NetworkEndpointRef endpointRef,
                             NetworkAsyncHandle *asyncHandle);
     OSErr(*UDPCheckAsyncStatus)(NetworkAsyncHandle asyncHandle,

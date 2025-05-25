@@ -29,6 +29,7 @@ static NetworkEndpointRef gUDPEndpoint = NULL;
 static Ptr gUDPRecvBuffer = NULL;
 static NetworkAsyncHandle gUDPReadHandle = NULL;
 static NetworkAsyncHandle gUDPReturnHandle = NULL;
+static NetworkAsyncHandle gUDPSendHandle = NULL;
 static unsigned long gLastBroadcastTimeTicks = 0;
 
 /* Buffers for messages */
@@ -42,9 +43,12 @@ static void mac_send_discovery_response(uint32_t dest_ip_addr_host_order, uint16
     ip_addr dest_ip_net = (ip_addr)dest_ip_addr_host_order;
     udp_port dest_port_mac = dest_port_host_order;
 
+    /* Note: Responses are sent directly without queuing since they're small and infrequent */
     OSErr sendErr = SendDiscoveryResponseSync(gMacTCPRefNum, gMyUsername, gMyLocalIPStr, dest_ip_net, dest_port_mac);
-    if (sendErr != noErr) {
-        log_debug("Error sending sync discovery response: %d to IP 0x%lX:%u", sendErr, (unsigned long)dest_ip_net, dest_port_mac);
+    if (sendErr != noErr && sendErr != 1) {
+        log_debug("Error sending discovery response: %d to IP 0x%lX:%u", sendErr, (unsigned long)dest_ip_net, dest_port_mac);
+    } else if (sendErr == 1) {
+        log_debug("Discovery response skipped - send already pending");
     } else {
         char tempIPStr[INET_ADDRSTRLEN];
         if (gNetworkOps && gNetworkOps->AddressToString) {
@@ -93,6 +97,7 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum)
     gUDPRecvBuffer = NULL;
     gUDPReadHandle = NULL;
     gUDPReturnHandle = NULL;
+    gUDPSendHandle = NULL;
     gLastBroadcastTimeTicks = 0;
 
     /* Allocate receive buffer */
@@ -145,6 +150,12 @@ void CleanupUDPDiscoveryEndpoint(short macTCPRefNum)
         gUDPReturnHandle = NULL;
     }
 
+    if (gUDPSendHandle != NULL && gNetworkOps && gNetworkOps->UDPCancelAsync) {
+        log_debug("Cancelling pending UDP send operation...");
+        gNetworkOps->UDPCancelAsync(gUDPSendHandle);
+        gUDPSendHandle = NULL;
+    }
+
     /* Release UDP endpoint */
     if (gUDPEndpoint != NULL && gNetworkOps && gNetworkOps->UDPRelease) {
         log_debug("Releasing UDP endpoint...");
@@ -176,6 +187,12 @@ OSErr SendDiscoveryBroadcastSync(short macTCPRefNum, const char *myUsername, con
     if (!gNetworkOps || gUDPEndpoint == NULL) return notOpenErr;
     if (myUsername == NULL || myLocalIPStr == NULL) return paramErr;
 
+    /* Check if a send is already pending */
+    if (gUDPSendHandle != NULL) {
+        log_debug("SendDiscoveryBroadcastSync: Send already pending, skipping");
+        return 1;  /* Indicate busy */
+    }
+
     log_debug("Sending Discovery Broadcast...");
 
     /* Format the message */
@@ -186,14 +203,26 @@ OSErr SendDiscoveryBroadcastSync(short macTCPRefNum, const char *myUsername, con
         return paramErr;
     }
 
-    /* Send using abstraction layer */
-    err = gNetworkOps->UDPSend(gUDPEndpoint, BROADCAST_IP, PORT_UDP,
-                               (Ptr)gBroadcastBuffer, formatted_len - 1);
-
-    if (err != noErr) {
-        log_debug("Error sending broadcast: %d", err);
+    /* Send using async abstraction layer */
+    if (gNetworkOps->UDPSendAsync) {
+        err = gNetworkOps->UDPSendAsync(gUDPEndpoint, BROADCAST_IP, PORT_UDP,
+                                        (Ptr)gBroadcastBuffer, formatted_len - 1,
+                                        &gUDPSendHandle);
+        if (err != noErr) {
+            log_debug("Error starting async broadcast: %d", err);
+            gUDPSendHandle = NULL;
+        } else {
+            log_debug("Broadcast send initiated asynchronously");
+        }
     } else {
-        log_debug("Broadcast sent successfully");
+        /* Fallback to sync if async not available */
+        err = gNetworkOps->UDPSend(gUDPEndpoint, BROADCAST_IP, PORT_UDP,
+                                   (Ptr)gBroadcastBuffer, formatted_len - 1);
+        if (err != noErr) {
+            log_debug("Error sending broadcast: %d", err);
+        } else {
+            log_debug("Broadcast sent successfully (sync)");
+        }
     }
 
     return err;
@@ -418,6 +447,23 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
             /* Error occurred */
             gUDPReturnHandle = NULL;
             log_debug("CRITICAL Error: Async buffer return completed with error: %d.", status);
+        }
+    }
+
+    /* Check UDP send completion */
+    if (gUDPSendHandle != NULL && gNetworkOps && gNetworkOps->UDPCheckSendStatus) {
+        status = gNetworkOps->UDPCheckSendStatus(gUDPSendHandle);
+        
+        if (status == 1) {
+            /* Still pending */
+        } else if (status == noErr) {
+            /* Send completed successfully */
+            gUDPSendHandle = NULL;
+            log_debug("PollUDPListener: UDP send completed successfully");
+        } else {
+            /* Error occurred */
+            gUDPSendHandle = NULL;
+            log_debug("PollUDPListener: UDP send completed with error: %d", status);
         }
     }
 

@@ -34,6 +34,8 @@ typedef struct {
     Boolean inUse;
     NetworkEndpointRef endpoint;
     Boolean isReturnBuffer;  /* true for buffer return, false for receive */
+    Boolean isSend;          /* true for send operation */
+    wdsEntry *wdsArray;      /* For send operations */
 } MacTCPAsyncOp;
 
 /* TCP async operation tracking */
@@ -112,6 +114,10 @@ static OSErr MacTCPImpl_UDPReceive(NetworkEndpointRef endpointRef, ip_addr *remo
                                    unsigned short *length, Boolean async);
 static OSErr MacTCPImpl_UDPReturnBuffer(NetworkEndpointRef endpointRef, Ptr buffer,
                                         unsigned short bufferSize, Boolean async);
+static OSErr MacTCPImpl_UDPSendAsync(NetworkEndpointRef endpointRef, ip_addr remoteHost,
+                                     udp_port remotePort, Ptr data, unsigned short length,
+                                     NetworkAsyncHandle *asyncHandle);
+static OSErr MacTCPImpl_UDPCheckSendStatus(NetworkAsyncHandle asyncHandle);
 static OSErr MacTCPImpl_UDPReceiveAsync(NetworkEndpointRef endpointRef,
                                         NetworkAsyncHandle *asyncHandle);
 static OSErr MacTCPImpl_UDPCheckAsyncStatus(NetworkAsyncHandle asyncHandle,
@@ -166,9 +172,15 @@ static void FreeAsyncHandle(NetworkAsyncHandle handle)
     MacTCPAsyncOp *op = (MacTCPAsyncOp *)handle;
 
     if (op >= &gAsyncOps[0] && op < &gAsyncOps[MAX_ASYNC_OPS]) {
+        /* Free any allocated WDS for send operations */
+        if (op->isSend && op->wdsArray != NULL) {
+            DisposePtr((Ptr)op->wdsArray);
+            op->wdsArray = NULL;
+        }
         op->inUse = false;
         op->endpoint = NULL;
         op->isReturnBuffer = false;
+        op->isSend = false;
     }
 }
 
@@ -422,8 +434,6 @@ static OSErr MacTCPImpl_TCPConnect(NetworkStreamRef streamRef, ip_addr remoteHos
                                    NetworkGiveTimeProcPtr giveTime)
 {
     TCPiopb pb;
-    OSErr err;
-    unsigned long startTime;
 
     if (streamRef == NULL) {
         return paramErr;
@@ -439,37 +449,12 @@ static OSErr MacTCPImpl_TCPConnect(NetworkStreamRef streamRef, ip_addr remoteHos
     pb.csParam.open.remotePort = remotePort;
     pb.csParam.open.localPort = 0; /* Let MacTCP assign a random ephemeral port */
     pb.csParam.open.localHost = 0;
-
-    /* Use async with polling for better control */
+    pb.csParam.open.commandTimeoutValue = timeout;
     pb.ioCompletion = nil;
     pb.ioCRefNum = gMacTCPRefNum;
-    pb.ioResult = 1;
 
-    err = PBControlAsync((ParmBlkPtr)&pb);
-    if (err != noErr) {
-        return err;
-    }
-
-    /* Poll for completion */
-    startTime = TickCount();
-    while (pb.ioResult > 0) {
-        if (giveTime) giveTime();
-
-        /* Check timeout */
-        if (timeout && (TickCount() - startTime) > (unsigned long)timeout * 60) {
-            /* Cancel the pending operation */
-            TCPiopb abortPB;
-            memset(&abortPB, 0, sizeof(TCPiopb));
-            abortPB.tcpStream = (StreamPtr)streamRef;
-            abortPB.csCode = TCPAbort;
-            abortPB.ioCRefNum = gMacTCPRefNum;
-            PBControlSync((ParmBlkPtr)&abortPB);
-
-            return commandTimeout;
-        }
-    }
-
-    return pb.ioResult;
+    /* Use synchronous call - blocks until complete or timeout */
+    return PBControlSync((ParmBlkPtr)&pb);
 }
 
 /* Async TCP Connect implementation */
@@ -527,8 +512,6 @@ static OSErr MacTCPImpl_TCPSend(NetworkStreamRef streamRef, Ptr data, unsigned s
 {
     TCPiopb pb;
     wdsEntry wds[2];
-    OSErr err;
-    unsigned long startTime;
 
     if (streamRef == NULL || data == NULL) {
         return paramErr;
@@ -549,28 +532,11 @@ static OSErr MacTCPImpl_TCPSend(NetworkStreamRef streamRef, Ptr data, unsigned s
     pb.csParam.send.pushFlag = push;
     pb.csParam.send.urgentFlag = false;
     pb.csParam.send.wdsPtr = (Ptr)wds;
-
-    /* Use async with polling */
     pb.ioCompletion = nil;
     pb.ioCRefNum = gMacTCPRefNum;
-    pb.ioResult = 1;
 
-    err = PBControlAsync((ParmBlkPtr)&pb);
-    if (err != noErr) {
-        return err;
-    }
-
-    /* Poll for completion */
-    startTime = TickCount();
-    while (pb.ioResult > 0) {
-        if (giveTime) giveTime();
-
-        if (timeout && (TickCount() - startTime) > (unsigned long)timeout * 60) {
-            return commandTimeout;
-        }
-    }
-
-    return pb.ioResult;
+    /* Use synchronous call - blocks until complete or timeout */
+    return PBControlSync((ParmBlkPtr)&pb);
 }
 
 /* Async TCP Send implementation */
@@ -649,7 +615,6 @@ static OSErr MacTCPImpl_TCPReceiveNoCopy(NetworkStreamRef streamRef, Ptr rdsPtr,
 {
     TCPiopb pb;
     OSErr err;
-    unsigned long startTime;
 
     if (streamRef == NULL || rdsPtr == NULL) {
         return paramErr;
@@ -661,33 +626,18 @@ static OSErr MacTCPImpl_TCPReceiveNoCopy(NetworkStreamRef streamRef, Ptr rdsPtr,
     pb.csParam.receive.commandTimeoutValue = timeout;
     pb.csParam.receive.rdsPtr = rdsPtr;
     pb.csParam.receive.rdsLength = maxEntries;
-
-    /* Use async with polling */
     pb.ioCompletion = nil;
     pb.ioCRefNum = gMacTCPRefNum;
-    pb.ioResult = 1;
 
-    err = PBControlAsync((ParmBlkPtr)&pb);
-    if (err != noErr) {
-        return err;
-    }
+    /* Use synchronous call - blocks until complete or timeout */
+    err = PBControlSync((ParmBlkPtr)&pb);
 
-    /* Poll for completion */
-    startTime = TickCount();
-    while (pb.ioResult > 0) {
-        if (giveTime) giveTime();
-
-        if (timeout && (TickCount() - startTime) > (unsigned long)timeout * 60) {
-            return commandTimeout;
-        }
-    }
-
-    if (pb.ioResult == noErr) {
+    if (err == noErr) {
         if (urgent) *urgent = pb.csParam.receive.urgentFlag;
         if (mark) *mark = pb.csParam.receive.markFlag;
     }
 
-    return pb.ioResult;
+    return err;
 }
 
 /* Async TCP Receive implementation */
@@ -741,7 +691,6 @@ static OSErr MacTCPImpl_TCPReturnBuffer(NetworkStreamRef streamRef, Ptr rdsPtr,
                                         NetworkGiveTimeProcPtr giveTime)
 {
     TCPiopb pb;
-    OSErr err;
 
     if (streamRef == NULL || rdsPtr == NULL) {
         return paramErr;
@@ -751,31 +700,17 @@ static OSErr MacTCPImpl_TCPReturnBuffer(NetworkStreamRef streamRef, Ptr rdsPtr,
     pb.tcpStream = (StreamPtr)streamRef;
     pb.csCode = TCPRcvBfrReturn;
     pb.csParam.receive.rdsPtr = rdsPtr;
-
-    /* Use async with polling */
     pb.ioCompletion = nil;
     pb.ioCRefNum = gMacTCPRefNum;
-    pb.ioResult = 1;
 
-    err = PBControlAsync((ParmBlkPtr)&pb);
-    if (err != noErr) {
-        return err;
-    }
-
-    /* Poll for completion */
-    while (pb.ioResult > 0) {
-        if (giveTime) giveTime();
-    }
-
-    return pb.ioResult;
+    /* Use synchronous call */
+    return PBControlSync((ParmBlkPtr)&pb);
 }
 
 static OSErr MacTCPImpl_TCPClose(NetworkStreamRef streamRef, Byte timeout,
                                  NetworkGiveTimeProcPtr giveTime)
 {
     TCPiopb pb;
-    OSErr err;
-    unsigned long startTime;
 
     if (streamRef == NULL) {
         return paramErr;
@@ -787,28 +722,11 @@ static OSErr MacTCPImpl_TCPClose(NetworkStreamRef streamRef, Byte timeout,
     pb.csParam.close.ulpTimeoutValue = timeout ? timeout : 30;
     pb.csParam.close.ulpTimeoutAction = 1;
     pb.csParam.close.validityFlags = timeoutValue | timeoutAction;
-
-    /* Use async with polling */
     pb.ioCompletion = nil;
     pb.ioCRefNum = gMacTCPRefNum;
-    pb.ioResult = 1;
 
-    err = PBControlAsync((ParmBlkPtr)&pb);
-    if (err != noErr) {
-        return err;
-    }
-
-    /* Poll for completion */
-    startTime = TickCount();
-    while (pb.ioResult > 0) {
-        if (giveTime) giveTime();
-
-        if (timeout && (TickCount() - startTime) > (unsigned long)timeout * 60) {
-            return commandTimeout;
-        }
-    }
-
-    return pb.ioResult;
+    /* Use synchronous call - blocks until complete or timeout */
+    return PBControlSync((ParmBlkPtr)&pb);
 }
 
 static OSErr MacTCPImpl_TCPAbort(NetworkStreamRef streamRef)
@@ -841,23 +759,12 @@ static OSErr MacTCPImpl_TCPStatus(NetworkStreamRef streamRef, NetworkTCPInfo *in
     memset(&pb, 0, sizeof(TCPiopb));
     pb.tcpStream = (StreamPtr)streamRef;
     pb.csCode = TCPStatus;
-
-    /* Use async call with immediate poll for safety */
     pb.ioCompletion = nil;
     pb.ioCRefNum = gMacTCPRefNum;
-    pb.ioResult = 1;
 
-    err = PBControlAsync((ParmBlkPtr)&pb);
-    if (err != noErr) {
-        return err;
-    }
-
-    /* Poll for completion */
-    while (pb.ioResult > 0) {
-        /* Yield time */
-    }
-
-    err = pb.ioResult;
+    /* Use synchronous call */
+    err = PBControlSync((ParmBlkPtr)&pb);
+    
     if (err == noErr) {
         info->localHost = pb.csParam.status.localHost;
         info->localPort = pb.csParam.status.localPort;
@@ -1054,6 +961,92 @@ static OSErr MacTCPImpl_UDPReturnBuffer(NetworkEndpointRef endpointRef, Ptr buff
 }
 
 /* Async UDP operations */
+
+static OSErr MacTCPImpl_UDPSendAsync(NetworkEndpointRef endpointRef, ip_addr remoteHost,
+                                     udp_port remotePort, Ptr data, unsigned short length,
+                                     NetworkAsyncHandle *asyncHandle)
+{
+    MacTCPUDPEndpoint *endpoint = (MacTCPUDPEndpoint *)endpointRef;
+    MacTCPAsyncOp *op;
+    OSErr err;
+    wdsEntry *wds;
+
+    if (endpoint == NULL || !endpoint->isCreated || data == NULL || asyncHandle == NULL) {
+        return paramErr;
+    }
+
+    *asyncHandle = AllocateAsyncHandle();
+    if (*asyncHandle == NULL) {
+        return memFullErr;
+    }
+
+    op = (MacTCPAsyncOp *)*asyncHandle;
+    op->endpoint = endpointRef;
+    op->isReturnBuffer = false;
+    op->isSend = true;
+
+    /* Allocate WDS array - needs to persist for async operation */
+    wds = (wdsEntry *)NewPtrClear(sizeof(wdsEntry) * 2);
+    if (wds == NULL) {
+        FreeAsyncHandle(*asyncHandle);
+        *asyncHandle = NULL;
+        return memFullErr;
+    }
+
+    /* Set up WDS */
+    wds[0].length = length;
+    wds[0].ptr = data;
+    wds[1].length = 0;
+    wds[1].ptr = nil;
+
+    /* Store WDS for cleanup */
+    op->wdsArray = wds;
+
+    /* Set up async UDP write */
+    memset(&op->pb, 0, sizeof(UDPiopb));
+    op->pb.ioCompletion = nil;
+    op->pb.ioCRefNum = gMacTCPRefNum;
+    op->pb.csCode = UDPWrite;
+    op->pb.udpStream = endpoint->stream;
+    op->pb.csParam.send.remoteHost = remoteHost;
+    op->pb.csParam.send.remotePort = remotePort;
+    op->pb.csParam.send.wdsPtr = (Ptr)wds;
+    op->pb.csParam.send.checkSum = true;
+    op->pb.ioResult = 1;
+
+    err = PBControlAsync((ParmBlkPtr)&op->pb);
+    if (err != noErr) {
+        DisposePtr((Ptr)wds);
+        FreeAsyncHandle(*asyncHandle);
+        *asyncHandle = NULL;
+        log_debug("MacTCPImpl_UDPSendAsync: PBControlAsync failed: %d", err);
+    } else {
+        log_debug("MacTCPImpl_UDPSendAsync: Started async send of %u bytes to %lu:%u", 
+                  length, remoteHost, remotePort);
+    }
+
+    return err;
+}
+
+static OSErr MacTCPImpl_UDPCheckSendStatus(NetworkAsyncHandle asyncHandle)
+{
+    MacTCPAsyncOp *op = (MacTCPAsyncOp *)asyncHandle;
+    OSErr ioResult;
+
+    if (!op || !op->inUse || !op->isSend) {
+        return paramErr;
+    }
+
+    ioResult = op->pb.ioResult;
+    if (ioResult > 0) {
+        return 1; /* Still pending */
+    }
+
+    /* Operation complete - free the handle (which also frees WDS) */
+    FreeAsyncHandle(asyncHandle);
+
+    return ioResult;
+}
 
 static OSErr MacTCPImpl_UDPReceiveAsync(NetworkEndpointRef endpointRef,
                                         NetworkAsyncHandle *asyncHandle)
@@ -1354,6 +1347,8 @@ static NetworkOperations gMacTCPOperations = {
     MacTCPImpl_UDPReturnBuffer,
 
     /* Async UDP operations */
+    MacTCPImpl_UDPSendAsync,
+    MacTCPImpl_UDPCheckSendStatus,
     MacTCPImpl_UDPReceiveAsync,
     MacTCPImpl_UDPCheckAsyncStatus,
     MacTCPImpl_UDPReturnBufferAsync,
