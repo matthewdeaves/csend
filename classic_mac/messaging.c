@@ -37,6 +37,15 @@ static unsigned long gTCPStreamRcvBufferSize = 0;
 static TCPStreamState gTCPListenState = TCP_STATE_UNINITIALIZED;
 static TCPStreamState gTCPSendState = TCP_STATE_UNINITIALIZED;
 
+/* Async send operation tracking */
+static NetworkAsyncHandle gSendConnectHandle = NULL;
+static NetworkAsyncHandle gSendDataHandle = NULL;
+static NetworkAsyncHandle gSendCloseHandle = NULL;
+static char gCurrentSendPeerIP[INET_ADDRSTRLEN];
+static char gCurrentSendMessage[BUFFER_SIZE];
+static char gCurrentSendMsgType[32];
+static ip_addr gCurrentSendTargetIP = 0;
+
 /* ASR event handling - separate for each stream */
 static volatile ASR_Event_Info gListenAsrEvent;
 static volatile ASR_Event_Info gSendAsrEvent;
@@ -45,8 +54,8 @@ static volatile ASR_Event_Info gSendAsrEvent;
 static wdsEntry gListenNoCopyRDS[MAX_RDS_ENTRIES + 1];
 static Boolean gListenNoCopyRdsPendingReturn = false;
 
-/* For async operations we need PBs for polling */
-static TCPiopb gListenAsyncPB;
+/* For async operations we need handles */
+static NetworkAsyncHandle gListenAsyncHandle = NULL;
 static Boolean gListenAsyncOperationInProgress = false;
 
 /* Connection cleanup tracking */
@@ -75,6 +84,8 @@ static void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status
 static Boolean EnqueueMessage(const char *peerIP, const char *msgType, const char *content);
 static Boolean DequeueMessage(QueuedMessage *msg);
 static void ProcessMessageQueue(GiveTimePtr giveTime);
+static OSErr StartAsyncSend(const char *peerIPStr, const char *message_content, const char *msg_type);
+static void ProcessSendStateMachine(GiveTimePtr giveTime);
 
 /* Platform callbacks */
 static int mac_tcp_add_or_update_peer_callback(const char *ip, const char *username, void *platform_context)
@@ -163,8 +174,7 @@ static void ProcessMessageQueue(GiveTimePtr giveTime)
     if (gTCPSendState == TCP_STATE_IDLE) {
         if (DequeueMessage(&msg)) {
             log_debug("ProcessMessageQueue: Processing queued message to %s", msg.peerIP);
-            MacTCP_SendMessageSync(msg.peerIP, msg.content, msg.messageType,
-                                   gMyUsername, gMyLocalIPStr, giveTime);
+            StartAsyncSend(msg.peerIP, msg.content, msg.messageType);
         }
     }
 }
@@ -191,8 +201,7 @@ OSErr MacTCP_QueueMessage(const char *peerIPStr, const char *message_content, co
     /* Try to send immediately if send stream is idle */
     if (gTCPSendState == TCP_STATE_IDLE) {
         log_debug("MacTCP_QueueMessage: Send stream idle, attempting immediate send to %s", peerIPStr);
-        return MacTCP_SendMessageSync(peerIPStr, message_content, msg_type,
-                                      gMyUsername, gMyLocalIPStr, YieldTimeToSystem);
+        return StartAsyncSend(peerIPStr, message_content, msg_type);
     }
 
     /* Otherwise queue it */
@@ -427,31 +436,16 @@ static void StartPassiveListen(void)
         return;
     }
 
-    log_debug("Attempting asynchronous TCPPassiveOpen on port %u...", PORT_TCP);
+    log_debug("Attempting asynchronous TCPListenAsync on port %u...", PORT_TCP);
 
-    memset(&gListenAsyncPB, 0, sizeof(TCPiopb));
-    gListenAsyncPB.ioCompletion = nil;
-    gListenAsyncPB.ioCRefNum = gMacTCPRefNum;
-    gListenAsyncPB.csCode = TCPPassiveOpen;
-    gListenAsyncPB.tcpStream = (StreamPtr)gTCPListenStream;
-    gListenAsyncPB.csParam.open.ulpTimeoutValue = TCP_ULP_TIMEOUT_DEFAULT_S;
-    gListenAsyncPB.csParam.open.ulpTimeoutAction = 1;
-    gListenAsyncPB.csParam.open.validityFlags = timeoutValue | timeoutAction;
-    gListenAsyncPB.csParam.open.commandTimeoutValue = TCP_PASSIVE_OPEN_CMD_TIMEOUT_S;
-    gListenAsyncPB.csParam.open.localPort = PORT_TCP;
-    gListenAsyncPB.csParam.open.localHost = 0L;
-    gListenAsyncPB.csParam.open.remoteHost = 0L;
-    gListenAsyncPB.csParam.open.remotePort = 0;
-    gListenAsyncPB.ioResult = 1;
-
-    err = PBControlAsync((ParmBlkPtr)&gListenAsyncPB);
+    err = gNetworkOps->TCPListenAsync(gTCPListenStream, PORT_TCP, &gListenAsyncHandle);
 
     if (err == noErr) {
-        log_debug("TCPPassiveOpenAsync successfully initiated.");
+        log_debug("TCPListenAsync successfully initiated.");
         gTCPListenState = TCP_STATE_LISTENING;
         gListenAsyncOperationInProgress = true;
     } else {
-        log_app_event("Error: TCPPassiveOpenAsync failed to LAUNCH: %d.", err);
+        log_app_event("Error: TCPListenAsync failed: %d.", err);
         gTCPListenState = TCP_STATE_IDLE;
     }
 }
@@ -466,6 +460,9 @@ void ProcessTCPStateMachine(GiveTimePtr giveTime)
     HandleListenASREvents(giveTime);
     HandleSendASREvents(giveTime);
 
+    /* Process send state machine */
+    ProcessSendStateMachine(giveTime);
+    
     /* Process message queue when send stream is available */
     ProcessMessageQueue(giveTime);
 
@@ -486,54 +483,68 @@ void ProcessTCPStateMachine(GiveTimePtr giveTime)
         break;
 
     case TCP_STATE_LISTENING:
-        if (gListenAsyncOperationInProgress && gListenAsyncPB.ioResult != 1) {
-            gListenAsyncOperationInProgress = false;
-            err = gListenAsyncPB.ioResult;
+        if (gListenAsyncOperationInProgress && gListenAsyncHandle != NULL) {
+            OSErr operationResult;
+            void *resultData;
+            
+            err = gNetworkOps->TCPCheckAsyncStatus(gListenAsyncHandle, &operationResult, &resultData);
+            
+            if (err != 1) { /* Not pending anymore */
+                gListenAsyncOperationInProgress = false;
+                gListenAsyncHandle = NULL;
+                
+                if (err == noErr && operationResult == noErr) {
+                    /* Get connection info from TCP status */
+                    NetworkTCPInfo tcpInfo;
+                    if (gNetworkOps->TCPStatus(gTCPListenStream, &tcpInfo) == noErr) {
+                        ip_addr remote_ip = tcpInfo.remoteHost;
+                        tcp_port remote_port = tcpInfo.remotePort;
+                        char ipStr[INET_ADDRSTRLEN];
 
-            if (err == noErr) {
-                ip_addr remote_ip = gListenAsyncPB.csParam.open.remoteHost;
-                tcp_port remote_port = gListenAsyncPB.csParam.open.remotePort;
-                char ipStr[INET_ADDRSTRLEN];
+                        if (gNetworkOps->AddressToString) {
+                            gNetworkOps->AddressToString(remote_ip, ipStr);
+                        } else {
+                            sprintf(ipStr, "%lu.%lu.%lu.%lu",
+                                    (remote_ip >> 24) & 0xFF, (remote_ip >> 16) & 0xFF,
+                                    (remote_ip >> 8) & 0xFF, remote_ip & 0xFF);
+                        }
 
-                if (gNetworkOps->AddressToString) {
-                    gNetworkOps->AddressToString(remote_ip, ipStr);
-                } else {
-                    sprintf(ipStr, "%lu.%lu.%lu.%lu",
-                            (remote_ip >> 24) & 0xFF, (remote_ip >> 16) & 0xFF,
-                            (remote_ip >> 8) & 0xFF, remote_ip & 0xFF);
-                }
+                        log_app_event("Incoming TCP connection established from %s:%u.", ipStr, remote_port);
+                        gTCPListenState = TCP_STATE_CONNECTED_IN;
 
-                log_app_event("Incoming TCP connection established from %s:%u.", ipStr, remote_port);
-                gTCPListenState = TCP_STATE_CONNECTED_IN;
+                        /* Issue a non-blocking receive to check for data */
+                        Boolean urgentFlag, markFlag;
+                        memset(gListenNoCopyRDS, 0, sizeof(gListenNoCopyRDS));
 
-                /* Issue a non-blocking receive to check for data */
-                Boolean urgentFlag, markFlag;
-                memset(gListenNoCopyRDS, 0, sizeof(gListenNoCopyRDS));
+                        OSErr rcvErr = gNetworkOps->TCPReceiveNoCopy(gTCPListenStream, (Ptr)gListenNoCopyRDS,
+                                       MAX_RDS_ENTRIES, 0, /* 0 timeout = non-blocking */
+                                       &urgentFlag, &markFlag, giveTime);
 
-                OSErr rcvErr = gNetworkOps->TCPReceiveNoCopy(gTCPListenStream, (Ptr)gListenNoCopyRDS,
-                               MAX_RDS_ENTRIES, 0, /* 0 timeout = non-blocking */
-                               &urgentFlag, &markFlag, giveTime);
+                        log_debug("Initial receive probe after accept: err=%d", rcvErr);
 
-                log_debug("Initial receive probe after accept: err=%d", rcvErr);
+                        if (rcvErr == noErr && (gListenNoCopyRDS[0].length > 0 || gListenNoCopyRDS[0].ptr != NULL)) {
+                            /* Data already available! */
+                            log_debug("Data already available on connection accept!");
+                            ProcessIncomingTCPData(gListenNoCopyRDS, remote_ip, remote_port);
+                            gListenNoCopyRdsPendingReturn = true;
 
-                if (rcvErr == noErr && (gListenNoCopyRDS[0].length > 0 || gListenNoCopyRDS[0].ptr != NULL)) {
-                    /* Data already available! */
-                    log_debug("Data already available on connection accept!");
-                    ProcessIncomingTCPData(gListenNoCopyRDS, remote_ip, remote_port);
-                    gListenNoCopyRdsPendingReturn = true;
-
-                    /* Return the buffers */
-                    OSErr bfrReturnErr = gNetworkOps->TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, giveTime);
-                    if (bfrReturnErr == noErr) {
-                        gListenNoCopyRdsPendingReturn = false;
+                            /* Return the buffers */
+                            OSErr bfrReturnErr = gNetworkOps->TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, giveTime);
+                            if (bfrReturnErr == noErr) {
+                                gListenNoCopyRdsPendingReturn = false;
+                            }
+                        }
+                    } else {
+                        log_app_event("TCPStatus failed after listen accept");
+                        gTCPListenState = TCP_STATE_IDLE;
                     }
+                } else {
+                    log_app_event("TCPListenAsync failed: %d.", operationResult);
+                    gTCPListenState = TCP_STATE_IDLE;
+                    /* Mark that we need to wait before trying again */
+                    gListenStreamNeedsReset = true;
+                    gListenStreamResetTime = TickCount();
                 }
-            } else {
-                log_app_event("TCPPassiveOpenAsync FAILED: %d.", err);
-                gTCPListenState = TCP_STATE_IDLE;
-                /* Mark that we need to wait before trying again */
-                gListenStreamNeedsReset = true;
-                gListenStreamResetTime = TickCount();
             }
         }
         break;
@@ -699,6 +710,89 @@ static void HandleSendASREvents(GiveTimePtr giveTime)
     }
 }
 
+/* Process the send state machine for async operations */
+static void ProcessSendStateMachine(GiveTimePtr giveTime)
+{
+    OSErr err;
+    OSErr operationResult;
+    void *resultData;
+
+    if (!gNetworkOps) return;
+
+    switch (gTCPSendState) {
+    case TCP_STATE_CONNECTING_OUT:
+        if (gSendConnectHandle != NULL) {
+            err = gNetworkOps->TCPCheckAsyncStatus(gSendConnectHandle, &operationResult, &resultData);
+            
+            if (err != 1) { /* Not pending anymore */
+                gSendConnectHandle = NULL;
+                
+                if (err == noErr && operationResult == noErr) {
+                    log_debug("Connected to %s", gCurrentSendPeerIP);
+                    gTCPSendState = TCP_STATE_CONNECTED_OUT;
+                    
+                    /* Start async send */
+                    int msgLen = strlen(gCurrentSendMessage);
+                    log_debug("Sending %d bytes...", msgLen);
+                    gTCPSendState = TCP_STATE_SENDING;
+                    
+                    err = gNetworkOps->TCPSendAsync(gTCPSendStream, (Ptr)gCurrentSendMessage, 
+                                                    msgLen, true, &gSendDataHandle);
+                    if (err != noErr) {
+                        log_app_event("Error: Async send to %s failed to start: %d", 
+                                      gCurrentSendPeerIP, err);
+                        gNetworkOps->TCPAbort(gTCPSendStream);
+                        gTCPSendState = TCP_STATE_IDLE;
+                    }
+                } else {
+                    log_app_event("Error: Connection to %s failed: %d", 
+                                  gCurrentSendPeerIP, operationResult);
+                    gTCPSendState = TCP_STATE_IDLE;
+                }
+            }
+        }
+        break;
+        
+    case TCP_STATE_SENDING:
+        if (gSendDataHandle != NULL) {
+            err = gNetworkOps->TCPCheckAsyncStatus(gSendDataHandle, &operationResult, &resultData);
+            
+            if (err != 1) { /* Not pending anymore */
+                gSendDataHandle = NULL;
+                
+                if (err == noErr && operationResult == noErr) {
+                    log_debug("Message sent successfully");
+                    
+                    /* Close connection */
+                    if (strcmp(gCurrentSendMsgType, MSG_QUIT) == 0) {
+                        log_debug("Sending QUIT - using abort for immediate close");
+                        gNetworkOps->TCPAbort(gTCPSendStream);
+                        gTCPSendState = TCP_STATE_IDLE;
+                    } else {
+                        log_debug("Attempting graceful close...");
+                        gTCPSendState = TCP_STATE_CLOSING_GRACEFUL;
+                        err = gNetworkOps->TCPClose(gTCPSendStream, TCP_CLOSE_ULP_TIMEOUT_S, giveTime);
+                        if (err != noErr) {
+                            log_debug("Graceful close failed (%d), using abort", err);
+                            gNetworkOps->TCPAbort(gTCPSendStream);
+                        }
+                        gTCPSendState = TCP_STATE_IDLE;
+                    }
+                } else {
+                    log_app_event("Error: Send to %s failed: %d", 
+                                  gCurrentSendPeerIP, operationResult);
+                    gNetworkOps->TCPAbort(gTCPSendStream);
+                    gTCPSendState = TCP_STATE_IDLE;
+                }
+            }
+        }
+        break;
+        
+    default:
+        break;
+    }
+}
+
 static void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status, tcp_port remote_port_from_status)
 {
     char senderIPStrFromPayload[INET_ADDRSTRLEN];
@@ -758,6 +852,69 @@ TCPStreamState GetTCPListenStreamState(void)
 TCPStreamState GetTCPSendStreamState(void)
 {
     return gTCPSendState;
+}
+
+/* Start an async send operation */
+static OSErr StartAsyncSend(const char *peerIPStr, const char *message_content, const char *msg_type)
+{
+    OSErr err = noErr;
+    ip_addr targetIP = 0;
+    char messageBuffer[BUFFER_SIZE];
+    int formattedLen;
+
+    if (!gNetworkOps) return notOpenErr;
+
+    log_debug("StartAsyncSend: Request to send '%s' to %s", msg_type, peerIPStr);
+
+    /* Validate parameters */
+    if (gMacTCPRefNum == 0) return notOpenErr;
+    if (gTCPSendStream == NULL) return invalidStreamPtr;
+    if (peerIPStr == NULL || msg_type == NULL) return paramErr;
+
+    /* Must be in IDLE state */
+    if (gTCPSendState != TCP_STATE_IDLE) {
+        log_debug("StartAsyncSend: Send stream not idle (state %d)", gTCPSendState);
+        return connectionExists;
+    }
+
+    /* Parse target IP */
+    if (strcmp(peerIPStr, gMyLocalIPStr) == 0) {
+        targetIP = gMyLocalIP;
+    } else {
+        err = ParseIPv4(peerIPStr, &targetIP);
+        if (err != noErr) {
+            log_app_event("Error: Invalid IP address %s", peerIPStr);
+            return err;
+        }
+    }
+
+    /* Format message */
+    formattedLen = format_message(messageBuffer, sizeof(messageBuffer), msg_type, 
+                                  gMyUsername, gMyLocalIPStr, message_content);
+    if (formattedLen < 0) {
+        log_app_event("Error: format_message failed for type '%s'.", msg_type);
+        return paramErr;
+    }
+
+    /* Store current send operation info */
+    strcpy(gCurrentSendPeerIP, peerIPStr);
+    strcpy(gCurrentSendMessage, messageBuffer);
+    strcpy(gCurrentSendMsgType, msg_type);
+    gCurrentSendTargetIP = targetIP;
+
+    /* Start async connect */
+    log_debug("Starting async connection to %s:%u...", peerIPStr, PORT_TCP);
+    gTCPSendState = TCP_STATE_CONNECTING_OUT;
+
+    err = gNetworkOps->TCPConnectAsync(gTCPSendStream, targetIP, PORT_TCP, &gSendConnectHandle);
+    if (err != noErr) {
+        log_app_event("Error: Async connection to %s failed to start: %d", peerIPStr, err);
+        gTCPSendState = TCP_STATE_IDLE;
+        return err;
+    }
+
+    log_debug("Async connect initiated");
+    return noErr;
 }
 
 OSErr MacTCP_SendMessageSync(const char *peerIPStr, const char *message_content, const char *msg_type, const char *local_username, const char *local_ip_str, GiveTimePtr giveTime)

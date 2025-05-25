@@ -36,9 +36,32 @@ typedef struct {
     Boolean isReturnBuffer;  /* true for buffer return, false for receive */
 } MacTCPAsyncOp;
 
+/* TCP async operation tracking */
+typedef enum {
+    TCP_ASYNC_CONNECT,
+    TCP_ASYNC_SEND,
+    TCP_ASYNC_RECEIVE,
+    TCP_ASYNC_CLOSE,
+    TCP_ASYNC_LISTEN
+} TCPAsyncOpType;
+
+typedef struct {
+    TCPiopb pb;
+    Boolean inUse;
+    NetworkStreamRef stream;
+    TCPAsyncOpType opType;
+    Ptr dataBuffer;           /* For send/receive operations */
+    unsigned short dataLength;
+    rdsEntry *rdsArray;       /* For receive operations */
+    short rdsCount;
+} TCPAsyncOp;
+
 #define MAX_ASYNC_OPS 4
+#define MAX_TCP_ASYNC_OPS 8
 static MacTCPAsyncOp gAsyncOps[MAX_ASYNC_OPS];
+static TCPAsyncOp gTCPAsyncOps[MAX_TCP_ASYNC_OPS];
 static Boolean gAsyncOpsInitialized = false;
+static Boolean gTCPAsyncOpsInitialized = false;
 
 /* Forward declarations for all functions */
 static OSErr MacTCPImpl_Initialize(short *refNum, ip_addr *localIP, char *localIPStr);
@@ -64,6 +87,20 @@ static OSErr MacTCPImpl_TCPClose(NetworkStreamRef streamRef, Byte timeout,
                                  NetworkGiveTimeProcPtr giveTime);
 static OSErr MacTCPImpl_TCPAbort(NetworkStreamRef streamRef);
 static OSErr MacTCPImpl_TCPStatus(NetworkStreamRef streamRef, NetworkTCPInfo *info);
+
+/* Async TCP operations */
+static OSErr MacTCPImpl_TCPListenAsync(NetworkStreamRef streamRef, tcp_port localPort,
+                                       NetworkAsyncHandle *asyncHandle);
+static OSErr MacTCPImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remoteHost,
+                                        tcp_port remotePort, NetworkAsyncHandle *asyncHandle);
+static OSErr MacTCPImpl_TCPSendAsync(NetworkStreamRef streamRef, Ptr data, unsigned short length,
+                                     Boolean push, NetworkAsyncHandle *asyncHandle);
+static OSErr MacTCPImpl_TCPReceiveAsync(NetworkStreamRef streamRef, Ptr rdsPtr,
+                                        short maxEntries, NetworkAsyncHandle *asyncHandle);
+static OSErr MacTCPImpl_TCPCheckAsyncStatus(NetworkAsyncHandle asyncHandle, 
+                                            OSErr *operationResult, void **resultData);
+static void MacTCPImpl_TCPCancelAsync(NetworkAsyncHandle asyncHandle);
+
 static OSErr MacTCPImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
                                   udp_port localPort, Ptr recvBuffer,
                                   unsigned short bufferSize);
@@ -99,6 +136,14 @@ static void InitializeAsyncOps(void)
     }
 }
 
+static void InitializeTCPAsyncOps(void)
+{
+    if (!gTCPAsyncOpsInitialized) {
+        memset(gTCPAsyncOps, 0, sizeof(gTCPAsyncOps));
+        gTCPAsyncOpsInitialized = true;
+    }
+}
+
 static NetworkAsyncHandle AllocateAsyncHandle(void)
 {
     int i;
@@ -124,6 +169,37 @@ static void FreeAsyncHandle(NetworkAsyncHandle handle)
         op->inUse = false;
         op->endpoint = NULL;
         op->isReturnBuffer = false;
+    }
+}
+
+static NetworkAsyncHandle AllocateTCPAsyncHandle(void)
+{
+    int i;
+
+    InitializeTCPAsyncOps();
+
+    for (i = 0; i < MAX_TCP_ASYNC_OPS; i++) {
+        if (!gTCPAsyncOps[i].inUse) {
+            gTCPAsyncOps[i].inUse = true;
+            return (NetworkAsyncHandle)&gTCPAsyncOps[i];
+        }
+    }
+
+    log_debug("AllocateTCPAsyncHandle: No free TCP async operation slots");
+    return NULL;
+}
+
+static void FreeTCPAsyncHandle(NetworkAsyncHandle handle)
+{
+    TCPAsyncOp *op = (TCPAsyncOp *)handle;
+
+    if (op >= &gTCPAsyncOps[0] && op < &gTCPAsyncOps[MAX_TCP_ASYNC_OPS]) {
+        op->inUse = false;
+        op->stream = NULL;
+        op->dataBuffer = NULL;
+        op->dataLength = 0;
+        op->rdsArray = NULL;
+        op->rdsCount = 0;
     }
 }
 
@@ -204,6 +280,7 @@ static OSErr MacTCPImpl_Initialize(short *refNum, ip_addr *localIP, char *localI
 
     /* Initialize async operations */
     InitializeAsyncOps();
+    InitializeTCPAsyncOps();
 
     log_app_event("MacTCPImpl_Initialize: Success. Local IP: %s", localIPStr);
     return noErr;
@@ -290,6 +367,56 @@ static OSErr MacTCPImpl_TCPListen(NetworkStreamRef streamRef, tcp_port localPort
     return err;
 }
 
+/* Async TCP Listen implementation */
+static OSErr MacTCPImpl_TCPListenAsync(NetworkStreamRef streamRef, tcp_port localPort,
+                                       NetworkAsyncHandle *asyncHandle)
+{
+    TCPAsyncOp *op;
+    OSErr err;
+
+    if (streamRef == NULL || asyncHandle == NULL) {
+        return paramErr;
+    }
+
+    /* Allocate async handle */
+    *asyncHandle = AllocateTCPAsyncHandle();
+    if (*asyncHandle == NULL) {
+        return memFullErr;
+    }
+
+    op = (TCPAsyncOp *)*asyncHandle;
+    op->stream = streamRef;
+    op->opType = TCP_ASYNC_LISTEN;
+
+    /* Set up parameter block */
+    memset(&op->pb, 0, sizeof(TCPiopb));
+    op->pb.tcpStream = (StreamPtr)streamRef;
+    op->pb.csCode = TCPPassiveOpen;
+    op->pb.csParam.open.ulpTimeoutValue = 20; /* Default ULP timeout */
+    op->pb.csParam.open.ulpTimeoutAction = 1;
+    op->pb.csParam.open.validityFlags = timeoutValue | timeoutAction;
+    op->pb.csParam.open.commandTimeoutValue = 0; /* Non-blocking */
+    op->pb.csParam.open.localPort = localPort;
+    op->pb.csParam.open.localHost = 0;
+    op->pb.csParam.open.remoteHost = 0;
+    op->pb.csParam.open.remotePort = 0;
+    op->pb.ioCompletion = nil;
+    op->pb.ioCRefNum = gMacTCPRefNum;
+    op->pb.ioResult = 1;
+
+    /* Start async operation */
+    err = PBControlAsync((ParmBlkPtr)&op->pb);
+    if (err != noErr) {
+        FreeTCPAsyncHandle(*asyncHandle);
+        *asyncHandle = NULL;
+        log_debug("MacTCPImpl_TCPListenAsync: PBControlAsync failed: %d", err);
+        return err;
+    }
+
+    log_debug("MacTCPImpl_TCPListenAsync: Started async listen on port %u", localPort);
+    return noErr;
+}
+
 static OSErr MacTCPImpl_TCPConnect(NetworkStreamRef streamRef, ip_addr remoteHost,
                                    tcp_port remotePort, Byte timeout,
                                    NetworkGiveTimeProcPtr giveTime)
@@ -345,6 +472,56 @@ static OSErr MacTCPImpl_TCPConnect(NetworkStreamRef streamRef, ip_addr remoteHos
     return pb.ioResult;
 }
 
+/* Async TCP Connect implementation */
+static OSErr MacTCPImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remoteHost,
+                                        tcp_port remotePort, NetworkAsyncHandle *asyncHandle)
+{
+    TCPAsyncOp *op;
+    OSErr err;
+
+    if (streamRef == NULL || asyncHandle == NULL) {
+        return paramErr;
+    }
+
+    /* Allocate async handle */
+    *asyncHandle = AllocateTCPAsyncHandle();
+    if (*asyncHandle == NULL) {
+        return memFullErr;
+    }
+
+    op = (TCPAsyncOp *)*asyncHandle;
+    op->stream = streamRef;
+    op->opType = TCP_ASYNC_CONNECT;
+
+    /* Set up parameter block */
+    memset(&op->pb, 0, sizeof(TCPiopb));
+    op->pb.tcpStream = (StreamPtr)streamRef;
+    op->pb.csCode = TCPActiveOpen;
+    op->pb.csParam.open.ulpTimeoutValue = 30;  /* Default timeout */
+    op->pb.csParam.open.ulpTimeoutAction = 1;
+    op->pb.csParam.open.validityFlags = timeoutValue | timeoutAction;
+    op->pb.csParam.open.remoteHost = remoteHost;
+    op->pb.csParam.open.remotePort = remotePort;
+    op->pb.csParam.open.localPort = 0; /* Let MacTCP assign port */
+    op->pb.csParam.open.localHost = 0;
+    op->pb.ioCompletion = nil;
+    op->pb.ioCRefNum = gMacTCPRefNum;
+    op->pb.ioResult = 1;
+
+    /* Start async operation */
+    err = PBControlAsync((ParmBlkPtr)&op->pb);
+    if (err != noErr) {
+        FreeTCPAsyncHandle(*asyncHandle);
+        *asyncHandle = NULL;
+        log_debug("MacTCPImpl_TCPConnectAsync: PBControlAsync failed: %d", err);
+        return err;
+    }
+
+    log_debug("MacTCPImpl_TCPConnectAsync: Started async connect to %lu:%u",
+              remoteHost, remotePort);
+    return noErr;
+}
+
 static OSErr MacTCPImpl_TCPSend(NetworkStreamRef streamRef, Ptr data, unsigned short length,
                                 Boolean push, Byte timeout, NetworkGiveTimeProcPtr giveTime)
 {
@@ -396,6 +573,75 @@ static OSErr MacTCPImpl_TCPSend(NetworkStreamRef streamRef, Ptr data, unsigned s
     return pb.ioResult;
 }
 
+/* Async TCP Send implementation */
+static OSErr MacTCPImpl_TCPSendAsync(NetworkStreamRef streamRef, Ptr data, unsigned short length,
+                                     Boolean push, NetworkAsyncHandle *asyncHandle)
+{
+    TCPAsyncOp *op;
+    OSErr err;
+    wdsEntry *wds;
+
+    if (streamRef == NULL || data == NULL || asyncHandle == NULL) {
+        return paramErr;
+    }
+
+    /* Allocate async handle */
+    *asyncHandle = AllocateTCPAsyncHandle();
+    if (*asyncHandle == NULL) {
+        return memFullErr;
+    }
+
+    op = (TCPAsyncOp *)*asyncHandle;
+    op->stream = streamRef;
+    op->opType = TCP_ASYNC_SEND;
+    op->dataBuffer = data;
+    op->dataLength = length;
+
+    /* Allocate WDS array - needs to persist for async operation */
+    wds = (wdsEntry *)NewPtrClear(sizeof(wdsEntry) * 2);
+    if (wds == NULL) {
+        FreeTCPAsyncHandle(*asyncHandle);
+        *asyncHandle = NULL;
+        return memFullErr;
+    }
+
+    /* Set up WDS */
+    wds[0].length = length;
+    wds[0].ptr = data;
+    wds[1].length = 0;
+    wds[1].ptr = NULL;
+
+    /* Set up parameter block */
+    memset(&op->pb, 0, sizeof(TCPiopb));
+    op->pb.tcpStream = (StreamPtr)streamRef;
+    op->pb.csCode = TCPSend;
+    op->pb.csParam.send.ulpTimeoutValue = 30;  /* Default timeout */
+    op->pb.csParam.send.ulpTimeoutAction = 1;
+    op->pb.csParam.send.validityFlags = timeoutValue | timeoutAction;
+    op->pb.csParam.send.pushFlag = push;
+    op->pb.csParam.send.urgentFlag = false;
+    op->pb.csParam.send.wdsPtr = (Ptr)wds;
+    op->pb.ioCompletion = nil;
+    op->pb.ioCRefNum = gMacTCPRefNum;
+    op->pb.ioResult = 1;
+
+    /* Store WDS pointer for cleanup */
+    op->rdsArray = (rdsEntry *)wds;  /* Reuse rdsArray field */
+
+    /* Start async operation */
+    err = PBControlAsync((ParmBlkPtr)&op->pb);
+    if (err != noErr) {
+        DisposePtr((Ptr)wds);
+        FreeTCPAsyncHandle(*asyncHandle);
+        *asyncHandle = NULL;
+        log_debug("MacTCPImpl_TCPSendAsync: PBControlAsync failed: %d", err);
+        return err;
+    }
+
+    log_debug("MacTCPImpl_TCPSendAsync: Started async send of %u bytes", length);
+    return noErr;
+}
+
 static OSErr MacTCPImpl_TCPReceiveNoCopy(NetworkStreamRef streamRef, Ptr rdsPtr,
         short maxEntries, Byte timeout,
         Boolean *urgent, Boolean *mark,
@@ -442,6 +688,53 @@ static OSErr MacTCPImpl_TCPReceiveNoCopy(NetworkStreamRef streamRef, Ptr rdsPtr,
     }
 
     return pb.ioResult;
+}
+
+/* Async TCP Receive implementation */
+static OSErr MacTCPImpl_TCPReceiveAsync(NetworkStreamRef streamRef, Ptr rdsPtr,
+                                        short maxEntries, NetworkAsyncHandle *asyncHandle)
+{
+    TCPAsyncOp *op;
+    OSErr err;
+
+    if (streamRef == NULL || rdsPtr == NULL || asyncHandle == NULL) {
+        return paramErr;
+    }
+
+    /* Allocate async handle */
+    *asyncHandle = AllocateTCPAsyncHandle();
+    if (*asyncHandle == NULL) {
+        return memFullErr;
+    }
+
+    op = (TCPAsyncOp *)*asyncHandle;
+    op->stream = streamRef;
+    op->opType = TCP_ASYNC_RECEIVE;
+    op->rdsArray = (rdsEntry *)rdsPtr;
+    op->rdsCount = maxEntries;
+
+    /* Set up parameter block */
+    memset(&op->pb, 0, sizeof(TCPiopb));
+    op->pb.tcpStream = (StreamPtr)streamRef;
+    op->pb.csCode = TCPNoCopyRcv;
+    op->pb.csParam.receive.commandTimeoutValue = 0;  /* Non-blocking */
+    op->pb.csParam.receive.rdsPtr = rdsPtr;
+    op->pb.csParam.receive.rdsLength = maxEntries;
+    op->pb.ioCompletion = nil;
+    op->pb.ioCRefNum = gMacTCPRefNum;
+    op->pb.ioResult = 1;
+
+    /* Start async operation */
+    err = PBControlAsync((ParmBlkPtr)&op->pb);
+    if (err != noErr) {
+        FreeTCPAsyncHandle(*asyncHandle);
+        *asyncHandle = NULL;
+        log_debug("MacTCPImpl_TCPReceiveAsync: PBControlAsync failed: %d", err);
+        return err;
+    }
+
+    log_debug("MacTCPImpl_TCPReceiveAsync: Started async receive");
+    return noErr;
 }
 
 static OSErr MacTCPImpl_TCPReturnBuffer(NetworkStreamRef streamRef, Ptr rdsPtr,
@@ -949,6 +1242,84 @@ static Boolean MacTCPImpl_IsAvailable(void)
     return (err == opWrErr);
 }
 
+/* TCP Async Status Checking */
+static OSErr MacTCPImpl_TCPCheckAsyncStatus(NetworkAsyncHandle asyncHandle, 
+                                            OSErr *operationResult, void **resultData)
+{
+    TCPAsyncOp *op = (TCPAsyncOp *)asyncHandle;
+    OSErr ioResult;
+
+    if (!op || !op->inUse || !operationResult) {
+        return paramErr;
+    }
+
+    ioResult = op->pb.ioResult;
+    if (ioResult > 0) {
+        return 1; /* Still pending */
+    }
+
+    /* Operation complete */
+    *operationResult = ioResult;
+
+    /* Return operation-specific data if requested */
+    if (resultData) {
+        switch (op->opType) {
+        case TCP_ASYNC_CONNECT:
+            /* For connect, no additional data */
+            *resultData = NULL;
+            break;
+            
+        case TCP_ASYNC_SEND:
+            /* For send, return bytes sent (in csParam.send.sendLength) */
+            *resultData = (void *)(unsigned long)op->pb.csParam.send.sendLength;
+            break;
+            
+        case TCP_ASYNC_RECEIVE:
+            /* For receive, resultData should point to a structure with urgent/mark flags */
+            /* Caller should interpret based on context */
+            *resultData = (void *)&op->pb.csParam.receive;
+            break;
+            
+        default:
+            *resultData = NULL;
+            break;
+        }
+    }
+
+    /* Clean up any allocated resources */
+    if (op->opType == TCP_ASYNC_SEND && op->rdsArray) {
+        /* Free the WDS array we allocated */
+        DisposePtr((Ptr)op->rdsArray);
+        op->rdsArray = NULL;
+    }
+
+    /* Free the async handle */
+    FreeTCPAsyncHandle(asyncHandle);
+
+    return noErr;
+}
+
+/* TCP Async Cancel */
+static void MacTCPImpl_TCPCancelAsync(NetworkAsyncHandle asyncHandle)
+{
+    TCPAsyncOp *op = (TCPAsyncOp *)asyncHandle;
+
+    if (op && op->inUse) {
+        /* Note: MacTCP doesn't provide a way to cancel async operations */
+        /* We just mark it as free and let it complete in the background */
+        log_debug("MacTCPImpl_TCPCancelAsync: Marking handle as free (can't cancel MacTCP async)");
+        
+        /* Clean up any allocated resources */
+        if (op->opType == TCP_ASYNC_SEND && op->rdsArray) {
+            /* Don't free WDS until operation completes */
+            /* This is a memory leak risk, but safer than crashing */
+        }
+        
+        /* Mark as not in use but don't clear the pb - let it complete */
+        op->inUse = false;
+    }
+}
+
 /* Static operations table for MacTCP */
 static NetworkOperations gMacTCPOperations = {
     /* System operations */
@@ -966,6 +1337,14 @@ static NetworkOperations gMacTCPOperations = {
     MacTCPImpl_TCPClose,
     MacTCPImpl_TCPAbort,
     MacTCPImpl_TCPStatus,
+
+    /* Async TCP operations */
+    MacTCPImpl_TCPListenAsync,
+    MacTCPImpl_TCPConnectAsync,
+    MacTCPImpl_TCPSendAsync,
+    MacTCPImpl_TCPReceiveAsync,
+    MacTCPImpl_TCPCheckAsyncStatus,
+    MacTCPImpl_TCPCancelAsync,
 
     /* UDP operations */
     MacTCPImpl_UDPCreate,

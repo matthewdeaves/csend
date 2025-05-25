@@ -1,0 +1,8686 @@
+&
+
+MacTCP Programmer’s Guide
+
+@
+
+Apple Computer, Inc.
+
+This manual and the software described in it are
+copyrighted, with all rights reserved. Under the
+copyright laws, this manual or the software may not be
+copied, in whole or part, without written consent of
+Apple, except in the normal use of the software or to
+make a backup copy of the software. The same
+proprietary and copyright notices must be affixed to
+any permitted copies as were affixed to the original.
+This exception does not allow copies to be made for
+others, whether or not sold, but all of the material
+
+purchased (with all backup copies) may be sold, given,
+or loaned to another person. Under the law, copying
+includes translating into another language or format.
+You may use the software on any computer owned by
+you, but extra copies cannot be made for this purpose.
+The Apple logo is a registered trademark of Apple
+Computer, Inc. Use of the “keyboard” Apple logo
+(Option-Shift-K) for commercial purposes without the
+prior written consent of Apple may constitute
+trademark infringement and unfair competition in
+violation of federal and state laws.
+
+© Apple Computer, Inc., 1993
+20525 Mariani Avenue
+Cupertino, CA 95014-6299
+
+(408) 996-1010
+
+Apple, the Apple logo, AppleTalk, LaserWriter,
+LocalTalk, Macintosh,
+
+MacTCP,
+
+and MPW
+
+are
+
+trademarks of Apple Computer, Inc., registered in the
+United States and other countries.
+Simultaneously published in the United States and
+Canada.
+Mention of third-party products is for informational
+purposes only and constitutes neither an endorsement
+nor a recommendation. Apple assumes no
+responsibility with regard to the performance of these
+products.
+
+Contents
+
+Preface: About This Guide / vii
+1
+
+Introduction
+
+/ 1
+
+Architectural overview
+
+/ 2
+
+Application, presentation, and session layers / 2
+Transport layer / 3
+Transmission Control Protocol (TCP)
+User Datagram Protocol (UDP) / 3
+
+/ 3
+
+Network layer / 4
+Data link layer / 4
+Physical layer / 4
+
+2
+
+The MacTCP Driver / 5
+The PBOpen
+
+call / 6
+
+The
+
+PBControl
+
+The
+
+PBClose
+
+The
+
+Gestalt
+
+call
+call
+
+/ 7
+/ 8
+
+call
+
+/ 8
+
+Implementation
+
+notes
+
+/ 9
+
+Fragmentation and reassembly
+Routing / 9
+
+3
+
+/ 9
+
+User Datagram Protocol / 11
+Data
+
+structures
+
+/
+
+12
+
+Write Data Structures
+Receive buffer area
+
+Using
+
+UDP
+
+/
+
+UDP
+
+routines
+
+UDPCreate
+UDP
+
+/ 12
+/
+
+13
+
+13
+/
+
+14
+
+/ 15
+
+asynchronous notification routine
+
+UDPRead
+
+/
+
+18
+
+UDPBfrReturn
+
+/ 19
+
+/ 16
+
+UDPWrite / 20
+UDPRelease / 21
+UDPMTU / 21
+UDP Multiport Create / 22
+UDP Multiport Send / 23
+UDP Multiport Receive / 24
+
+C parameter-block definitions / 25
+4
+
+Transmission Control Protocol / 29
+Data
+
+structures
+
+/
+
+30
+
+Read and Write Data Structures
+Receive buffer area
+
+Using
+
+TCP
+
+/
+
+/ 30
+
+/ 30
+
+31
+
+Streams and connections / 31
+Asynchronous notification routine / 31
+Connection opening / 31
+Receiving data / 32
+Sending data / 32
+Timeouts / 32
+Pushed data / 33
+Urgent mode / 33
+Connection closing / 34
+Network management information / 34
+Formatting MacTCP commands / 35
+TCP routines / 35
+TCPCreate / 36
+
+TCP asynchronous notification routine
+
+TCPPassiveOpen / 41
+TCPActiveOpen / 44
+TCPSend / 45
+TCPNoCopyRcv / 47
+TCPBfrReturn
+
+/ 49
+
+TCPRev /50
+TCPClose / 52
+TCPAbort / 53
+TCPStatus / 54
+TCPRelease / 56
+TCPGlobalInfo / 57
+
+C parameter-block definitions / 59
+
+iv
+
+Contents
+
+/ 37
+
+5
+
+Name-to-Address Resolution / 65
+The AddressXlation.h header file / 66
+The OpenResolver call / 67
+The StrToAddr call
+
+/ 68
+
+The AddrToStr
+
+call
+
+/ 69
+
+The EnumCache
+
+call
+
+/ 70
+
+The AddrToName
+The HInfo call
+The MXInfo
+
+call
+
+/ 72
+
+/ 73
+
+call
+
+/ 74
+
+The CloseResolver call / 75
+
+Binding the DNR to the application / 75
+DNR
+6
+
+operation
+
+/ 76
+
+Miscellaneous Interfaces / 77
+
+MacTCPCommontypes
+
+/ 78
+
+Result codes / 78
+Miscellaneous types / 81
+Internet Control Message Protocol report structures
+
+Appendix
+
+GetMyIPAddr
+
+/
+
+ICMP
+
+83
+
+echo
+
+/
+
+/ 81
+
+82
+
+Constants / 85
+Command
+
+codes
+
+/ 85
+
+UDP asynchronous event codes
+
+/ 85
+
+TCP asynchronous event codes
+
+/ 86
+
+Reasons
+
+for TCP
+
+termination
+
+/ 86
+
+Contents
+
+\
+
+Preface
+
+About This Guide
+
+This guide describes how to create application programs for the MacTCP
+driver. The MacTCP driver, Apple Computer’s implementation of the
+protocol suite known as Transmission Control Protocol/Internet Protocol
+(TCP/IP), increases the Macintosh computer’s ability to operate in a
+heterogeneous computer environment.
+
+What’s in this guide
+This guide is divided into six chapters and one appendix that contain the
+following information:
+mw
+
+Chapter
+
+1, “Introduction,” provides
+
+an overview
+
+of the MacTCP
+
+architecture.
+mw
+
+Chapter 2, “The MacTCP
+
+Driver,” describes the PBOpen,
+
+PBControl,
+
+PBClose, and Gestalt calls and describes internal algorithms and
+decisions made by the driver.
+mw
+
+Chapter
+
+3, “User Datagram
+
+mw
+
+Chapter 4, “Transmission
+
+m
+
+Chapter
+
+Protocol,”
+
+describes UDP
+
+Control Protocol,”
+
+5, “Name-to-Address
+
+Resolution,”
+
+routines.
+
+describes TCP
+
+describes how
+
+routines.
+
+textual names
+
+are resolved to IP addresses.
+
+m
+
+Chapter 6, “Miscellaneous Interfaces,” describes the types that are
+found throughout the programmatic interfaces supplied with the
+MacTCP driver.
+
+m
+
+The Appendix, “Constants,” presents command codes, UDP
+asynchronous event codes, TCP asynchronous event codes, and reasons
+for TCP termination.
+
+Who should read this guide
+This guide is designed both for Macintosh programmers who are not
+familiar with TCP/IP and for TCP/IP programmers who are not familiar witt
+the Macintosh programming environment.
+
+Document
+
+conventions
+
+This document reflects the Macintosh Programmer’s Workshop (MPW)
+conventions for types and sizes of variables and fields.
+
+Related documents
+You might find the following reference materials useful.
+MacTCP Administrator’s Guide
+Inside Macintosh,
+Douglas
+Hall,
+
+Volumes
+
+I-VI
+
+Comer, Internetworking with TCP/IP,
+
+Second Edition (Prentice-
+
+1991)
+
+The MacTCP driver implements protocols that conform to the following
+Request for Comments (REC) and Military Standards (MIL-STD):
+—RFC 768 (User Datagram Protocol)
+—RFC 791, 894; MIL-STD 1777 (Uinternet Protocol)
+—RFC 792 (Internet Control Message Protocol)
+—RFC 793; MIL-STD 1778 (Transmission Control Protocol)
+—RFC 826 (Address Resolution Protocol)
+—RFC 903 (Reverse Address Resolution Protocol)
+—RFC 950 (Internet Subnetting)
+—RFC 951, 1048 (Bootstrap Protocol)
+—IDEA004 (Routing Information Protocol)
+—RFC 1010 (Internet Assigned Numbers)
+—RFC 1034, 1035 (Domain Name Resolver)
+—RFC 1060 (Assigned Numbers)
+—RFC 1122 (Requirements for Internet Hosts—Communication Layers)
+
+viii
+
+Preface
+
+Introduction
+
+The MacTCP driver is a software driver for the Macintosh Operating
+System that allows developers to create Macintosh applications for network
+environments that use the Transmission Control Protocol/Internet Protocol
+(TCP/IP). TCP/IP is a widely used industry standard for connecting
+multivendor computers. The TCP/IP protocol layers are fully compatible
+across all implementations on different hardware platforms, allowing
+different vendors’ computers that run TCP/IP to interoperate and share date
+and services.
+This chapter provides an overview of the MacTCP architecture.
+
+Architectural overview
+MacTCP protocols partially conform to the International Standards
+Organization (ISO) Open Systems Interconnection (OSI) layers of
+networking functionality. Figure 1-1 shows a comparison of the OSI and
+MacTCP communications architecture.
+OSI model
+
+TCP/IP
+
+Application
+Presentation —
+
+Session
+
+-— «| |
+
+FTP
+
+SMTP
+
+ES
+
+Transport —
+
+TCP
+>
+
+SNMP
+
+|
+
+—
+
+UDP
+
+9
+
+5
+
+Network ——4
+
+9
+
+9
+
+ee
+
+=
+
+IP
+> eed
+
+Data Link
+|
+
+|
+
+—
+
+|
+
+ALAP
+
+| |
+
+Link Access Protocol
+
+ELAP
+
+> Po
+
+;
+
+Physical ——}
+
+|
+L
+
+TLAP
+
+|
+
+|
+
+Ed
+
+LocalTalk
+
+Ethernet
+
+|
+
+|
+
+I
+
+MPP
+SCC
+
+I
+
+)[.ENET
+
+Token Ring
+
+| [
+
+Ethernet
+
+|
+
+I
+
+TOKNdriver__|
+Token Ring
+
+card
+
+[Developer products
+Figure 1-1
+
+| |
+
+card
+
+[__] MacTCP
+
+MacTCP protocols and OSI network layers
+
+The TCP/IP protocols shown in Figure 1-1 are described in the following
+sections.
+
+Application, presentation, and session layers
+Services in the upper-layer protocols such as the File Transfer Protocol
+(FTP), Telnet, and the Simple Mail Transfer Protocol (SMTP) correspond
+to the application, presentation, and session layers of the OSI model. As
+indicated in Figure 1-1, such services are typically developer products that
+augment the services of TCP, IP, and the User Data Protocol (UDP).
+
+2
+
+Chapter 1 / Introduction
+
+Transport layer
+The TCP and UDP provide services at the transport layer of the OSI model.
+
+Transmission Control Protocol (TCP)
+The Transmission Control Protocol provides reliable transmission of data
+between processes. It ensures that data is delivered error free, without loss
+or duplication, and in sequence.
+
+Upper-layer protocols such as Telnet pass data to TCP for delivery to peer
+processes. TCP encapsulates the data into segments and passes the segments
+to IP, which puts the segments into datagrams and passes them across the
+internet. TCP at the receiving end checks for errors, acknowledges errorfree segments, and reassembles the segments for delivery to upper-layer
+protocols. If a segment is lost or damaged, it will not be acknowledged, and
+the sending process will retransmit.
+TCP has a flow control mechanism so that computers of different speeds
+and sizes can communicate. When TCP at the receiving end sends an
+acknowledgment, it also advertises how much data it is prepared to accept
+on the next transmission.
+
+User Datagram Protocol (UDP)
+The User Datagram Protocol specifies how application programs send
+datagrams to other application programs and defines the use of UDP ports
+to distinguish among multiple processes in a single machine. UDP
+messages are encapsulated in IP datagrams for delivery.
+UDP data transmission does not provide reliability. It does not provide
+error checking, it does not acknowledge that data has been successfully
+received, and it does not order incoming messages. UDP messages can be
+lost or duplicated or can arrive out of order.
+The advantage of UDP is that the overhead associated with establishing and
+maintaining an error-free TCP session is avoided. Upper-layer protocols
+that don’t require reliability use UDP to transmit data. For instance, the
+domain name system uses UDP because reliability is not critical; if there is
+no response to a domain name query, the resolver simply retransmits.
+
+Architectural overview
+
+3
+
+Network layer
+The Internet Protocol (IP) provides services at the network layer of the OSI
+model. IP is responsible for sending data across multiple networks. IP
+accepts segments of data from TCP or UDP, places the data in packets
+called datagrams, and determines the correct path for the datagrams to take.
+Datagrams are sent across the internet, through as many gateways as
+needed, until they reach the destination host.
+IP provides an addressing mechanism that allows routing between networks.
+The header of an IP datagram contains source and destination internet
+addresses so that any host in a network can route a packet to a destination,
+either directly or through a gateway.
+IP has the ability to fragment a datagram as it is transmitted across a
+network. Since IP can be used with many different physical network
+implementations that specify different sizes for physical data frames,
+datagrams can be fragmented to fit into a small data frame. Fragments are
+reassembled as they arrive at the destination.
+IP is often referred to as an unreliable delivery system because it makes a
+best-effort attempt to deliver all datagrams, but delivery is not guaranteed
+(TCP guarantees delivery). It is also called a connectionless delivery system
+because it routes each datagram separately. When IP receives a sequence of
+datagrams from TCP or UDP, it routes each datagram in the sequence
+individually, and each datagram may travel over a different path to the
+destination.
+
+Data link layer
+The AppleTalk Link Access Protocol (ALAP) and Ethernet Link Access
+Protocol (ELAP) provide services at the data link layer of the OSI model.
+ALAP and ELAP provide best-effort delivery of information between
+devices. They provide the basic service of packet transmission between
+devices connected to a single physical network.
+The MacTCP driver allows for the addition of other data link layers
+through the use of a link layer interface between the IP layer and the data
+link layer. This interface is described in the document Building Alternate
+Link Access Protocol Modules for MacTCP available in the Developer’s CD
+Series from the Apple Developer’s Group.
+
+Physical layer
+The MacTCP driver operates networks in which the physical layer uses the
+LocalTalk cable system or the Ethernet networking standard.
+
+4
+
+Chapter 1 / Introduction
+
+The MacTCP Driver
+
+The MacTCP driver is a Macintosh Operating System driver that
+implements the Internet Protocol (IP), User Datagram Protocol (UDP), and
+Transmission Control Protocol (TCP). A part of the Macintosh Operating
+System called the Device Manager coordinates communication between
+applications and the MacTCP driver.
+The MacTCP driver resides in the Macintosh System Folder. At startup
+time, the MacTCP driver registers itself with the Device Manager as . IPP.
+The MacTCP driver supports the following low-level Device Manager calls:
+m
+
+PBOpen
+
+m
+
+PBControl
+
+m
+
+PBClose
+
+The PBOpen call
+Before the application can exchange information with the MacTCP driver,
+the driver must be opened using the Device Manager PBOpen call, which
+opens the driver and returns its reference number. All subsequent calls to
+the driver use this reference number.
+The MacTCP driver uses the INIT-31 mechanism to automatically install
+itself in the device table and load itself into the system heap each time the
+machine is restarted. At load time, all internal buffers needed by the
+
+MacTCP driver are also allocated on the system heap. These buffers are
+used (among other things) to hold incoming fragments awaiting
+reassembly and outgoing fragments following fragmentation. The amount
+of buffer space allocated is based on the amount of memory in the
+machine.
+The MacTCP driver performs its initialization sequence at PBOpen time.
+The initialization sequence includes initializing the local network handler,
+
+setting its local address and subnet mask, verifying that this address is
+reasonable and unused, and starting up the internal TCP/IP/UDP protocol
+machinery. PBOpen returns with an error code if any step in this process
+fails. In almost all cases, if PBOpen fails, the driver must be reconfigured
+
+and the system then restarted to clear the problem. Very few circumstances
+exist where transitory problems cause PBOpen to fail.
+Use the reference number returned from the PBOpen call in all subsequent
+PBControl calls to this drive. Also assign this value to the ioCRefNum field.
+Because of the complexity of initializing the MacTCP driver, PBOpen can
+return errors from many parts of the system, including the Resource
+Manager, Device Manager, File Manager, Slot Manager, and AppleTalk
+driver.
+
+6
+
+Chapter 2 / The MacTCP Driver
+
+The PBControl call
+The Device Manager PBControl call sends control information in the
+following parameter block to the driver:
+struct
+
+CntrlParam
+
+struct
+
+QElem
+
+short
+
+qType;
+
+short
+Ptr
+
+{
+
+*qLink;
+
+ioTrap;
+i1oCmdAddr;
+
+ProcPtr
+
+ioCompletion;
+
+OSErr
+
+ioResult;
+
+char
+
+*ioNamePtr;
+
+short
+
+ioVRefNum;
+
+short
+
+ioCRefNum;
+
+short
+
+csCode;
+
+short
+
+csParam[11];
+
+}
+In this parameter block csCode specifies the type of information sent. The
+MacTCP driver decides what to do based on the procedure number
+specified by csCode (the Appendix lists procedure numbers).
+All UDP and TCP routines documented in this guide are implemented as
+Device Manager Control calls. All MacTCP routines support both
+synchronous and asynchronous modes.
+If a synchronous call is made, the application can’t continue until the call is
+completed. When control is returned to the application, the result code in
+the parameter block is set indicating the success or failure of the call.
+If the call 1s asynchronous, the I/O request is placed on the driver I/O queue
+and control is returned to the calling program almost immediately. While
+requests are taken from the driver I/O queue one at a time and processed,
+the application is free to perform other tasks. The application has two ways
+of knowing when the call has been completed:
+m
+
+By polling the ioResult field in the parameter block. When this value
+changes from InProgress
+
+to some other value, the call has been
+
+completed.
+m
+
+By specifying an I/O completion routine to be called when the requested
+operation is complete.
+
+The icCompletion field in the parameter block contains a pointer to a
+completion routine to be executed at the end of an asynchronous call. The
+ioCompletion field should be NIL for asynchronous calls with no
+completion routine and is automatically set to NIL for all synchronous
+calls.
+
+The PBControl call
+
+7
+
+The driver uses the ioNamePtr and ioVRefNum fields internally.
+Each routine description includes a parameter block format. The number
+next to each field name indicates the byte offset of the field from the start
+of the parameter block pointed to by AO. An arrow next to each parameter
+name indicates whether it’s an input, output, or input/output parameter:
+Arrow
+
+Meaning
+
+>
+
+Parameter is passed to the routine.
+
+—
+
+Parameter is returned by the routine.
+
+o
+
+Parameter is passed to and returned by the routine.
+
+All Device Manager Control calls return an integer result code of type
+OSErr in the ioResult field of the I/O parameter block. Each routine
+description lists all of the applicable result codes generated by the MacTCP
+driver, along with a short description of what the result code means.
+
+The PBClose call
+The application should not issue a PBClose call to the MacTCP driver.
+Because the driver can be shared by a variety of applications, once
+initialized, it never stops operation until the machine is restarted. PBClose
+returns a closeErr etror code.
+
+The Gestalt call
+The Gestalt call is used to obtain MacTCP driver version information (see
+the chapter “Compatibility Guidelines” in Inside Macintosh, Volume VI).
+To make the Gestalt call, use the mtcp selector. If you are using MacTCP
+driver version 1.1, a value of 1 is returned in the response field of the
+Gestalt call. If yu are using version 1.1.1, a value of 2 is returned. If you
+are using version 2.0, a value of 3 is returned. A value of 0 is returned if
+
+the driver is not opened.
+
+8
+
+Chapter 2 / The MacTCP Driver
+
+Implementation notes
+This section describes internal algorithms and decisions made by the
+MacTCP driver.
+
+Fragmentation and reassembly
+The Internet Protocol (IP) has the ability to fragment a packet so that it can
+be sent across a network with a small maximum transfer unit (MTU). The
+fragments are reassembled as they arrive at the destination. Since the
+application developer must select the size of UDP datagrams (unlike TCP,
+which negotiates packet size), you should be aware of implementation
+limitations imposed on the size of these datagrams.
+The MacTCP driver internally allocates a memory buffer in the system
+heap to temporarily hold all incoming fragments waiting to be reassembled
+and all outgoing fragments waiting to be sent. The amount of space
+allocated varies depending on whether
+
+1, 2, or
+
+4 megabytes
+
+(MB)
+
+of
+
+memory are installed. The maximum size of the packet being fragmented
+or reassembled depends solely on the available free space in this buffer.
+Because the memory pool is shared by all MacTCP users, the allowance for
+the maximum size of a UDPWrite packet will vary, depending on
+competing demands on the memory pool. A given destination can only
+guarantee the reassembly of a packet that is 576 bytes (including IP and
+UDP headers); therefore, it is possible to send a packet from the MacTCP
+driver that cannot be reassembled by the destination host.
+
+Routing
+The MacTCP driver supports routing through the Routing Information
+Protocol (RIP) and internally listens to RIP broadcasts. Because the
+MacTCP
+
+driver internally listens to RIP broadcasts, an attempt to create a
+
+UDP stream on local port 520 returns a duplicateSocket error.
+A default gateway can be configured using the Control Panel.
+
+Implementation notes
+
+User Datagram Protocol
+
+The User Datagram Protocol (UDP) provides a low-overhead transaction
+service to allow upper-layer protocols to send datagrams between one
+another. UDP
+
+is datagram oriented with best-effort delivery, but it does not
+
+use acknowledgments to make sure messages are delivered to the
+destination, does not order incoming messages, and does not provide
+feedback to control the rate at which information flows between machines.
+Like the Transmission Control Protocol (TCP), UDP uses port fields to
+specify the source and destination processes of each transaction. An
+optional checksum is also used.
+
+Data structures
+The UDP packet is composed of an 8-byte header, followed by up to
+65,507 bytes of data. The UDP header has the following structure:
+0
+
+word
+
+source port
+
+2
+
+word
+
+destination port
+
+4
+
+word
+
+length
+
+6
+
+word
+
+checksum
+
+8
+
+variable
+
+data
+
+Write Data Structures
+To send a UDP datagram, you must format a Write Data Structure (WDS),
+which has the format shown in Figure 3-1. A WDS specifies a list of buffers
+to write in a single operation.
+The simplest WDS describes a single buffer and is 8 bytes in length: a word
+length, a long pointer, followed by a terminating word of 0. The most
+complex WDS that can be used to send a UDP datagram describes 6 buffers
+and is 38 bytes in length.
+8 bits
+-
+
+length of first buffer
+
+-
+
+pointer to first buffer
+
+- — length of last buffer
+|
+
+pointer to last buffer
+
+L
+
+zero (word)
+
+Figure 3-1
+
+12
+
+|
+
+UDP Write Data Structure
+
+Chapter 3 / User Datagram Protocol
+
+Receive buffer area
+The User Datagram Protocol (UDP) does not allocate memory for storing
+UDP stream databases or for buffering received datagrams. Instead, you
+must pass UDP enough memory for these purposes in the UDPCreate call.
+This has two advantages:
+=
+
+The buffer memory can be allocated off the application heap instead of
+the system heap, which is very limited.
+
+m
+
+You have control over the buffering provided by UDP and can allocate
+the appropriate amount of memory for the type of application and
+performance level desired.
+
+This buffer area for incoming datagrams belongs to the MacTCP driver as
+long as the UDP stream is open. When UDPRelease is called, this memory is
+returned to you and you can then reuse it or return it to the system.
+
+Using UDP
+To send or receive UDP datagrams, you must first call UDPCreate to create
+a UDP stream, creating a port listener for the given UDP port and passing a
+memory block to the UDP driver to use in buffering incoming datagrams.
+UDPCreate also registers an asynchronous notification routine (ASR) that
+UDP uses to notify you of asynchronous events associated with this UDP
+stream. The MacTCP driver can support 63 open UDP streams
+simultaneously. The RIP process always has a stream open on port 520.
+To receive a UDP
+
+datagram, call UDPRead.
+
+buffer that holds the received datagram,
+
+Then, when you finish with the
+
+call UDPBfrReturn.
+
+To send a
+
+UDP datagram, call UDPWrite. When you finish using a UDP port, call
+UDPRelease to close the UDP
+
+stream.
+
+Note: Use of link-level packets larger than the maximum transfer unit
+(MTU) on LocalTalk networks is not advised because there are several
+problems with these packets on Datagram Delivery Protocol-Internet
+Protocol (DDP-IP) gateways. The packet MTU size should be negotiated
+by upper-layer protocols.
+
+Using UDP
+
+13
+
+UDP routines
+This section describes calls to the UDP
+
+driver. Table 3-1 lists each UDP
+
+routine and its function.
+Table 3-1
+
+UDP routines
+
+Routine
+
+Function
+
+UDPCreate
+
+Opens a UDP stream
+
+UDPRead
+
+Retrieves a datagram received on a UDP stream
+
+UDPBfrReturn
+
+Returns a receive buffer to the UDP driver
+
+UDPWrite
+
+Sends a datagram on a UDP stream
+
+UDPRelease
+
+Closes a UDP stream
+
+UDPMTU
+
+Returns the maximum size of UDP data that can be sent in a datagram
+without IP fragmentation
+
+UDP Multiport Create
+
+Opens UDP connections on a consecutive series of ports
+
+UDP Multiport Send
+Sends a datagram from a specified port
+UDP Multiport Receive Receives data from a port that was created with the UDP Multiport
+Create command
+
+14
+
+Chapter 3 / User Datagram Protocol
+
+UDPCreate
+Parameter block
+
+>
+
+26
+
+word
+
+csCode =UPDCreate
+
+—
+
+28
+
+long
+
+stream pointer
+
+>
+
+32
+
+long
+
+pointer to receive buffer area
+
+>
+
+36
+
+long
+
+length of receive buffer area
+
+>
+
+40
+
+long
+
+pointer to asynchronous notification routine
+(ASR)
+
+o
+
+44
+
+word
+
+local UDP port
+
+>
+
+46
+
+long
+
+user data pointer
+
+UDPCreate opens a UDP stream. It must be called before any UDP
+datagrams can be sent or received on a particular UDP port. UDPCreate
+returns a stream pointer that must be used in all subsequent UDP calls that
+operate on this UDP stream.
+The receive buffer area is a block of memory that you must give to the
+UDP driver. UDP uses this memory to buffer incoming datagrams. This
+block of memory belongs to UDP while the stream is open; it cannot be
+modified or relocated until UDPRelease is called. The minimum allowed
+size of the receive buffer area is 2048 bytes, but it should be at least 2N +
+
+256 bytes in length, where N is the size in bytes of the largest UDP
+datagram you expect to receive. If you expect to receive datagrams that are
+of the physical Maximum Transmission Unit (MTU) size, make the
+UDPMTU call and use the returned number N to calculate memory size.
+The ASR is called by UDP to notify the user of asynchronous events such
+as data arrival and Internet Control Message Protocol (ICMP) messages. If
+the routine is 0, you are not notified of asynchronous events. See the next
+section,
+
+“UDP
+
+Asynchronous
+
+Notification Routine,”
+
+for more
+
+information.
+If the local port is 0, UDP assigns an unused local port.
+The user data pointer is returned in all ASRs for the created UDP stream.
+Result codes
+
+noErr
+
+no
+
+error
+
+streamAlreadyOpen
+
+an open stream is already using this receive
+buffer area
+
+invalidLength
+
+the receive buffer area is too small
+
+invalidBufPtr
+
+the receive buffer area pointer is 0
+
+duplicateSocket
+
+an open stream is already using this local
+UDP port
+
+insufficientResources
+
+64 UDP streams are already open
+
+UDP routines
+
+15
+
+UDP asynchronous notification routine
+The asynchronous notification routine (ASR), which was registered with
+UDP in the UDPCreate call, is called by UDP to notify you of
+asynchronous events relevant to a particular UDP stream.
+Since this routine is called from the interrupt level, you must not allocate or
+return memory to the system. Also, you are not allowed to make further
+synchronous MacTCP calls from an ASR. The values of all registers must
+be preserved except registers AO-A2 and DO-D2.
+The C description of the ASR is as follows:
+pascal
+
+void
+
+UDPNotifyProc
+
+StreamPtr
+
+udpStream,
+
+unsigned
+
+short
+
+Ptr
+
+(
+
+eventCode,
+
+userDataPtr,
+
+struct
+
+ICMPReport
+
+*icmpMsg) ;
+
+NotifyProc 1s passed to the UDPCreate call for use on notification of data
+arrival and ICMP message reception. If this method of notification is not
+desired, no procedure should be passed to the UDPCreate call. (Pass an
+ASR pointer value of NIL.) Asynchronous notification is used with the
+UDPRead command only. All other commands complete in a finite amount
+of time and can be called synchronously.
+At entry, AO contains the stream pointer, Al contains a pointer to the ICMP
+report structure if the event code in DO is ICMP received, A2 contains the
+user data pointer, A5 is already set up to point to application globals, and
+DO (word) contains an event code.
+Event codes
+
+UDPDataArrival
+
+a UDP datagram has arrived on this stream
+but no UDPRead commands are outstanding
+
+UDPICMPReceived
+
+an ICMP
+
+has been received on this stream;
+
+register Al points to the ICMP report
+An ICMP message reports an error in the processing of a datagram that was
+sent on a UDP
+
+stream. When an ICMP message is received, a data structure
+
+is passed up by UDP to the client to describe the received message. This
+data structure, called an ICMP
+
+16
+
+report, has the following format:
+
+0
+
+long
+
+stream pointer
+
+4
+
+long
+
+local IP address of stream
+
+8
+
+word
+
+local UDP port of stream
+
+10
+
+long
+
+remote IP address (destination of original datagram)
+
+14
+
+word
+
+remote UDP port
+
+Chapter 3 / User Datagram Protocol
+
+16
+
+word
+
+ICMP message type
+
+18
+
+word
+
+optional additional information
+
+20
+
+long
+
+optional additional information pointer
+
+The values for the ICMP message type are as follows:
+
+WN
+
+protocol unreachable
+
+WH
+
+port unreachable
+
+BP
+
+fragmentation required
+
+OO
+
+host unreachable
+
+source route failed
+
+HDB
+
+1
+
+time exceeded
+
+SN
+
+network unreachable
+
+parameter problem
+
+Oo
+
+0
+
+missing required option
+
+Codes 0-3 are defined as follows:
+m=
+
+Net unreachable indicates that, according to the information in a
+
+gateway routing table, the network specified in the IP destination field of
+a UDP datagram is unreachable.
+m= Host unreachable indicates that a gateway determined that the host
+specified in the IP destination field of a UDP datagram is unreachable.
+m
+
+Protocol unreachable indicates that a UDP datagram was delivered to the
+destination host, but UDP was not ready to receive any datagrams.
+
+m
+
+Port unreachable indicates that a UDP datagram was delivered to the
+destination host, but no UDP client was listening on that particular port.
+
+These ICMP messages may be received occasionally when the topology of
+the internet changes. A single destination unreachable message should not
+be taken too seriously; however, if several successive UDPSend
+
+commands
+
+each result in an ICMP report indicating that the destination is unreachable,
+the UDP client should assume that the remote host has either crashed or is
+no longer accessible.
+The remaining codes (4-8) indicate problems in the format of the IP
+header on a UDP datagram. They are informational only. Since the UDP
+client has no access to the IP header, you cannot correct the error.
+
+UDP routines
+
+17
+
+UDPRead
+Parameter block
+
+>
+
+26
+
+word
+
+csCode = UDPRead
+
+28
+
+long
+
+stream pointer
+
+32
+
+word
+
+command
+
+timeout value in seconds
+
+(O = infinite)
+—
+
+34
+
+long
+
+remote IP address
+
+e
+
+38
+
+word
+
+remote UDP port
+
+—
+
+40
+
+long
+
+pointer to UDP data
+
+—
+
+44
+
+word
+
+length of UDP data
+
+>
+
+46
+
+word
+
+reserved; must be set to 0
+
+>
+
+48
+
+long
+
+user data pointer
+
+UDPRead retrieves a datagram that has been received on the UDP stream
+defined by the stream pointer. Some number of datagrams are buffered
+internally within UDP even when no UDPRead commands are outstanding,
+so it is not necessary to keep a UDPRead command outstanding at all times.
+The exact number of datagrams that can be buffered within the MacTCP
+driver depends on the size of the receive buffer area given to MacTCP in
+the UDPCreate call and the size of datagrams received.
+If a UDP datagram arrives on an open UDP stream and no UDPRead
+commands are outstanding, you are given a data arrival notification as a
+hint that a UDPRead command should be issued. See the section “UDP
+Asynchronous Notification Routine” earlier in this chapter for more
+information.
+The command timeout period is specified in seconds. If no datagram
+arrives within the timeout period, the UDPRead command is completed in
+error. The minimum allowed value for the command timeout is 2 seconds.
+A zero command
+
+timeout means infinite; the UDPRead
+
+command
+
+will not
+
+be completed until a datagram arrives.
+The remote IP address and remote UDP port specify the source of the
+datagram.
+UDPRead can return successfully even though the length of UDP data is 0.
+This happens when a UDP packet arrives that has the passed-in value of the
+UDP
+
+stream’s local UDP
+
+port, but contains no data. Since the UDPSend
+
+command permits sending zero-length UDP datagrams, the UDPRead
+command must pass up zero-length datagrams for symmetry.
+For every UDPRead command that is completed successfully and returns a
+nonzero amount of data, you must call UDPBfrReturn with the same stream
+pointer and UDP data pointer, to return the receive buffer to the UDP
+driver for reuse.
+
+18
+
+Chapter 3 / User Datagram Protocol
+
+Result codes
+
+noErr
+
+no error
+
+invalidStreamPtr
+
+the specified UDP stream is not open
+
+commandTimeout
+
+no data arrived within the specified period
+
+connectionTerminated
+
+a UDPRelease command closed the UDP
+
+>
+
+26
+
+word
+
+csCode = UDPBfrReturn
+
+>
+
+28
+
+long
+
+stream pointer
+
+>
+
+40
+
+long
+
+pointer to UDP data
+
+>
+
+48
+
+long
+
+user data pointer
+
+UDPBfrReturn
+Parameter block
+
+UDPBfrReturn returns a receive buffer to the UDP driver that had been
+passed to you because of a successful UDPRead call that returned a
+nonzero
+Result codes
+
+amount
+
+of data.
+
+noErr
+
+no error
+
+invalidStreamPtr
+
+the specified UDP stream is not open
+
+invalidBufPtr
+
+the user does not own the UDP
+
+receive buffer
+
+UDP routines
+
+19
+
+UDPWrite
+Parameter block
+
+>
+
+26
+
+word
+
+csCode = UDPWrite
+
+>
+
+28
+
+long
+
+stream pointer
+
+>
+
+34
+
+long
+
+remote IP address
+
+>
+
+38
+
+word
+
+remote UDP port
+
+>
+
+40
+
+long
+
+pointer to WDS
+
+>
+
+44
+
+byte
+
+checksum flag
+
+>
+
+46
+
+word
+
+reserved; must be set to zero
+
+>
+
+48
+
+long
+
+user data pointer
+
+UDPWrite sends a datagram on a UDP stream.
+The datagram’s destination is specified by the remote IP address and
+remote UDP parameter ports. The buffers described by the WDS must not
+be modified or relocated until the command has been completed. The WDS
+can describe up to 6 buffers. The total length of the UDP data described by
+the WDS
+
+must be between 0 and 8,192 inclusive. If the Checksum flag is
+
+nonzero, UDP
+
+computes and transmits a checksum;
+
+otherwise, the
+
+checksum is transmitted as 0. The reserved field must be set to 0.
+In an Ethernet environment, the size of UDPWrite packets should be
+restricted to less than or equal to 8192 bytes. Packets of this size can
+usually be reassembled by computers operating in Ethernet environments.
+In a LocalTalk environment, the size of UDPWrite packets should be
+restricted to less than or equal to 1458 bytes because of Datagram Delivery
+Protocol-Internet Protocol (DDP-IP) gateway performance considerations.
+Note:
+
+Unless you have prior knowledge of the capabilities of the
+
+destination machine, the UDPWrite
+
+returned by the UDPMTU
+Result codes
+
+2
+
+size should be limited to the value
+
+call for maximum interoperability.
+
+noErr
+
+no error
+
+invalidStreamPtr
+
+the specified UDP stream is not open
+
+invalidWDS
+
+too many buffers are in WDS
+is NIL
+
+invalidLength
+WDS
+
+the total amount of data described by the
+was greater than 65,535 bytes
+
+insufficientResources
+
+too many datagrams are outstanding in the
+transmit queue
+
+ipNoFragMemErr
+
+insufficient internal memory was available to
+fragment the packet
+
+ipRouteErr
+
+unable to send the packet to an off-network
+destination because all gateways are down
+
+Chapter 3 / User Datagram Protocol
+
+or WDS
+
+pointer
+
+UDPRelease
+
+LT
+
+Tl
+
+Parameter block
+
+26
+
+word
+
+csCode = UDPRelease
+
+28
+
+long
+
+stream pointer
+
+32
+
+long
+
+pointer to receive buffer area
+
+36
+
+long
+
+length of receive buffer area
+
+46
+
+long
+
+user data pointer
+
+UDPRelease closes a UDP stream. Any outstanding commands on that
+stream are terminated with an error. The ownership of the receive buffer
+area used to create the UDP stream passes back to you.
+Before UDPRelease is called, you must make sure that all pending
+UDPWrite commands have been completed. There is no way to abort a
+UDPWrite command in progress.
+Note: UDP Release must be called to release memory that is held by the
+driver. Failure to do so may produce unpredictable results.
+Result codes
+
+noErr
+
+no
+
+invalidStreamPtr
+
+the specified UDP stream is not open
+
+error
+
+UDPMTU
+Parameter block
+
+>
+
+26
+
+word
+
+csCode = UDPMaxMTUSize
+
+a
+
+32
+
+word
+
+maximum
+
+>
+
+34
+
+long
+
+remote
+
+>
+
+38
+
+long
+
+user data pointer
+
+UDPMTU
+
+returns the maximum
+
+datagram size
+
+address
+
+size of UDP
+
+data that can be sent in a
+
+single datagram without fragmentation. This number does not include the
+IP and UDP
+
+headers. The value is relative to the destination address. If the
+
+address is on the local network, the network MTU
+
+size is returned;
+
+otherwise, a value of 548 is returned.
+Result codes
+
+noErr
+
+no
+
+error
+
+UDP routines
+
+2
+
+UDP Multiport Create
+7
+
+L
+
+J
+
+JdT
+
+Parameter block
+
+=>
+=>
+
+26
+
+word
+
+csCode = UDPMultiCreate
+
+28
+
+long
+
+stream pointer
+
+32
+
+long
+
+pointer to receive buffer area
+
+36
+
+long
+
+length of receive buffer area
+
+40
+
+long
+
+pointer to asynchronous notification routine
+(ASR)
+
+44
+46
+50
+
+word
+
+starting UDP port
+
+long
+
+user data pointer
+
+word
+
+ending port
+
+UDP Multiport Create opens UDP connections on a consecutive series of
+ports. This routine is similar to UDPCreate except that it takes a starting and
+ending port instead of a single UDP port. The starting port must not be
+zero. The connection is established on a range of ports, from the starting
+port to the ending port, inclusive. The UDP Multiport Send routine must be
+used with this type of connection stream (see the next section, “UDP
+Multiport Send”). Reading datagrams from this type of stream is identical
+to UDPRead, except that the receiving port may change from datagram to
+datagram.
+Result codes
+
+22
+
+noErr
+
+no
+
+streamAlreadyOpen
+
+an open stream is already using this receive
+buffer area
+
+invalidLength
+
+the receive buffer area is too small
+
+invalidBufPtr
+
+the receive buffer area pointer is 0
+
+duplicateSocket
+
+an open stream is already using this local
+UDP port
+
+insufficientResources
+
+64 UDP streams are already open
+
+Chapter 3 / User Datagram Protocol
+
+error
+
+UDP Multiport Send
+Parameter block
+
+>
+
+26
+
+word
+
+csCode
+
+= UDPMultiSend
+
+>
+
+28
+
+long
+
+stream pointer
+
+>
+
+34
+
+long
+
+remote IP address
+
+>
+
+38
+
+word
+
+remote UDP port
+
+>
+
+40
+
+long
+
+pointer to WDS
+
+>
+
+44
+
+byte
+
+checksum flag
+
+>
+
+46
+
+word
+
+reserved
+
+>
+
+48
+
+long
+
+user data pointer
+
+>
+
+52
+
+word
+
+local port
+
+UDP Multiport Send sends a datagram from a specified port. (See
+“UDPWrite.”)
+Result codes
+
+noErr
+
+no error
+
+invalidStreamPtr
+
+the specified UDP stream is not open
+
+invalidWDS
+
+too many buffers are in WDS
+is NIL
+
+invalidLength
+
+the total amount of data described by the
+WDS was greater than 65,535 bytes
+
+insufficientResources
+
+too many datagrams are outstanding in the
+transmit queue
+
+ipNoFragMemErr
+
+insufficient internal memory is available to
+fragment the packet
+
+ipRouteErr
+
+unable to send the packet to an off-network
+destination because all gateways are down
+
+or WDS
+
+pointer
+
+UDP routines
+
+2
+
+UDP Multiport Receive
+Parameter block
+
+7
+
+26
+
+word
+
+csCode = UDPMultiRead
+
+>
+
+28
+
+long
+
+stream pointer
+
+>
+
+32
+
+word
+
+command
+
+timeout value in seconds
+
+(O = infinite)
+—
+
+34
+
+long
+
+remote IP address
+
+e
+
+38
+
+word
+
+remote UDP port
+
+—
+
+40
+
+long
+
+pointer to UDP data
+
+—
+
+44
+
+word
+
+length of UDP data
+
+>
+
+46
+
+word
+
+reserved; must be set to 0
+
+>
+
+48
+
+long
+
+user data pointer
+
+-
+
+52
+
+long
+
+destination host
+
+e
+
+56
+
+word
+
+destination port
+
+UDP Multiport Receive receives data from a port created with the UDP
+Multiport Create command. The port and host address on which the packet
+was received is specified in the destination port and destination host
+parameter-block fields.
+Result codes
+
+24
+
+noErr
+
+no error
+
+invalidStreamPtr
+
+the specified UDP stream is not open
+
+commandTimeout
+
+no data arrived within the specified period
+
+connectionTerminated
+
+a UDPRelease command closed the UDP
+stream
+
+Chapter 3 / User Datagram Protocol
+
+C parameter-block definitions
+The following C type definitions are used with parameter-block Device
+Manager calls to UDP:
+#define
+
+UDPCreate
+
+20
+
+#define
+
+UDPRead
+
+21
+
+#define
+
+UDPBfrReturn
+
+22
+
+#define
+
+UDPWrite
+
+23
+
+#define
+
+UDPRelease
+
+24
+
+#define
+
+UDPMaxMTUSize
+
+25
+
+#define
+
+UDPStatus
+
+26
+
+#define
+
+UDPMultiCreate
+
+27
+
+#define
+
+UDPMultiSend
+
+28
+
+#define
+
+UDPMultiRead
+
+29
+
+typedef
+
+enum
+
+UDPEventCode
+
+UDPDataArrival
+
+=
+
+{
+
+1,
+
+UDPICMPReceived,
+lastUDPEvent
+
+=
+
+32767
+
+}UDPEventCode;
+
+typedef
+
+pascal
+
+void
+
+(*UDPNotifyProc)
+
+StreamPtr
+
+udpStream,
+
+unsigned
+
+short
+
+Ptr
+
+(
+
+eventCode,
+
+userDataPtr,
+
+struct
+
+ICMPReport
+
+typedef
+
+void
+
+typedef
+
+unsigned
+
+*icmpMsg) ;
+
+(*UDPIOCompletionProc)
+short
+
+(struct
+
+UDPiopb
+
+*iopb)
+
+udp_port;
+
+The following parameter block is used for UDPCreate, UDPMultiCreate,
+and UDPRelease calls:
+typedef
+
+struct
+
+UDPCreatePB
+
+Ptr
+
+unsigned
+
+}
+
+{
+
+rcvBuftf;
+
+long
+
+rcvBuffLen;
+
+UDPNotifyProc
+
+notifyProc;
+
+unsigned
+
+localPort;
+
+short
+
+Ptr
+
+userDataPtr;
+
+udp_port
+
+endingPort;
+
+UDPCreatePB;
+
+Continued on following page >
+
+C parameter-block definitions
+
+r-<)
+
+typedef
+
+struct
+
+unsigned
+
+{
+
+reserved;
+
+ip_addr
+
+remoteHost;
+
+udp_port
+
+remotePort;
+
+Ptr
+
+wdsPtr;
+
+Boolean
+
+checkSum;
+
+unsigned
+
+}
+
+UDPSendPB
+short
+
+short
+
+sendLength;
+
+Ptr
+
+userDataPtr;
+
+udp_port
+
+localPort;
+
+UDPSendPB;
+
+The following parameter block is used with the UDPRead,
+UDPMultiReceive,
+
+and UDPBfrReturn
+
+typedef
+
+UDPReceivePB
+
+struct
+
+unsigned
+
+}
+
+timeOut;
+remoteHost;
+
+udp_port
+
+remotePort;
+
+Ptr
+
+rcvBuftf;
+
+unsigned
+
+short
+
+rcvBuffLen;
+
+unsigned
+
+short
+
+secondTimeStamp;
+
+Ptr
+
+userDataPtr;
+
+ip_addr
+
+destHost;
+
+udp_port
+
+destPort;
+
+UDPReceivePB;
+struct
+
+unsigned
+
+2
+
+{
+
+ip_addr
+
+typedef
+
+}
+
+short
+
+commands:
+
+UDPMTUPB
+short
+
+{
+mtuSize;
+
+ip_addr
+
+remoteHost;
+
+Ptr
+
+userDataPtr;
+
+UDPMTUPB;
+
+Chapter 3 / User Datagram Protocol
+
+typedef
+
+struct
+
+UDPiopb
+
+{
+
+char
+
+f£i1112[12];
+
+UDPIOCompletionProc
+
+ioCompletion;
+
+short
+
+ioResult;
+
+char
+
+*ioNamePtr;
+
+short
+
+ioVRefNum;
+
+short
+
+i1oCRefNum;
+
+short
+
+csCode;
+
+StreamPtr
+union
+
+}
+}
+
+udpStream,;
+
+{
+struct
+
+UDPCreatePB
+
+create;
+
+struct
+
+UDPSendPB
+
+send;
+
+struct
+
+UDPReceivePB
+
+receive;
+
+struct
+
+UDPMTUPB
+
+mtu;
+
+csParam;
+
+UDPiopb;
+
+C parameter-block definitions
+
+2
+
+Transmission Control Protocol
+
+The Transmission Control Protocol (TCP) is a highly reliable, connectionoriented byte-stream protocol. It is designed to operate over a wide variety
+of networks and to provide virtual circuit service with orderly transmission
+of user data. TCP serves as the basis for a reliable interprocess
+communication mechanism on top of the IP layer where loss, damage,
+duplication, delay, or misordering of packets can occur.
+
+Data structures
+This section describes TCP Read and Write Data Structures and the receive
+buffer area.
+
+Read and Write Data Structures
+The MacTCP driver uses Read Data Structures and Write Data Structures
+(RDS/WDS) to pass data between the user and TCP. These structures allow a
+single read or write operation to handle multiple blocks of data; that is, they
+allow scatter-read and gather-write capability. Figure 4-1 shows TCP Read
+and Write Data Structures.
+8 bits
+-
+
+length
+of first buffer
+
+|
+
+LE
+
+pointer to first buffer
+
+]
+
+i
+
+e
+e
+e
+
++ —_ length of last buffer
+--
+
+pointer to last buffer
+
+a
+
+zero (word)
+
+Figure 4-1
+
+TCP Read and Write Data Structures
+
+The simplest possible Read and Write Data Structures are 8 bytes in length:
+a word length, a long pointer, and a terminating word of 0. Up to 65,000
+buffers can be described by an RDS/WDS used to transfer data between
+TCP and the user.
+
+Receive buffer area
+TCP does not allocate memory for storing TCP stream databases or for
+buffering received datagrams. Instead, you are required to pass TCP
+enough memory for these purposes in the TCPCreate call. This has two
+advantages:
+
+3%
+
+=
+
+The buffer memory can be allocated off the application heap instead of
+the system heap, which is very limited.
+
+m
+
+You have control over the buffering provided by TCP and can allocate
+the appropriate amount of memory for the type of application and
+performance level desired.
+
+~=©Chapter 4 / Transmission Control Protocol
+
+The buffer area for incoming datagrams belongs to the MacTCP driver as
+long as the TCP stream is open. When TCPRelease is called, this memory is
+returned to you and you can then reuse it or return it to the system.
+An application should allocate memory by first finding the MTU of the
+physical network (see the UDPMTU section in Chapter 3). Some network
+devices supported by MacTCP have very large MTU sizes. If an
+appropriate amount of memory is not allocated to the TCP connection, the
+connection will behave unpredictably. The minimum memory allocation
+should be 4N + 1024, where N is the size of the physical MTU returned by
+the UDPMTU call.
+
+Using TCP
+This section describes how to send and receive TCP segments.
+
+Streams and connections
+A TCP stream supports one connection at a time. But a TCP connection on
+a stream can be closed and another connection opened without releasing
+the TCP stream. The MacTCP driver can support 64 open TCP streams
+simultaneously.
+
+Asynchronous notification routine
+When a TCP
+
+stream is created, a routine can be registered that TCP uses to
+
+notify you of asynchronous events relevant to that TCP stream. This
+routine is called the asynchronous notification routine (ASR).
+Examples of events that the MacTCP driver communicates to the user by
+means
+
+of an ASR
+
+Terminated.
+
+include Timeout Expired, Data Arrived, and Connection
+
+Since the ASR
+
+allocate or release memory.
+commands
+
+is called from the interrupt level, it cannot
+In addition, synchronous
+
+MacTCP
+
+driver
+
+cannot be issued from an ASR.
+
+Connection opening
+To listen for an incoming
+
+connection, use the TCPPassiveOpen
+
+command.
+
+This command can be used to specify whether any incoming connection
+will be accepted or only connections from a particular remote IP address
+and TCP port.
+To initiate outgoing connections, use the TCPActiveOpen command.
+
+Using TCP
+
+31
+
+Receiving data
+Two methods are available for receiving data: a high-performance method
+and a simple method. You can choose the method that best suits the
+application or combine the two methods if desired.
+Using the TCPNoCopyRcv routine is the high-performance method. Data is
+delivered to the user directly from the internal TCP receive buffers and no
+copy is required. An RDS is formatted to allow many received segments to
+be delivered to the user in one TCPNoCopyRev command. TCPBfrReturn
+must be called for every TCPNoCopyRcv that returns a nonzero amount of
+data in order to return the internal receive buffers to the MacTCP driver.
+Using the TCPRcv routine is the simple method of receiving data. Data is
+copied from the TCP internal receive buffers into the user’s buffer, which
+can be of arbitrary length and location. No RDS is used and no
+TCPBfrReturn call is required.
+
+Sending data
+To send data on a connection that is already established, use the TCPSend
+command.
+
+Both commands use WDSs to implement a gather-write capability. This
+allows you to send several noncontiguous chunks of data in one operation.
+
+Timeouts
+TCP normally provides some timeout services to the upper-layer protocol
+(ULP). This timeout service is known as the ULP timeout. If there is data to
+send on a connection, but for some specified period of time the data cannot
+be sent (either because the remote TCP is not set to receive any data or the
+data has been sent but the remote TCP has not acknowledged it), then the
+ULP timeout expires.
+When the ULP timeout expires, TCP executes the specified ULP timeout
+action. There are two possible actions: abort the connection or report the
+timer expiration by means of an ASR and restart the timer.
+In addition to this normal TCP timer, the MacTCP
+
+driver provides
+
+command timeouts on commands that are not subject to the ULP timer.
+These commands are TCPPassiveOpen, TCPNoCopyRcv, and TCPRcv.
+
+32.
+
+Chapter 4 / Transmission Control Protocol
+
+A TCPPassiveOpen command instructs TCP to wait for an incoming
+connection. The ULP timer is not started until the first connection initiation
+segment arrives. To prevent a TCPPassiveOpen command from waiting
+indefinitely for a connection initiation segment to arrive,
+
+a command
+
+timeout is provided. If no connection initiation segment is received within
+the specified timeout period, the TCPPassiveOpen command is completed
+with an error code.
+Similarly, the TCPNoCopyRcv and TCPRcv commands are not protected
+by the ULP
+
+timer. In the absence of command
+
+timeouts, both commands
+
+could wait indefinitely for data to arrive. If a command timeout is specified
+on a TCPNoCopyRcv or TCPRcv command, the command is always
+completed within the specified time period. If no data has arrived at that
+point, the command is completed with an error. If some data has arrived,
+the command is completed successfully, returning the data that has arrived
+so far.
+
+Pushed data
+Usually, TCP is allowed to collect data sent by means of TCPSend
+commands and to send that data in segments, as convenient. By setting the
+Push flag in the TCPSend
+
+command,
+
+TCP
+
+can be instructed to send all
+
+unsent data at once.
+Similarly, TCP is allowed to collect received data internally and deliver it
+with reasonable promptness to the user. However, when pushed data arrives,
+TCP immediately delivers all received data to the user.
+Note that there is no necessary relationship between the Push flag in a
+TCPSend command and segment boundaries. The push function does not
+provide a method of marking message boundaries.
+
+Urgent mode
+The urgent mechanism for TCP allows the sending user to prompt the
+receiving user to accept urgent data. It also permits the receiving TCP to
+indicate to the receiving user when all currently known urgent data has
+been received.
+TCP does not define what the user is required to do when in urgent mode,
+but the general practice is that the receiving user takes action to process the
+arriving data quickly.
+A receiving user can be put in urgent mode in two ways: by means of an
+Urgent flag in a TCPNoCopyRcev or TCPRcev command, or by an urgent
+ASR notification. The user is always taken out of urgent mode by a Mark
+flag in the TCPNoCopyRcev or TCPRcv command that contains the last byte
+of urgent data.
+
+Using TCP
+
+BB
+
+To send data as urgent, you must set the Urgent flag in the TCPSend
+command.
+Note: RFC 793 contained an incorrect specification pertaining to the
+description of the end of urgent data. Consequently, many hosts have
+implemented urgent data incorrectly. RFC 1122 corrects the definition of
+urgent data. The MacTCP driver is compliant with both specifications,
+allowing you to send urgent data using either specification.
+Since there’s currently no known way to programmatically determine
+whether the remote site is compliant with RFC 793 or 1122, there’s no way
+to determine which urgent data format to use. You must devise your own
+strategy.
+It is recommended that you make urgent data self-formatting to circumvent
+the problem of detecting the exact end of urgent data.
+An application can send urgent data according to RFC 793 or 1122. Unless
+an application specifies otherwise, urgent data is sent using the method
+specified in RFC 1122.
+
+Connection closing
+TCP closes communications gracefully. All outstanding Send requests are
+transmitted and acknowledged before the connection is allowed to close.
+You can issue several TCPSend commands followed by a TCPClose
+command and expect that all the data will be sent successfully to the remote
+TCP.
+A TCPClose
+not mean
+
+command
+
+means
+
+“I have no more
+
+“I will receive no more
+
+data to send,” but it does
+
+data” or “shut down
+
+this connection
+
+immediately.” A connection may remain open indefinitely as the remote
+TCP
+
+continues to send data after
+
+a TCPClose
+
+command
+
+has been
+
+completed. When the remote TCP also issues a close command—and
+then—the
+
+connection is closed.
+
+A TCPRcev
+
+command
+
+only
+
+should be issued after
+
+a TCPClose command has been completed to make sure that all the data is
+received.
+
+If the desired effect is to break the connection without any assurance that
+all data in transit is delivered, use the TCPAbort command.
+
+Network management information
+TCP keeps two types of network management information: global TCP
+information and stream-specific information, which is relevant only to a
+
+particular stream.
+
+34
+
+= Chapter 4 / Transmission Control Protocol
+
+The TCPGlobalInfo command makes global TCP information accessible.
+This command returns pointers to the actual structures where TCP stores
+this information. Thus, the user has read-write access to this information.
+
+The TCPStatus command makes stream-specific information accessible.
+Most stream-specific information is copied into the TCPStatus I/O
+parameter block, giving the user read-only access. But a direct pointer to
+the traffic statistics allows the user read-write access to those counters (see
+the section “TCPGlobalInfo” later in this chapter).
+
+Formatting MacTCP commands
+In most cases, a O value for a parameter in an I/O parameter block means
+that TCP will use its default value. Thus, you must initialize I/O parameter
+blocks and then fill in the required parameters, plus optional parameters.
+
+TCP routines
+This section presents calls to the TCP driver. Table 4-1 lists each TCP
+routine and its function.
+Table 4-1
+
+TCP routines
+
+Routine
+
+Function
+
+TCPCreate
+TCPPassiveOpen
+TCPActiveOpen
+
+Opens a TCP stream
+Listens for an incoming connection
+Initiates an outgoing call to a remote TCP
+
+TCPSend
+
+Sends specified data on a connection
+
+TCPNoCopyRev
+
+Retrieves data that has been received on a connection
+
+TCPBfrReturn
+
+Returns a set of receive buffers to the TCP driver
+
+TCPRev
+
+Retrieves data that has been received on a connection
+
+TCPClose
+
+Signals that the user has no more data to send on this
+
+TCPAbort
+
+Terminates the connection without trying to send
+outstanding data or deliver received data
+
+TCPStatus
+TCPRelease
+TCPGloballnfo
+
+connection
+
+Extracts information from TCP regarding a particular
+
+connection
+
+Closes a TCP stream
+Allows the user access to global statistics and parameters that affect
+the operation of TCP
+
+TCP routines
+
+&
+
+TCPCreate
+Parameter block
+
+>
+
+26
+
+word
+
+csCode = TCPCreate
+
+-
+
+28
+
+long
+
+stream pointer
+
+>
+
+32
+
+long
+
+pointer to receive buffer area
+
+>
+
+36
+
+long
+
+length of receive buffer area
+
+>
+
+40
+
+long
+
+pointer to ASR
+
+>
+
+44
+
+long
+
+user data pointer
+
+TCPCreate opens a TCP stream. A TCP stream is not equivalent to a TCP
+connection. The MacTCP driver returns a pointer to a stream database. The
+stream pointer is an input parameter in all subsequent commands affecting
+the stream.
+The receive buffer area is a block of memory that TCP uses to buffer
+incoming segments. Ownership of this block of memory passes to TCP.
+The memory—a minimum of 4096 bytes—cannot be modified or
+relocated until TCPRelease is called. The size of the receive window that
+TCP offers is based on the size of the receive buffer area passed to TCP in
+the TCPCreate call. High-performance and block-oriented applications
+should provide TCP with a large receive buffer area: 16 kilobytes (KB) is
+recommended and up to 128 KB can be useful in certain applications.
+Character-oriented applications can use the minimum value of 4096 bytes;
+however,
+
+at least 8192 bytes are recommended.
+
+An ASR may be provided. The ASR is called by TCP to notify you of
+asynchronous events such as Data arrival, Urgent data outstanding, and
+Connection terminated. If the routine is 0, you are not notified of
+asynchronous events.
+Result codes
+
+36
+
+noErr
+
+no
+
+streamAlreadyOpen
+
+an open stream is already using this receive
+buffer area
+
+invalidLength
+
+the receive buffer area is too small
+
+invalidBufPtr
+
+the receive buffer area pointer is 0
+
+insufficientResources
+
+64 TCP streams are already open
+
+Chapter 4 / Transmission Control Protocol
+
+error
+
+TCP asynchronous notification routine
+The TCP asynchronous notification routine (ASR) is a user-supplied
+routine called by TCP to notify you of asynchronous events relevant to a
+particular TCP stream. You register this routine with TCP in the TCPCreate
+call.
+Since this routine is called at interrupt level, it cannot release or allocate
+
+memory. An ASR routine can issue additional asynchronous MacTCP
+driver calls.
+
+The C description of the ASR is as follows:
+pascal
+
+void
+
+TCPNotifyProc
+
+(
+
+StreamPtr
+
+tcpStream,
+
+unsigned
+
+short
+
+Ptr
+
+eventCode,
+
+userDataPtr,
+
+unsigned
+struct
+
+short
+
+terminReason,
+
+ICMPReport
+
+*icmpMsg) ;
+
+Register Al contains a pointer to the Internet Control Message Protocol
+(ICMP) report structure if the event code in DO is ICMP received, A2
+contains the user data pointer, A5 is already set up to point to application
+globals, DO (word) contains an event code, and D1 contains a reason for
+termination.
+Event codes
+
+closing
+
+all data on this connection has been received
+and delivered
+
+ULP timeout
+
+no response from the remote TCP; reported
+only if TCP is configured to report a timeout
+instead of aborting the connection
+
+terminate
+
+connection no longer exists
+
+data arrival
+
+data arrived, no receive commands
+
+outstanding
+urgent data outstanding
+
+user should go into urgent mode
+
+ICMP message received
+
+an Internet Control Message has been
+received on the stream; register Al points to
+the ICMP report
+
+For the terminate event, a reason for connection termination is given in D1
+
+(word):
+remote abort
+
+the remote TCP aborted the connection
+
+network failure
+
+currently not in use
+
+security/precedence
+mismatch
+
+invalid security option or precedence level
+
+TCP
+
+routines
+
+37
+
+ULP timeout
+
+the ULP timeout expired; ULP timeout action
+is abort
+
+ULP abort
+
+the user issued a TCPAbort command
+
+ULP close
+
+the connection closed gracefully
+
+service failure
+
+unexpected connection initiation segment
+read
+
+Note:
+
+Refer to the Appendix for the values of these types.
+
+A closing notification means that the remote TCP has sent all the data it
+intends to send on this connection and that all data has been delivered to
+the user. Closing notification does not mean that the connection has been
+broken. You can continue to send data for an arbitrary length of time after
+a closing notification is given. Only when you issue a TCPClose command
+will the connection be terminated.
+The ULP timeout notification is given if the configured ULP timeout action
+for this connection is report, and the local TCP cannot get some data sent
+or acknowledged (or both), within the specified ULP timeout period. The
+ULP timer is restarted after notification and expires again in another ULP
+timeout period if nothing changes.
+For each connection, TCP issues exactly one terminate notification when
+
+the connection is broken. This rule applies both when the connection closes
+gracefully and when the connection terminates in error.
+Data arrival notification is given if a segment arrives and no receive
+commands are outstanding. Even if more data arrives later, TCP does not
+issue another data arrival notification until a receive command has been
+issued and completed. In other words, a data arrival notification is not given
+
+with every segment that arrives, but instead is intended to prompt you to
+issue a receive command.
+Urgent notification is given only if no receive commands are pending when
+TCP discovers outstanding urgent information on the connection. If there
+are outstanding receive commands, they are completed with the Urgent flag
+set, starting the reception of data in urgent mode.
+An ICMP message reports an error in the processing of a datagram that was
+sent on a TCP stream. When
+
+an ICMP message is received, a data structure
+
+is passed up by TCP to the client to describe the received message. This
+data structure, called an ICMP
+
+38
+
+report, has the following format:
+
+0
+
+word
+
+stream pointer
+
+2
+
+long
+
+local IP address of stream
+
+6
+
+word
+
+local TCP port of stream
+
+8
+
+long
+
+remote IP address (destination of original datagram)
+
+Chapter 4 / Transmission Control Protocol
+
+12
+14
+16
+18
+
+word
+
+remote TCP port
+
+word
+
+ICMP message type
+
+word
+
+optional additional information
+
+long
+
+optional additional information pointer
+
+OO
+
+host unreachable
+protocol unreachable
+
+FP
+
+source route failed
+time exceeded
+
+Ont
+
+fragmentation required
+
+ON
+
+port unreachable
+
+D
+
+WN
+
+net unreachable
+
+KY
+
+The values for the ICMP message type are as follows:
+
+parameter problem
+missing required option
+
+Codes 0-3 are defined as follows:
+Net unreachable indicates that, according to the information in a
+
+gateway routing table, the network specified in the IP destination field of
+a TCP segment is unreachable.
+Host unreachable indicates that a gateway determined that the host
+specified in the IP destination field of a TCP segment is unreachable.
+Protocol unreachable indicates that a TCP segment was delivered to the
+destination host, but there was no process on that host to receive TCP
+segments.
+Port unreachable indicates that
+
+a TCP segment was delivered to the
+
+destination host, but there was no client of TCP listening on that
+
+particular TCP port.
+If the TCP stream is configured for the ULP abort timeout action, the TCP
+client need not take any action in response to destination unreachable
+messages (they are informational only).
+TCP breaks the connection if there is data to send, but it is not
+acknowledged within the ULP timeout period. If, however, this TCP stream
+has been configured for the ULP report timeout action, then the TCP user
+has taken responsibility for deciding when and if the remote host is no
+longer available, and the connection
+
+should be broken.
+
+TCP
+
+routines
+
+%
+
+A single destination unreachable message should not be taken too seriously
+because such messages may be received occasionally when the topology of
+the internet changes. But if several successive TCPSend commands each
+result in an ICMP
+
+report indicating destination unreachable, the TCP
+
+client
+
+should assume that the remote host has either crashed or is no longer
+accessible and should break the connection.
+Codes 4—8 are defined as follows:
+
+m= Fragmentation required indicates that the TCP user has set the Don’t
+Fragment flag in a TCPOpen command, yet a segment on that TCP
+connection could not be delivered to its destination without
+fragmentation. To avoid this, don’t set the Don’t Fragment flag on
+TCPOpen commands.
+m=
+
+Source route failed indicates that the TCP user has specified the route
+this datagram should take in the IP options but that particular route was
+not available.
+
+m= Time exceeded indicates that the Time to Live specified in a TCPOpen
+command was too short to allow a TCP segment on this TCP stream to
+be delivered through all the necessary gateways on the way to its
+destination. A longer Time to Live value should be specified in the
+TCPOpen command.
+=
+
+Parameter problem indicates that the IP header used on a TCP segment
+was not acceptable by either an intermediate gateway or the final
+destination. The additional information pointer in the ICMP report
+structure points to a static copy of the IP header used for sending
+segments on this TCP connection. The additional information value
+indicates a byte offset in the IP header where the parameter problem
+exists. For example, an offset of 1 indicates that the Type of Service
+field is invalid, and an offset of 20 indicates that the first option present
+is invalid.
+
+m= Missing required option means that the remote TCP requires that a
+specific IP option be present in the IP header. The IP option type code
+that is required by the remote TCP is passed in the additional
+information field.
+Much of the information that asynchronous notifications pass to you is also
+available in other ways. For example, you can tell that the remote TCP has
+closed a connection either by waiting for a closing notification or by
+submitting TCPRcev commands until one is returned with a
+connectionClosing error.
+
+40
+
+Chapter 4 / Transmission Control Protocol
+
+TCPPassiveOpen
+Parameter block
+
+>
+
+26
+
+word
+
+csCode = TCPPassiveOpen
+
+>
+
+28
+
+long
+
+stream pointer
+
+>
+
+32
+
+byte
+
+ULP timeout value in seconds; 0 = use default
+
+>
+
+33
+
+byte
+
+ULP
+
+timeout action; 0 = report,
+
+nonzero = abort
+>
+
+34
+
+byte
+
+validity bits for optional parameters
+
+>
+
+35
+
+byte
+
+command timeout in seconds; 0 = infinity
+
+o
+
+36
+
+long
+
+remote IP address; can be 0
+
+o
+
+40
+
+word
+
+remote TCP port; can be 0
+
+-
+
+42
+
+long
+
+local IP address
+
+o
+
+46
+
+word
+
+local TCP port; if 0, TCP assigns an unused
+port
+
+>
+
+48
+
+byte
+
+type of service
+
+>
+
+49
+
+byte
+
+precedence
+
+>
+
+50
+
+byte
+
+don’t fragment flag
+
+>
+
+51
+
+byte
+
+time to live
+
+>
+
+52
+
+byte
+
+security flag
+
+>
+
+53
+
+byte
+
+IP option count
+
+>
+
+54
+
+var.
+
+IP options
+
+>
+
+94
+
+long
+
+user data pointer
+
+TCPPassiveOpen listens for an incoming connection. The command is
+completed when a connection is established or when an error occurs.
+Several fields in the TCPPassiveOpen command are optional. To indicate
+whether the user is including these optional parameters, a set of validity bits
+is defined as follows:
+bit 4
+
+precedence parameter is valid
+
+bit 5
+
+type of service parameter is valid
+
+bit 6
+
+ULP timeout action parameter is valid
+
+bit 7
+
+ULP timeout value parameter is valid
+
+For example, a value of OxCO would mean that the ULP timeout value and
+action parameters are valid. If a validity bit is 0, TCP uses its default value
+
+for that parameter.
+
+TCP
+
+routines
+
+41
+
+If the remote IP address and remote TCP port are 0, a connection is
+
+accepted from any remote TCP. If they are nonzero, a connection is
+accepted only from that particular remote TCP. If the local TCP port is 0,
+TCP assigns an unused port value.
+If a connection is partly established but cannot be completed within the
+ULP timeout period after the first connection opening segment arrives, the
+ULP action is taken. If the ULP timeout action is abort (the default value),
+the connection is broken and the TCPPassiveOpen command is completed
+in error. If the ULP timeout action is report, an ASR
+
+call informs the ULP,
+
+and the ULP timer is restarted. The minimum value of the ULP timeout is 2
+seconds; 0 means that TCP
+
+should use its default value of 2 minutes.
+
+If no connection opening packet arrives within the specified command
+timeout period after the TCPPassiveOpen command is issued, the command
+is completed in error. The minimum value of the command timeout is 2
+seconds; 0 means
+
+infinite.
+
+You have control over many fields in the IP header of all segments sent on
+this connection. You can set these fields only when the connection is
+opened. They stay fixed during the connection.
+The type of service is a 3-bit field:
+bit 0
+
+set for low delay
+
+bit 1
+
+set for high throughput
+
+bit 2
+
+set for high reliability
+
+For example, a value of 0x02 means high throughput. The default value
+is 0.
+Precedence has the following values:
+0
+
+routine
+
+1
+
+priority
+
+2
+
+immediate
+
+3
+
+flash
+
+4
+
+flash-override
+
+5
+
+CRITIC/ECP
+
+6
+
+internetwork control
+
+7
+
+network control
+
+The default value for precedence is 0.
+
+42
+
+Chapter 4 / Transmission Control Protocol
+
+If the Don’t Fragment flag is nonzero, all segments sent on this connection
+are prohibited from being fragmented by the local IP or any intermediate
+IP. If a segment cannot be delivered without fragmentation, it’s discarded.
+
+The Time to Live indicates the maximum time that segments on this
+connection are allowed to remain in the internet system. This value is
+decreased by every IP module that processes the segment; thus, it is
+effectively a maximum hop count (the number of times a segment can pass
+through a module). The minimum value is 2; 0 means TCP should use its
+default value (the default value is 60).
+If the Security flag is nonzero, TCP inserts its configured default IP
+security option into all segments sent on this connection. In addition, for al.
+arriving segments that contain a security option, TCP verifies that the
+security matches the configured default security. Note that this flag is
+relevant only if no security option is present in the user-specified IP
+options.
+Finally, you can specify additional IP options to be sent with every
+segment. The option count is the number of long words in the IP option
+field. Pad bytes of 0 should be appended to the IP options so that the
+options are an integral number of long words. The maximum value of the
+option count field is 10 unless the Security flag is also nonzero, in which
+case the maximum value is 9.
+TCP does not perform any verification on the user-specified IP options, but
+simply inserts them into the IP header of every segment sent on the
+connection. If you specify an invalid list of IP options, the result cannot be
+predicted. See Request for Comment (RFC) 894 for the proper format of
+IP options.
+Result codes
+
+noErr
+
+no error
+
+invalidStreamPtr
+
+the specified TCP stream is not open
+
+connectionExists
+
+this TCP stream already has an open
+connection
+
+duplicateSocket
+
+a connection already exists between this local
+IP address and TCP port, and the specified
+remote IP address and TCP port
+
+commandTimeout
+
+no connection attempt was received in the
+specified time-out period
+
+openFailed
+
+the connection came halfway up and then
+failed
+
+TCP
+
+routines
+
+®
+
+TCPActiveOpen
+LJdtd
+
+Parameter block
+
+26
+
+word
+
+csCode = TCPActiveOpen
+
+28
+
+long
+
+stream pointer
+
+32
+
+byte
+
+ULP timeout value in seconds; 0 = use default
+
+33
+
+byte
+
+ULP
+
+timeout action; 0 = report,
+
+IT
+
+lJ
+
+d
+
+nonzero
+
+34
+36
+40
+42
+46
+
+= abort
+
+byte
+
+validity bits
+
+long
+
+remote IP address; cannot be 0
+
+word
+
+remote TCP port; cannot be 0
+
+long
+
+local IP address
+
+word
+
+local TCP port; if 0, TCP assigns an unused
+
+Lilli
+
+ltld
+
+port
+
+48
+
+byte
+
+type of service
+
+49
+
+byte
+
+precedence
+
+50
+
+byte
+
+don’t fragment flag
+
+51
+
+byte
+
+time to live
+
+52
+
+byte
+
+security flag
+
+53
+
+byte
+
+IP option count
+
+54
+
+byte[40]
+
+IP options
+
+94
+
+long
+
+user data pointer
+
+TCPActiveOpen initiates an outgoing call to a remote TCP. The command
+is completed when a connection is established or when an error occurs.
+TCPActiveOpen accepts the same parameters as TCPPassiveOpen, except
+that the remote IP address and remote TCP port must be specified. Further,
+no command timeout is provided; if the connection cannot be established
+within the ULP timeout period, the command is completed in error.
+See TCPPassiveOpen for a description of other parameters.
+Result codes
+
+noErr
+
+no error
+
+invalidStreamPtr
+
+the specified TCP stream is not open
+
+connectionExists
+
+this TCP stream already has an open
+connection
+
+duplicateSocket
+
+a connection already exists between this local
+IP address and TCP port, and the specified
+
+remote IP address and TCP port
+openFailed
+
+44
+
+Chapter 4 / Transmission Control Protocol
+
+the connection came halfway up and then
+failed
+
+TCPSend
+Parameter block
+
+>
+
+26
+
+word
+
+csCode = TCPSend
+
+>
+
+28
+
+long
+
+stream pointer
+
+>
+
+32
+
+byte
+
+ULP timeout value in seconds
+
+>
+
+33
+
+byte
+
+ULP
+
+timeout action; nonzero = abort,
+
+Q = report
+>
+
+34
+
+byte
+
+validity bits
+
+>
+
+35
+
+byte
+
+push flag
+
+>
+
+36
+
+byte
+
+urgent flag
+
+>
+
+38
+
+long
+
+WDS pointer
+
+>
+
+42
+
+long
+
+reserved
+
+>
+
+46
+
+word
+
+reserved
+
+>
+
+48
+
+long
+
+user data pointer
+
+TCPSend sends the specified data over the connection. The command is
+completed when all data has been sent and acknowledged or when an error
+occurs.
+If all data cannot be sent and acknowledged within the ULP timeout period,
+then the ULP
+
+action is taken. If the ULP
+
+action is abort, the connection is
+
+broken, all pending commands are returned, and a terminate notification is
+given. If the ULP action is report, a ULP timeout notification is given.
+Several fields in the TCPPassiveOpen command are optional. To indicate
+whether the user is including these optional parameters, a set of validity bits
+is defined as follows:
+bit 6
+
+ULP timeout action parameter is valid
+
+bit 7
+
+ULP timeout value parameter is valid
+
+If the Push flag is nonzero, TCP sends the data immediately without waiting
+to see if more TCPSend commands are issued. If the Urgent flag is 2, TCP
+sends the data using the noncompliant method described by RFC 793. If
+the Urgent flag is any other nonzero value, TCP sends the data using the
+method described by RFC 1122. For more information about the TCP
+urgent mechanism,
+
+refer to the section “Urgent Mode”
+
+earlier in this
+
+chapter.
+The WDS can be arbitrarily complex; that is, there is no limit to the number
+of buffers that can be sent in a TCPSend command. However, the total
+number of data bytes described by the WDS must be between 1 and 65,535
+inclusive. You must not modify or relocate the WDS and the buffers it
+describes until the TCPSend command has been completed.
+
+TCP
+
+routines
+
+4
+
+Result codes
+
+noErr
+
+no error
+
+invalidStreamPtr
+
+the specified TCP stream is not open
+
+invalidLength
+
+the total amount of data described by the
+WDS was either 0 or greater than 65,535 bytes
+
+invalidWDS
+
+the WDS pointer was 0
+
+connectionDoesntExist
+
+there is no open connection on this TCP
+stream
+
+connectionClosing
+
+a TCPClose command was already issued, so
+there is no more data to send on this
+connection
+
+connectionTerminated
+
+the connection was broken; the reason will be
+
+given in a terminate ASR
+
+46
+
+Chapter 4 / Transmission Control Protocol
+
+TCPNoCopyRev
+Parameter block
+
+>
+
+26
+
+word
+
+csCode = TCPNoCopyRcv
+
+>
+
+28
+
+long
+
+stream pointer
+
+>
+
+32
+
+byte
+
+command timeout in seconds
+
+—
+
+34
+
+byte
+
+mark flag
+
+<
+
+35
+
+byte
+
+urgent flag
+
+>
+
+42
+
+long
+
+RDS pointer; RDS is modified by TCP
+
+>
+
+46
+
+word
+
+number of entries in RDS excluding
+terminating 0; not modified by TCP
+
+>
+
+48
+
+word
+
+reserved
+
+>
+
+50
+
+long
+
+user data pointer
+
+TCPNoCopyRcv retrieves data that has been received on a connection. Data
+is not copied out of the internal buffers of TCP; rather, an RDS
+
+is formattec
+
+to allow the user access to the TCP data in place. This command offers
+significant performance improvements over TCPRcv commands.
+The command is completed when
+m
+
+pushed data arrives
+
+m™ urgent data is outstanding
+m
+
+a reasonable period passes after the arrival of nonpush, nonurgent data
+
+m
+
+the RDS
+
+is full; that is, the received data is in more noncontiguous
+
+chunks than the RDS
+
+can describe
+
+m
+
+the amount of data received is greater than or equal to 25 percent of the
+total receive buffering for this stream
+
+m
+
+the command timeout expires
+
+You must allocate memory
+
+for the RDS,
+
+which can contain an unlimited
+
+number of elements. The specified number of entries in the RDS does not
+include the terminating 0. For example, the simplest possible RDS has one
+element and is 8 bytes in length: a word length field, a long pointer field,
+and a terminating word length field of 0.
+TCP formats the RDS to point to the received TCP data. The RDS may not
+be completely filled by TCP. For example, if you pass an RDS three entries
+TCP may complete the TCPNoCopyRcv command with the RDS describing
+only one buffer. TCP does not modify the field in the TCPNoCopyRcv
+command
+
+that indicates the number of entries in the RDS;
+
+rather, it places a
+
+terminating zero in the RDS itself.
+
+TCP
+
+routines
+
+47
+
+The command timeout period starts when the receive command is issued,
+not when the first byte of data arrives. If no data arrives within this timeout
+period, the TCPNoCopyRcv command is completed in error. If some data
+has arrived when the command timeout expires, the , TCPNoCopyRcv
+command is completed successfully, returning the data that has arrived so
+far. A command timeout of 0 indicates an infinite timeout period. In this
+case, the TCPNoCopyRcev command is not completed until some data has
+arrived.
+If the Urgent flag is nonzero, the data returned by this command is the
+beginning of the outstanding urgent data. This flag is one of two
+mechanisms that puts you in urgent mode. The other mechanism is by
+means
+
+of an urgent ASR
+
+notification, which is used when there are no
+
+outstanding TCPNoCopyRcv
+
+or TCPRcev commands.
+
+If the Mark flag is nonzero, the data returned by this command ends the
+urgent data. Since TCP does not deliver urgent and nonurgent data
+together, the last byte of data described by the RDS 1s the last byte of
+urgent data. The Mark flag is the only mechanism for taking you out of
+urgent mode.
+The Urgent flag is set only on the first TCPNoCopy Rev or TCPRev
+command that contains urgent data. The Mark flag will be set only on the
+last TCPNoCopyRcv or TCPRcv command that contains urgent data. For
+example, if three TCPNoCopyRcv or TCPRcev commands are required to
+deliver all urgent data, the settings of the Urgent and Mark flags will be as
+follows:
+Urgent flag
+
+Mark flag
+
+First TCPNoCopyRcv/TCPRev command
+
+1
+
+0
+
+Second TCPNoCopyRcev/TCPRev command
+
+0
+
+0
+
+Third TCPNoCopyRev/TCPRev command
+
+0
+
+1
+
+Both the Urgent flag and the Mark flag can be set in a single
+TCPNoCopyRcv or TCPRcev command if all outstanding urgent data can be
+delivered in a single command.
+You are responsible for calling TCPBfrReturn after every TCPNoCopyRcv
+command that is completed successfully, in order to return the receive
+buffers owned by the TCP driver. The RDS must be returned unmodified
+so that the TCP driver can correctly recover the appropriate receive buffers.
+
+48
+
+Chapter 4 / Transmission Control Protocol
+
+Result codes
+
+noErr
+
+no error
+
+invalidStreamPtr
+
+the specified TCP stream is not open
+
+connectionDoesntExist
+
+this TCP stream has no open connection
+
+invalidLength
+
+the RDS has 0 entries
+
+invalidBufPtr
+
+the RDS pointer was 0
+
+commandTimeout
+
+no data arrived within the specified timeout
+period
+
+connectionClosing
+
+all data on this connection has already been
+delivered
+
+connectionTerminated
+
+the connection was broken; the reason will be
+
+given in a terminate ASR
+
+TCPBirReturn
+Parameter block
+
+>
+
+26
+
+word
+
+csCode = TCPRevBfrReturn
+
+>
+
+28
+
+long
+
+stream pointer
+
+>
+
+42
+
+long
+
+RDS pointer
+
+>
+
+50
+
+long
+
+user data pointer
+
+TCPBfrReturn returns to the TCP driver a set of receive buffers that a
+successfully completed TCPNoCopyRcv command passed directly to the
+user. The RDS must be identical to the RDS given to the user when the
+TCPNoCopyRcv command is completed. TCPBfrReturn returns an error if
+you attempt to return a set of buffers more than once.
+Result codes
+
+noErr
+
+no error
+
+invalidStreamPtr
+
+the specified TCP stream is not open
+
+connectionDoesntExist
+
+this TCP stream has no open connection
+
+invalidBufPtr
+
+the RDS pointer was 0
+
+invalidRDS
+
+the RDS
+
+refers to receive buffers not owned
+
+by the user
+
+TCP
+
+routines
+
+49
+
+TCPRev
+Parameter block
+
+>
+
+26
+
+word
+
+csCode = TCPRcev
+
+>
+
+28
+
+long
+
+stream pointer
+
+>
+
+32
+
+byte
+
+command timeout in seconds
+
+-
+
+34
+
+byte
+
+mark flag
+
+<
+
+35
+
+byte
+
+urgent flag
+
+>
+
+36
+
+long
+
+receive buffer pointer
+
+o
+
+40
+
+word
+
+receive buffer length
+
+>
+
+48
+
+word
+
+reserved
+
+>
+
+50
+
+long
+
+user data pointer
+
+TCPRcv retrieves data that has been received on a connection. Data is
+copied out of the TCP internal buffers into the user’s buffer. The
+command is completed when
+m
+
+enough data has arrived to fill the receive buffer
+
+m
+
+pushed data arrives
+
+m™ urgent data is outstanding
+m
+
+areasonable period passes after the arrival of nonpushed, nonurgent
+data
+
+m
+
+the amount of data received is greater than or equal to 25 percent of the
+total receive buffering for this stream
+
+m
+
+the command timeout expires
+
+The command timeout period starts when the receive command is issued,
+not when the first byte of data arrives. If no data arrives within this
+command
+
+timeout period, the TCPRcv
+
+command
+
+is completed in error. If
+
+some data has arrived when the command timeout expires, the TCPRcv
+command is completed successfully. A command timeout of 0 means
+infinite; the TCPRcv command will not be completed until some data has
+arrived.
+If the Urgent flag is nonzero, the data returned by this command is the
+beginning of the outstanding urgent data. This flag is one of two
+mechanisms that puts you in urgent mode. The other mechanism is by
+means
+
+of an urgent ASR
+
+notification, which is used when there are no
+
+outstanding TCPNoCopyRcv
+
+or TCPRcev commands.
+
+If the Mark flag is nonzero, the data returned by this command ends the
+urgent data. Since TCP does not deliver urgent and nonurgent data
+together, the last byte of data in the receive buffer is the last byte of urgent
+data. The Mark flag is the only mechanism for taking you out of urgent
+mode.
+
+50
+
+Chapter 4 / Transmission Control Protocol
+
+The Urgent flag is set only on the first TCPNoCopyRcv or TCPRcev
+command that contains urgent data. The Mark flag is set only on the last
+TCPNoCopyRcv or TCPRcv command that contains urgent data. For
+example, if three TCPNoCopyRcv or TCPRcv commands are required to
+deliver all urgent data, the settings of the Urgent and Mark flags will be as
+follows:
+Urgent flag
+
+Mark flag
+
+First TCPNoCopyRcv/TCPRev command
+
+1
+
+0
+
+Second TCPNoCopyRcev/TCPRev command
+
+0
+
+0
+
+Third TCPNoCopyRev/TCPRev command
+
+0
+
+1
+
+Both the Urgent flag and the Mark flag can be set in a single
+TCPNoCopyRcv or TCPRcev command if all outstanding urgent data can be
+delivered in a single command.
+The amount of data actually received is found in the receive buffer length
+field.
+If the TCPRcev
+
+command
+
+is completed in error, the receive buffer length 1s
+
+not modified by TCP, but no data is returned.
+
+Result codes
+
+noErr
+
+no error
+
+invalidStreamPtr
+
+the specified TCP stream is not open
+
+invalidLength
+
+the receive buffer length was 0
+
+invalidBufPtr
+
+the receive buffer pointer was 0
+
+commandTimeout
+
+no data arrived within the specified timeout
+period
+
+connectionDoesntExist
+
+this TCP stream has no open connection
+
+connectionClosing
+
+all data on this connection has already been
+delivered
+
+connectionTerminated
+
+the connection was broken; the reason will be
+
+given in a terminate ASR
+
+TCP
+
+routines
+
+51
+
+TCPClose
+Parameter block
+
+>
+
+26
+
+word
+
+csCode = TCPClose
+
+>
+
+28
+
+long
+
+stream pointer
+
+>
+
+32
+
+byte
+
+ULP timeout value in seconds
+
+>
+
+33
+
+byte
+
+ULP
+
+timeout action; 0 = report,
+
+nonzero = abort
+>
+
+34
+
+byte
+
+validity bits
+
+>
+
+35
+
+long
+
+user data pointer
+
+TCPClose signals that the user has no more data to send on the connection.
+It does not mean that the connection should be broken. The remote TCP
+must also issue a close before the connection can be gracefully closed, so a
+connection may remain an arbitrary amount of time after you have issued a
+TCPClose. To break a connection without ensuring that all data has been
+sent and acknowledged,
+
+use the TCPAbort
+
+command.
+
+(See the section
+
+“Connection Closing” earlier in this chapter.)
+The command is completed when the FIN flag has been sent and
+acknowledged. If the FIN is not acknowledged within the ULP timeout
+period, the ULP timeout action is taken. If the ULP action is abort, the
+connection is broken,
+
+all pending commands
+
+notification is given. If the ULP
+
+are returned, and a terminate
+
+action is report,
+
+a ULP timeout notification
+
+iS given.
+Several fields in the TCPPassiveOpen command are optional. To indicate
+whether the user is including these optional parameters, a set of validity bits
+is defined as follows:
+
+Result codes
+
+bit 6
+
+ULP timeout action parameter is valid
+
+bit 7
+
+ULP timeout value parameter is valid
+
+noErr
+
+no error
+
+invalidStreamPtr
+
+the specified TCP stream is not open
+
+connectionDoesntExist
+
+this TCP stream has no open connection
+
+connectionClosing
+
+one TCPClose command was already issued
+for this connection
+
+connectionTerminated
+
+the connection was broken; the reason will be
+
+given in a terminate ASR
+
+52
+
+Chapter 4 / Transmission Control Protocol
+
+TCPAbort
+Parameter block
+
+-
+
+26
+
+word
+
+csCode = TCPAbort
+
+>
+
+28
+
+long
+
+stream pointer
+
+>
+
+32
+
+long
+
+user data pointer
+
+TCPAbort terminates the connection without attempting to send all
+outstanding data or to deliver all received data. TCPAbort returns the TCP
+stream to its initial state. You are also given a terminate notification.
+Result codes
+
+noErr
+
+no error
+
+invalidStreamPtr
+
+the specified TCP stream is not open
+
+connectionDoesntExist
+
+this TCP stream has no open connection
+
+TCP
+
+routines
+
+8
+
+TT
+
+Parameter block
+
+Ld
+
+TCPStatus
+26
+
+word
+
+csCode = TCPStatus
+
+28
+
+long
+
+stream pointer
+
+32
+
+byte
+
+ULP timeout value in seconds
+
+33
+
+byte
+
+ULP
+
+timeout action; 0 = report,
+
+,T
+
+TTT
+
+tT
+
+tt
+
+tT tT tT TT
+
+TT
+
+TT
+
+TT
+
+TF
+
+nonzero
+
+38
+42
+44
+48
+50
+51
+52
+54
+56
+58
+60
+62
+66
+70
+74
+78
+82
+86
+90
+94
+98
+
+= abort
+
+long
+
+remote IP address
+
+word
+
+remote TCP port
+
+long
+
+localIP address
+
+word
+
+local TCP port
+
+byte
+
+type of service
+
+byte
+
+precedence
+
+byte
+
+TCP connection state
+
+word
+
+send window
+
+word
+
+receive window
+
+word
+
+amount
+of unacknowledged
+
+word
+
+amount of unread data
+
+long
+
+security option pointer
+
+long
+
+send unacknowledged
+
+long
+
+send next
+
+long
+
+congestion
+
+long
+
+receive next
+
+long
+
+smoothed round-trip time in milliseconds
+
+long
+
+last round-trip time in milliseconds
+
+long
+
+maximum segment size that can be sent
+
+long
+
+pointer to statistics block
+
+long
+
+user data pointer
+
+data
+
+window
+
+TCPStatus allows you to extract information from TCP regarding a
+particular connection.
+See the TCPPassiveOpen command for a description of the usual open
+parameters (bytes 32-51).
+The TCP connection state has the following values:
+
+54
+
+0
+
+Closed
+
+no connection exists on this stream
+
+2
+
+Listen
+
+listening for an incoming connection
+
+Chapter 4 / Transmission Control Protocol
+
+4
+
+SYN received
+
+incoming connection is being established
+
+6
+
+SYN sent
+
+outgoing connection is being established
+
+8
+
+Established
+
+connection is up
+
+10
+
+FIN Wait 1
+
+connection is up; close has been issued
+
+12
+
+FIN Wait 2
+
+connection is up; close has been completed
+
+14
+
+Close Wait
+
+connection is up; close has been received
+
+16
+
+Closing
+
+connection is up; close has been issued and
+received
+
+18
+
+Last Ack
+
+connection is up; close has been issued and
+received
+
+20
+
+Time Wait
+
+connection is being broken
+
+The send window is the amount of data the remote TCP is currently willing
+to accept from the local TCP. The receive window is the amount of data the
+local TCP is currently willing to accept from the remote TCP.
+The statistics block has the following structure:
+0
+
+long
+
+number of data segments received
+
+4
+
+long
+
+number of data segments sent
+
+8
+
+long
+
+number of data segments retransmitted
+
+12
+
+long
+
+number of data bytes received
+
+16
+
+long
+
+number of duplicate data bytes received
+
+20
+
+long
+
+number of data bytes received beyond receive
+window
+
+24
+
+long
+
+number of data bytes sent
+
+28
+
+long
+
+number of data bytes retransmitted
+
+32
+
+struct
+
+size histogram of sent segments
+
+The histogram is a variable-length structure of the following format:
+0
+
+word
+
+number of size buckets
+
+2
+
+word
+
+value: smallest segment size
+
+4
+
+long
+
+counter number: number of segments sent
+between this size and the next larger size
+
+8
+
+word
+
+value: second smallest segment size
+
+10
+
+long
+
+counter number: number of segments sent
+between this size and the next larger size
+
+TCP
+
+routines
+
+5
+
+You are free to update the statistics block. Only the counters in the
+segment-size histogram should be modified. The number of size buckets
+and the segment-size value for each bucket cannot be changed.
+Result codes
+
+noErr
+
+no error
+
+invalidStreamPtr
+
+the specified TCP stream is not open
+
+connectionDoesntExist
+
+this TCP stream has no open connection
+
+-
+
+26
+
+word
+
+csCode = TCPRelease
+
+>
+
+28
+
+long
+
+stream pointer
+
+-
+
+32
+
+long
+
+pointer to receive buffer area
+
+—
+
+36
+
+long
+
+length of receive buffer area
+
+>
+
+44
+
+long
+
+user data pointer
+
+TCPRelease
+Parameter block
+
+TCPRelease closes a TCP stream. If there is an open connection on the
+stream, the connection is first broken as though a TCPAbort command had
+been issued.
+The receive buffer area passed to the MacTCP driver in the TCPCreate call
+is returned to the user. You are now free to reuse or release this buffer area.
+Result codes
+
+56
+
+noErr
+
+no error
+
+invalidStreamPtr
+
+the specified TCP stream is not open
+
+Chapter 4 / Transmission Control Protocol
+
+TCPGloballnfo
+Parameter block
+
+>
+
+26
+
+word
+
+csCode = TCPGlobalInfo
+
+-
+
+32
+
+long
+
+pointer to TCP parameters
+
+—
+
+36
+
+long
+
+pointer to TCP statistics
+
+—
+
+40
+
+long
+
+pointer to CDB table
+
+>
+
+44
+
+long
+
+user data pointer
+
+The TCPGlobalInfo command allows you access to
+m™ parameters that affect the operation of TCP
+m
+
+global statistics collected by TCP
+
+You should not modify the TCP parameters. The structure has the
+following format:
+0
+
+long
+
+pointer to Pascal string describing retransmission
+timeout algorithm
+
+4
+
+long
+
+minimum value of retransmission timeout (in
+milliseconds)
+
+8
+
+long
+
+maximum value of retransmission timeout (in
+milliseconds)
+
+12
+
+long
+
+maximum segment size this TCP can receive
+
+16
+
+long
+
+maximum number of streams the MacTCP
+support
+
+20
+
+long
+
+maximum value of receive window the MacTCP driver
+can offer
+
+driver can
+
+The TCP statistics are the sum of traffic information for all streams that
+have been opened since system startup time. The counters will wrap around
+to 0 when incremented past their maximum value. You can modify these
+statistics.
+The TCP statistics structure has the following format:
+0
+
+long
+
+number of outgoing connections attempted
+
+4
+
+long
+
+number of outgoing connections
+
+8
+
+long
+
+number of incoming connections accepted
+
+12
+
+long
+
+number of connections that closed gracefully
+
+16
+
+long
+
+number of connections that were aborted
+
+20
+
+long
+
+number of data bytes received
+
+24
+
+long
+
+number of data bytes sent
+
+28
+
+long
+
+number of duplicate data bytes received
+
+opened
+
+TCP
+
+routines
+
+57
+
+Result codes
+
+58
+
+32
+
+long
+
+number of data bytes retransmitted
+
+36
+
+long
+
+total number of segments received (includes
+acknowledgments)
+
+40
+
+long
+
+total number of segments sent (includes
+acknowledgments)
+
+44
+
+long
+
+number of segments received that contained all
+duplicate data
+
+48
+
+long
+
+number of segments retransmitted
+
+noErr
+
+no
+
+error
+
+Chapter 4 / Transmission Control Protocol
+
+C parameter-block definitions
+The following C type definitions are used with parameter-block Device
+Manager calls to TCP:
+#define
+
+TCPCreate
+
+30
+
+#define
+
+TCPPassiveOpen
+
+31
+
+#define
+
+TCPActiveOpen
+
+32
+
+#define
+
+TCPSend
+
+34
+
+#define
+
+TCPNoCopyRcv
+
+35
+
+#define
+
+TCPRcevBfrReturn
+
+36
+
+#define
+
+TCPRcv
+
+37
+
+#define
+
+TCPClose
+
+38
+
+#define
+
+TCPAbort
+
+39
+
+#define
+
+TCPStatus
+
+40
+
+#define
+
+TCPExtendedStat
+
+41
+
+#define
+
+TCPRelease
+
+42
+
+#define
+
+TCPGlobaliInfo
+
+43
+
+typedef
+
+enum
+
+TCPEventCode
+
+TCPClosing
+
+=
+
+{
+
+1,
+
+TCPULPTimeout,
+TCPTerminate,
+TCPDataArrival,
+TCPUrgent,
+
+TCPICMPReceived,
+lastEvent
+}
+
+=
+
+32767
+
+TCPEventCode;
+
+typedef
+
+enum
+
+TCPTerminationReason
+
+TCPRemoteAbort
+
+=
+
+{
+
+2,
+
+TCPNetworkFailure,
+TCPSecPrecMismatch,
+TCPULPTimeoutTerminate,
+TCPULPAbort,
+TCPULPClose,
+
+TCPServiceError,
+lastReason
+}
+
+=
+
+32767
+
+TCPTerminationReason;
+
+typedef
+
+pascal
+
+void
+
+(*TCPNotifyProc)
+
+StreamPtr
+
+tcpStream,
+
+unsigned
+
+short
+
+Ptr
+
+(
+
+eventCode,
+
+userDataPtr,
+
+unsigned
+struct
+
+short
+
+terminReason,
+
+ICMPReport
+
+*icmpMsg) ;
+
+Continued on following page >
+
+C parameter-block definitions
+
+5%
+
+typedef
+
+void
+
+(*TCPIOCompletionProc)
+
+(struct
+
+TCPiopb
+
+*iopb);
+
+typedef
+
+unsigned
+
+short
+
+typedef
+
+unsigned
+
+char
+
+enum
+
+/*
+
+{
+
+tcp_port;
+byte;
+
+ValidityFlags
+
+timeoutValue
+
+=
+
+*/
+
+0x80,
+Ox40,
+
+timeoutAction
+
+typeOfService
+
+=
+
+precedence
+
+0x10
+
+=
+
+0x20,
+
+bi
+enum
+
+{
+
+/*
+
+TOSFlags
+
+lowDelay
+
+=
+
+*/
+
+0x01,
+
+throughPut
+
+=
+
+reliability
+
+0x02,
+=
+
+0x04
+
+bi
+typedef
+Ptr
+
+struct
+
+TCPCreatePB
+
+{
+
+rcevBuff;
+
+unsigned
+
+long
+
+rcvBuffLen;
+
+TCPNotifyProc
+
+notifyProc;
+
+Ptr
+
+userDataPtr;
+
+}TCPCreatePB;
+
+The following parameter block is used with the TCPPassiveOpen and
+TCPActiveOpen commands:
+typedef
+
+struct
+
+byte
+
+TCPOpenPB
+
+byte
+
+ulpTimeoutAction;
+
+byte
+
+validityFlags;
+
+byte
+
+commandTimeoutValue;
+
+ip_addr
+tcp_port
+
+ip_addr
+tcp_port
+
+remoteHost;
+remotePort;
+
+localHost;
+localPort;
+
+byte
+
+tosFlags;
+
+byte
+
+precedence;
+
+Boolean
+
+dontFrag;
+
+byte
+
+timeToLive;
+
+byte
+
+security;
+
+byte
+
+optionCnt;
+
+byte
+
+options[40];
+
+Ptr
+
+userDataPtr;
+
+} TCPOpenPB;
+
+60
+
+{
+
+ulpTimeoutValue;
+
+Chapter 4 / Transmission Control Protocol
+
+typedef
+
+struct
+
+byte
+
+TCPSendPB
+
+{
+
+ulpTimeoutValue;
+
+byte
+
+ulpTimeoutAction;
+
+byte
+
+validityFlags;
+
+Boolean
+
+pushFlag;
+
+Boolean
+
+urgentFlag;
+
+Ptr
+
+wdsPtr;
+
+unsigned
+
+long
+
+unsigned
+
+short
+
+Ptr
+
+sendFree;
+sendLength;
+
+userDataPtr;
+
+}TCPSendPB;
+
+The following parameter block is used with the TCPRcv, TCPBfrReturn,
+and TCPNoCopyRcv commands:
+typedef
+
+struct
+
+TCPReceivePB
+
+{
+
+byte
+
+commandTimeoutValue;
+
+byte
+
+filler;
+
+Boolean
+
+markFlag;
+
+Boolean
+
+urgentFlag;
+
+Ptr
+
+rcevBuff;
+
+unsigned
+Ptr
+
+short
+
+rcvBuffLen;
+
+rdsPtr;
+
+unsigned
+
+short
+
+rdsLength;
+
+unsigned
+
+short
+
+secondTimeStamp;
+
+Ptr
+
+userDataPtr;
+
+}TCPReceivePB;
+typedef
+
+struct
+
+byte
+
+TCPClosePB
+
+byte
+
+ulpTimeoutAction;
+
+byte
+
+validityFlags;
+
+Ptr
+
+{
+
+ulpTimeoutValue;
+
+userDataPtr;
+
+} TCPClosePB;
+
+typedef
+
+struct
+
+HistoBucket
+
+unsigned
+
+short
+
+value;
+
+unsigned
+
+long
+
+counter;
+
+{
+
+bi
+#define
+
+NumOfHistoBuckets
+
+7
+
+Continued on following page >
+
+C parameter-block definitions
+
+61
+
+typedef
+
+struct
+
+TCPConnectionStats
+
+{
+
+unsigned
+
+long
+
+dataPktsRcvd;
+
+unsigned
+
+long
+
+dataPktsSent;
+
+unsigned
+
+long
+
+dataPktsResent;
+
+unsigned
+
+long
+
+bytesRcvd;
+
+unsigned
+
+long
+
+bytesRcvdDup;
+
+unsigned
+
+long
+
+bytesRcvdPastWindow;
+
+unsigned
+
+long
+
+bytesSent;
+
+unsigned
+
+long
+
+bytesResent;
+
+unsigned
+
+short
+
+struct
+
+numHistoBuckets;
+
+HistoBucket
+
+sentSizeHisto[NumOfHistoBuckets];
+
+unsigned
+
+short
+
+lastRTT;
+
+unsigned
+
+short
+
+tmrSRTT;
+
+unsigned
+
+short
+
+rttVariance;
+
+unsigned
+
+short
+
+tmrRTO;
+
+byte
+
+sendTries;
+
+byte
+
+sourchQuenchRevd;
+
+}TCPConnectionStats;
+typedef
+
+struct
+
+TCPStatusPB
+
+byte
+
+ulpTimeoutValue;
+
+byte
+
+ulpTimeoutAction;
+
+long
+
+unused;
+
+ip_addr
+tcp_port
+
+ip_addr
+tcp_port
+
+remoteHost;
+remotePort;
+
+localHost;
+localPort;
+
+byte
+
+tosFlags;
+
+byte
+
+precedence;
+
+byte
+
+connectionState;
+
+unsigned
+
+short
+
+sendWindow;
+
+unsigned
+
+short
+
+rcvWindow;
+
+unsigned
+
+short
+
+amtUnackedData;
+
+unsigned
+
+short
+
+amtUnreadData;
+
+Ptr
+
+securitylLevelPtr;
+
+unsigned
+
+long
+
+sendUnacked;
+
+unsigned
+
+long
+
+sendNext;
+
+unsigned
+
+long
+
+congestionWindow;
+
+unsigned
+
+long
+
+rcvNext;
+
+unsigned
+
+long
+
+srtt;
+
+unsigned
+
+long
+
+lastRTT;
+
+long
+
+sendMaxSegSize;
+
+unsigned
+struct
+Ptr
+
+TCPConnectionStats
+
+userDataPtr;
+
+}TCPStatusPB;
+
+62
+
+{
+
+Chapter 4 / Transmission Control Protocol
+
+*connStatPtr;
+
+typedef
+
+struct
+
+Ptr
+
+TCPAbortPB
+
+{
+
+userDataPtr;
+
+} TCPAbortPB;
+typedef
+
+struct
+
+TCPParam
+
+{
+
+unsigned
+
+long
+
+tcpRtoA;
+
+unsigned
+
+long
+
+tcpRtoMin;
+
+unsigned
+
+long
+
+tcpRtoMax;
+
+unsigned
+
+long
+
+tcpMaxSegSize;
+
+unsigned
+
+long
+
+tcpMaxConn;
+
+unsigned
+
+long
+
+tcpMaxWindow;
+
+}TCPParam;
+
+typedef
+
+struct
+
+TCPStats
+
+{
+
+unsigned
+
+long
+
+tcpConnAttempts;
+
+unsigned
+
+long
+
+tcpConnOpened;
+
+unsigned
+
+long
+
+tcpConnAccepted;
+
+unsigned
+
+long
+
+tcpConnClosed;
+
+unsigned
+
+long
+
+tcpConnAborted;
+
+unsigned
+
+long
+
+tcpOctetsIn;
+
+unsigned
+
+long
+
+tcpOctetsOut;
+
+unsigned
+
+long
+
+tcpOctetsInDup;
+
+unsigned
+
+long
+
+tcpOctetsRetrans;
+
+unsigned
+
+long
+
+tcpInputPkts;
+
+unsigned
+
+long
+
+tcpOutputPkts;
+
+unsigned
+
+long
+
+tcpDupPkts;
+
+unsigned
+
+long
+
+tcpRetransPkts;
+
+}TCPStats;
+
+typedef
+
+struct
+
+TCPGlobalInfoPB
+
+{
+
+struct
+
+TCPParam
+
+*tcpParamPtr;
+
+struct
+
+TCPStats
+
+*tcpStatsPtr;
+
+StreamPtr
+Ptr
+
+*tcpCDBTable[];
+
+userDataPtr;
+
+unsigned
+
+short
+
+maxTCPConnections;
+
+}TCPGlobalInfoPB;
+
+Continued on following page >
+
+C parameter-block definitions
+
+6
+
+typedef
+
+struct
+
+TCPiopb
+
+{
+
+char
+
+f£i1112[12];
+
+TCPLIOCompletionProc
+
+ioCompletion;
+
+short
+
+1oResult;
+
+char
+
+*i1oNamePtr;
+
+short
+
+ioVRefNum;
+
+short
+
+ioCRefNum;
+
+short
+
+csCode;
+
+StreamPtr
+union
+
+tcpstream;
+
+{
+
+struct
+
+TCPCreatePB
+
+TCPOpenPB
+
+struct
+
+TCPSendPB
+
+send;
+
+struct
+
+TCPReceivePB
+
+receive;
+
+struct
+
+TCPClosePB
+
+close;
+
+struct
+
+TCPAbortPB
+
+abort;
+
+struct
+
+TCPStatusPB
+
+status;
+
+struct
+
+TCPGlobaliInfoPB
+
+globaliInfo;
+
+}
+
+csParam;
+
+}TCPiopb;
+
+64
+
+create;
+
+struct
+
+Chapter 4 / Transmission Control Protocol
+
+open;
+
+Name-to-Address Resolution
+
+Textual names are resolved to IP addresses using internal caches and the
+domain name server. The AddressXlation interface accomplishes this task
+by searching an internal table originally derived from the static file Hosts,
+making queries to domain name servers, and finding information in the
+internal cache of domain name server responses.
+
+The AddressxXlation.h header file
+The AddressXlation.h interface supports the domain name resolver (DNR)
+function using the procedure calls listed in Table 5-1 and described in the
+following sections.
+Table 5-1
+
+AddressXlation.h routines
+
+Routine
+
+Function
+
+OpenResolver
+
+Opens the resolver and allocates internal resources
+
+StrToAddr
+
+Converts an ASCII text string to the corresponding IP
+
+AddrToStr
+
+Converts an IP address into its text dotted decimal
+notation (W.X.Y.Z)
+
+EnumCache
+
+Enumerates all the name-to-address mappings cached by
+the resolver
+
+AddrToName
+
+Converts an IP address to its corresponding textual name
+
+HInfo
+
+Returns details about the system whose name is being
+queried
+
+MXInfo
+CloseResolver
+
+66
+
+address
+
+using the resolver
+
+Returns mail box information for the system whose name
+
+is being queried
+
+Closes the resolver and deallocates internal resources
+
+Chapter 5 / Name-to-Address Resolution
+
+The OpenResolver call
+extern
+
+OSErr
+
+OpenResolver(char
+
+*fileName);
+
+The OpenResolver call must be made before any resolver queries are
+attempted. The full pathname of the default Hosts file must be passed in the
+fileName
+
+field. If the value NIL is passed, the resolver uses the filename
+
+Hosts in the default startup folder, which is typically the System Folder.
+The Hosts file is used to load the internal cache with name-to-address
+mappings and domain name server values. The syntax of this file is
+outlined on page 33 of Request for Comments (RFC) 1035.
+Result codes
+
+Resource Manager error result codes may be returned.
+
+The AddressXlation.h header file
+
+67
+
+The StrToAddr call
+#define
+
+NUM_ALT_ADDRS
+
+typedef
+
+struct
+
+int
+
+4
+
+hostInfo
+
+{
+
+rtnCode;
+
+char
+
+cname[255];
+
+unsigned
+
+long
+
+addr[NUM_ALT_ADDRS]j;
+
+bi
+typedef
+
+pascal
+
+struct
+char
+extern
+
+struct
+
+*hostInfoPtr,
+
+StrToAddr (
+
+*hostName,
+hostInfo
+
+ResultProcPtr
+char
+
+(*ResultProcPtr) (
+
+*userDataPtr);
+
+OSErr
+
+char
+
+void
+
+hostInfo
+
+*hostInfoPtr,
+ResultProc,
+
+*userDataPtr);
+
+The hostInfo
+record is passed into the address translation routine in the
+StrToAddr call. The rtnCode indicates whether the result fields are valid
+for this call; a value of noErr
+
+indicates that the call was successful. The
+
+cname is the official name of the hostName that was specified. The addr
+array is a list of addresses for the host Name that was specified. Multiple
+addresses are returned for hosts that are multihomed.
+StrToAddr takes a string in one of two forms and translates it into a 32-bit
+IP address. The string can be in IP dot notation (that 1s, W.X.Y.Z) or in a
+valid domain name syntax. The translated address is returned immediately
+if the passed in host is in IP dot notation or if the matching address is
+contained in the local cache. If the address is not contained in the local
+cache, the rtnCode is cacheFault and the domain name server is
+contacted to resolve the address. When the response has been returned from
+the domain name server or the domain name query has not been
+successfully completed, the ResultProc 1s called with the appropriate
+rtnCode and return information. The St rToAddr procedure can be called
+with
+
+a userDataPtr,
+
+which is user-defined and not modified by the
+
+resolver. The userDataPtr 1s returned when the ResultProc is called.
+Domain names that contain no domain name delimiters, that is, no dots (.),
+
+are terminated with the domain name suffix specified for the default
+domain name server in the Control Panel. They are terminated with a dot if
+no default is specified.
+
+68
+
+Chapter 5 / Name-to-Address Resolution
+
+Result codes
+
+nameSyntaxErr
+
+the hostName
+
+field had a syntax error
+
+cacheFault
+
+the name specified cannot be found in the
+cache
+
+noResultProc
+
+no result procedure is passed to the address
+translation call when the resolver must be usec
+to find the address
+
+noNameServer
+
+no name server can be found for the specified
+name string
+
+authNameErr
+
+this domain name
+
+noAnsErr
+
+none of the known name
+
+does not exist
+servers are
+
+responding
+dnrErr
+
+the domain name
+
+outOfMemory
+
+not enough memory is available to issue the
+needed domain name resolver (DNR) query
+or to build the DNR cache
+
+notOpenErr
+
+the driver isn’t open
+
+server has returned an error
+
+The AddrToStr call
+extern
+
+OSErr
+
+AddrToStr(unsigned
+
+long
+
+addr,
+
+char
+
+*addrStr)j;
+
+The AddrToStr call takes an IP address and returns a string with the ASCII
+equivalent of the form W.X.Y.Z where W, X, Y, and Z are decimal numbers.
+
+The application must provide the storage for the return string. The string
+can have a maximum length of 16 bytes.
+Result codes
+
+notOpenErr
+
+the driver isn’t open
+
+The AddressXlation.h header file
+
+©
+
+The EnumCache call
+typedef
+
+enum
+
+A=
+
+AddrClasses
+
+{
+
+1,
+
+NS,
+
+Sy
+
+CNAME
+HINFO
+
+MX
+
+=
+
+13,
+
+15,
+
+lastClass
+
+=
+
+32767
+
+s}AddrClasses;
+
+typedef
+
+struct
+
+char
+
+cacheEntryRecord
+
+unsigned
+
+short
+
+type;
+
+unsigned
+
+short
+
+cacheClass;
+
+unsigned
+
+long
+
+union
+
+ttl;
+
+{
+char
+
+*name;
+
+ip_addr
+}
+
+{
+
+*cname;
+
+*addr;
+
+rdata;
+
+bi
+typedef
+
+pascal
+
+struct
+char
+extern
+
+void
+
+(*EnumResultProcPtr) (
+
+cacheEntryRecord
+*userDataPtr);
+
+OSErr
+
+EnumCache (
+
+EnumResultProcPtr
+char
+
+*cacheEntryRecordPtr,
+
+enumResultProc,
+
+*userDataPtr);
+
+If the application wants to enumerate all the entries in the cache, the
+EnumCache procedure should be called. This procedure returns no errors
+and has completed enumerating the cache when it returns. For every entry
+in the cache, enumResultProc 1s called with a pointer to a cache entry.
+The fields and values returned in the CacheEnt ryRecord
+
+are as follows:
+
+name
+
+The name of the entry.
+
+type
+
+The type of the entry, where
+—A (value = 1) is an address. The value of rdata is an
+addr.
+
+—WNS (value = 2) is a name server. The value of rdata
+is aname.
+
+—CNAME (value = 5) 1s an alias for the canonical
+name (cname) found in the rdata field.
+cacheClass
+
+70
+
+The class of the entry. The only class allowed is IN
+(value 1).
+
+Chapter 5 / Name-to-Address Resolution
+
+Result codes
+
+ttl
+
+The time that the entry has to live in the cache relative
+to the current time (GetCurrent).
+
+rdata
+
+The rdata field as determined by the type of entry
+specified in the type field.
+
+notOpenErr
+
+the driver isn’t open
+
+The AddressXlation.h header file
+
+71
+
+The AddrToName call
+extern
+
+OSErr
+
+AddrToName (
+
+ip_addr
+
+addr,
+
+struct
+
+hostInfo
+
+ResultProcPtr
+char
+
+*hostInfoPtr,
+ResultProc,
+
+*userDataPtr);
+
+The AddrToName call is used to acquire the canonical name of a host
+given its IP address. The domain name server is queried using an IN-ADDR
+query. The application passes to the AddrToName call the IP address of the
+host in question, a pointer to a host Info record, the result procedure to be
+notified with the result, and an optional user data pointer. The
+
+AddrToName call always returns immediately with the return code
+cacheFault or the return code noNameServer if no name server can be
+found in the internal name server lists that can resolve the DNR query. The
+passed-in result procedure is called with the appropriate result code. If the
+result code is noErr, the cname
+
+field contains the canonical name for the
+
+IP address passed to the AddrToName call.
+Result codes
+
+cacheFault
+
+the name specified cannot be found in the
+cache
+
+noNameServer
+
+no name server can be found for the specified
+name string
+
+authNameErr
+
+this domain name
+
+noAnsErr
+
+does not exist
+
+none of the known name
+
+servers are
+
+responding
+
+72
+
+dnrErr
+
+the domain name
+
+outOfMemory
+
+not enough memory is available to issue the
+needed DNR query or to build the DNR cache
+
+notOpenErr
+
+the driver isn’t open
+
+Chapter 5 / Name-to-Address Resolution
+
+server has returned an error
+
+The Hinfo call
+typedef
+
+struct
+
+HinfoRec
+
+char
+
+cpuType[30];
+
+char
+
+osType[30];
+
+{
+
+bi
+typedef
+
+struct
+
+int
+
+returnRec
+
+char
+
+cname[255];
+
+union
+
+{
+unsigned
+
+}
+
+{
+
+rtnCode;
+
+long
+
+addr [NUM_ALT_ADDRS];
+
+struct
+
+HInfoRec
+
+struct
+
+MxXRec
+
+hinfo;
+
+mx;
+
+rdata;
+
+bi
+typedef
+
+pascal
+
+struct
+char
+extern
+
+(*ResultProc2Ptr) (
+
+returnRec
+
+*returnRecPtr,
+
+*userDataPtr);
+
+OSErr
+char
+
+void
+
+HInfo (
+
+*hostName,
+
+struct
+
+returnRec
+
+ResultProc2Ptr
+char
+
+*returnRecPtr,
+resultProc,
+
+*userDataPtr);
+
+The HInfo call returns details about the system whose name is being
+queried. The call returns two strings, cpuType
+
+and osType, that specify in
+
+ASCII the values of the CPU and operating system type.
+The HInfo call follows the calling conventions for queries described in the
+section “DNR Operation” later in this chapter.
+Result codes
+
+nameSyntaxErr
+
+the hostName field has a syntax error
+
+noNameServer
+
+no name server can be found for the specified
+name string
+
+noAnsErr
+
+none of the known name
+
+servers are
+
+responding
+dnrErr
+
+the domain name
+
+server has returned an error
+
+outOfMemory
+
+not enough memory is available to issue the
+needed DNR query or to build the DNR cache
+
+notOpenErr
+
+the driver isn’t open
+
+The AddressXlation.h header file
+
+7
+
+The MXInfo call
+typedef
+
+struct
+
+unsigned
+char
+
+MXRec
+
+{
+
+short
+
+preference;
+
+exchange[255];
+
+hi
+typedef
+
+struct
+
+int
+
+returnRec
+
+char
+
+cname[255];
+
+union
+
+{
+unsigned
+
+}
+
+{
+
+rtnCode;
+
+long
+
+addr [NUM_ALT_ADDRS];
+
+struct
+
+HInfoRec
+
+struct
+
+MxXRec
+
+hinfo;
+
+mx;
+
+rdata;
+
+bi
+typedef
+
+pascal
+
+struct
+char
+
+extern
+
+void
+
+(*ResultProc2Ptr) (
+
+returnRec
+
+*returnRecPtr,
+
+*userDataPtr);
+
+OSerr
+
+MXInfo
+
+(char
+
+*hostName,
+
+struct
+
+returnRec
+
+ResultProc2Ptr
+char
+
+*returnRecPtr,
+resultProc,
+
+*userDataPtr);
+
+The MXInfo call returns mail box information for the system whose name
+is being queried. The call returns two values:
+m
+
+preference, an unsigned integer specifying the preference that is given to
+the returned system name
+
+m
+
+exchange, the domain name for the system that is receiving mail for the
+specified host
+
+The MXInfo call follows the calling conventions for queries described in
+the section “DNR Operation” later in this chapter.
+Result codes
+
+nameSyntaxErr
+
+the hostName field has a syntax error
+
+noNameServer
+
+no name server can be found for the specified
+name string
+
+noAnsErr
+
+none of the known name
+
+servers are
+
+responding
+
+74
+
+dnrErr
+
+the domain name
+
+outOfMemory
+
+not enough memory is available to issue the
+needed domain name resolver (DNR) query
+or to build the DNR cache
+
+notOpenErr
+
+the driver isn’t open
+
+Chapter 5 / Name-to-Address Resolution
+
+server has returned an error
+
+The CloseResolver call
+extern
+
+OSerr
+
+CloseResolver
+
+();
+
+Before the application exits, the CloseResolver call must be made to release
+memory structures and terminate all outstanding domain name server calls.
+CloseResolver must not be called until all outstanding resolver calls have
+been completed.
+Result codes
+
+notOpenErr
+
+the driver isn’t open
+
+Binding the DNR to the application
+The domain name resolver (DNR) in the MacTCP driver is implemented as
+a code resource in the MacTCP driver file.
+A file called DNR.c in the Libraries Folder of the MacTCP release disk
+provides a working example of how to open the DNR. Compile and link
+this file to your application. MPW version 3.2 produces a file called DNR.o
+in the Libraries Folder of the MacTCP release disk that provides procedural
+access to the DNR. Sources have also been provided if you need to port the
+functionality to another development system.
+To use the DNR, the application must first find the procedure pointers that
+are part of the DNR resource. In Macintosh system software version 6.0.x,
+the DNR
+
+resource, named dnrp, is attached to the driver file, which is in the
+
+System Folder of the startup disk. The driver file is of type cdev, creator
+ztcp. In Macintosh system software version 7.0, the driver file is in the
+Control Panels folder (see the chapter “The Finder Interface” in Inside
+Macintosh, Volume VI). The resource can be opened using the Resource
+Manager routines in the Toolbox.
+Once the resource is opened, the first long word of the resource is a pointer
+to a procedure that jumps to the correct DNR procedure. You should make
+calls to this procedure using the procedure index value as the first
+argument of the call, followed by the arguments for the procedure as they
+are specified in the AddressXlation.h interface. The procedure assignments
+are as follows:
+OpenResolver
+
+1
+
+CloseResolver
+
+2
+
+StrToAddr
+
+3
+
+AddrToStr
+
+4
+
+EnumCache
+
+5
+
+AddrToName
+
+6
+
+Binding the DNR to the application
+
+7%
+
+HInfo
+
+7
+
+MXInfo
+
+oe)
+
+DNR operation
+This section describes how the domain name server (DNS) list is used when
+making DNS queries.
+If a default name extension and server are identified in the Control Panel,
+
+they are used for all nonqualified requests. For example, if the name homer
+is passed to the DNR and the default extension is pundit .edu, the name
+homer.pundit.edu is used in the query; however, if the name
+homer.drama.pundit.edu
+
+is passed to the DNR, the extension is not
+
+appended.
+The extension of the name passed to the DNR determines which name
+servers are chosen. Servers that match the full extension are found first,
+followed by servers that serve the ancestor of the full extension (for
+example, for the name homer.drama.pundit.edu,
+
+the server that serves
+
+drama.pundit.edu would be found first followed by the server that serves
+pundit .edu). If no servers are found, the default server is used. If you did
+not set a default, the DNR
+
+returns noNameServer.
+
+In the MacTCP
+
+Control
+
+Panel, you should enter a default domain and select the Default button.
+Once a list of servers that support the domain is found, those servers are
+queried in the order of their distance from the querying host. First servers
+on the local network are queried, followed by servers on other networks.
+
+When you use the AddrToName query, you must select a default server.
+
+76
+
+Chapter 5 / Name-to-Address Resolution
+
+6
+
+Miscellaneous Interfaces
+
+This chapter describes types that are found throughout the programmatic
+interfaces supplied with the MacTCP driver.
+
+MacTCPCommontypes
+This file defines result code name-to-number mapping, Internet Control
+Message Protocol (ICMP) message report structures, and other
+miscellaneous types throughout the MacTCP driver.
+
+Result codes
+The result codes in MacTCPCommontypes
+
+are described as follows.
+
+Chapters 3, 4, and 5 contain specific occurrences of the result codes
+described in this section.
+#define
+
+inProgress
+
+1
+
+When an IOPB is still
+
+pending, ioResult is set
+to inProgress.
+
+#define
+
+ipBadLapErr
+
+-23000
+
+Unable to initialize the
+local network handler.
+
+#define
+
+ipBadCnfgErr
+
+-23001
+
+The manually set address
+is configured improperly.
+
+#define
+
+ipNoCnfgErr
+
+-23002
+
+A configuration resource
+iS missing.
+
+#define
+
+ipLoadErr
+
+-23003
+
+Not enough room in the
+application heap
+(Macintosh 512K
+enhanced only).
+
+#define
+
+ipBadAddr
+
+-23004
+
+Error in getting an address
+from a server or the
+address is already in use
+by another machine.
+
+#define
+
+connectionClosing
+
+-23005
+
+A TCPClose
+
+command
+
+was already issued so there
+is no more data to send on
+this connection.
+
+#define
+
+invalidLength
+
+-23006
+
+The total amount of data
+described by the WDS was
+either O or greater than
+65,535
+
+#define
+
+connectionExists
+
+-23007
+
+bytes.
+
+The TCP or UDP
+
+stream
+
+already has an open
+connection.
+#define
+
+78
+
+connectionDoesntExist
+
+Chapter 6 / Miscellaneous Interfaces
+
+-23008
+
+This TCP stream has no
+open connection.
+
+#define
+
+insufficientResources
+
+-23009
+
+64 TCP or UDP streams
+are already open.
+
+#define
+
+invalidStreamPtr
+
+-23010
+
+The specified TCP or UDP
+stream 1s not open.
+
+#define
+
+streamAlreadyOpen
+
+-23011
+
+An open stream is already
+using this receive buffer
+area.
+
+#define
+
+connectionTerminated
+
+-23012
+
+The TCP connection was
+broken; the reason will be
+
+given in a terminate ASR.
+#define
+
+invalidBufPtr
+
+-23013
+
+The receive buffer area
+
+pointer is 0.
+#define
+
+invalidRDS
+
+-23014
+
+The RDS refers to receive
+buffers not owned by the
+user.
+
+#define
+
+invalidWwDs
+
+-23014
+
+The WDS pointer was 0.
+
+#define
+
+openFailed
+
+-23015
+
+The connection came
+
+halfway up and then
+failed.
+#define
+
+commandTimeout
+
+-23016
+
+The specified command
+action was not completed
+in the specified time
+period.
+
+#define
+
+duplicateSocket
+
+-23017
+
+A stream is already open
+using this local UDP port
+or a TCP connection
+already exists between this
+local IP address and TCP
+port, and the specified
+remote IP address and
+TCP port.
+
+#define
+
+ipDontFragErr
+
+-23032
+
+The packet is too large to
+send without fragmenting
+and the Don’t Fragment
+flag is set.
+
+#define
+
+ipDestDeadErr
+
+-23033
+
+The destination host is not
+responding to address
+resolution requests.
+
+#define
+
+icmpEchoTimeoutErr
+
+-23035
+
+The icmp echo packet was
+not responded to in the
+indicated timeout period.
+
+MacTCPCommontypes
+
+79
+
+#define
+
+ipNoFragMemErr
+
+-23036
+
+Insufficient internal driver
+buffers available to
+
+fragment this packet on
+send.
+#define
+
+ipRouteErr
+
+-23037
+
+No gateway available to
+manage routing of packets
+to off-network
+destinations.
+
+#define
+
+namesyntaxErr
+
+-23041
+
+The hostName field had a
+syntax error. The address
+was given in dot notation
+(that is, W.X.Y.Z) and did
+not conform to the syntax
+for an IP address.
+
+#define
+
+cacheFault
+
+-23042
+
+The name specified
+cannot be found in the
+cache. The domain name
+
+resolver will now query
+the domain name server
+and return the answer in
+
+the call-back procedure.
+#define
+
+noResultProc
+
+-23043
+
+No result procedure is
+passed to the address
+translation call when the
+resolver must be used to
+find the address.
+
+#define
+
+noNameserver
+
+-23044
+
+No name server can be
+found for the specified
+name string.
+
+#define
+
+authNameErr
+
+-23045
+
+This domain name does
+not exist.
+
+#define
+
+noAnsErr
+
+-23046
+
+None of the known name
+servers are responding.
+
+#define
+
+dnrErr
+
+-23047
+
+The domain name server
+has returned an error.
+
+#define
+
+80
+
+outOfMemory
+
+Chapter 6 / Miscellaneous Interfaces
+
+-23048
+
+Not enough memory is
+available to issue the
+needed DNR query or to
+build the DNR cache.
+
+Miscellaneous types
+This section describes types that are common to all the programmatic
+interfaces in the MacTCP driver.
+#define
+
+BYTES_16WORD
+
+2
+
+/*
+
+bytes
+
+per
+
+16
+
+bit
+
+ip
+
+word
+
+*/
+
+#define
+
+BYTES_32WORD
+
+4
+
+/*
+
+bytes
+
+per
+
+32
+
+bit
+
+ip
+
+word
+
+*/
+
+#define
+
+BYTES_64WORD
+
+8
+
+/*
+
+bytes
+
+per
+
+64
+
+bit
+
+ip
+
+word
+
+*/
+
+typedef
+
+unsigned
+
+char
+
+b_8;
+
+/*
+
+8-bit
+
+quantity
+
+*/
+
+typedef
+
+unsigned
+
+short
+
+/*
+
+16-bit
+
+quantity
+
+*/
+
+typedef
+
+unsigned
+
+long
+
+/*
+
+32-bit
+
+quantity
+
+*/
+
+typedef
+
+b_32
+
+ip_addr;
+
+/*
+
+IP
+
+typedef
+
+b_16
+
+ip_port
+
+typedef
+
+struct
+
+union
+
+ip_addrbytes
+
+address
+
+is
+
+32-bits
+
+*/
+
+{
+
+{
+addr;
+
+char
+
+byte[4];
+
+a;
+
+ip_addrbytes;
+struct
+
+typedef
+
+unsigned
+char
+}
+
+b_32;
+
+b_32
+}
+}
+
+b_16;
+
+*
+
+wdsEntry
+short
+
+{
+
+length;
+
+ptr;
+
+/*
+
+length
+
+of
+
+/*
+
+pointer
+
+to
+
+/*
+
+length
+
+of
+
+/*
+
+pointer
+
+to
+
+buffer
+buffer
+
+*/
+*/
+
+wdsEntry;
+
+struct
+
+typedef
+
+unsigned
+char
+
+*
+
+rdsEntry
+short
+
+{
+
+length;
+
+ptr;
+
+}
+
+rdsEntry;
+
+typedef
+
+unsigned
+
+long
+
+BufferPtr;
+
+typedef
+
+unsigned
+
+long
+
+StreamPtr;
+
+buffer
+buffer
+
+*/
+*/
+
+Internet Control Message Protocol report structures
+In TCP and UDP, the ASR routine can be called with an Internet Control
+
+Message Protocol (ICMP) message. This section describes the types and
+structures of the ICMP messages.
+typedef
+
+enum
+
+ICMPMsgType
+
+{
+
+netUnreach,
+
+hostUnreach,
+
+portUnreach,
+
+fragReqd,
+
+timeExceeded,
+
+parmProblem,
+
+lastICMPMsgType
+}
+
+=
+
+protocolUnreach,
+
+sourceRouteFailed,
+missingOption,
+
+65535
+
+ICMPMsgType;
+
+MacTCPCommontypes
+
+81
+
+typedef
+
+struct
+
+ICMPReport
+
+StreamPtr
+
+streamPtr;
+
+ip_addr
+
+localHost;
+
+ip_port
+
+localPort;
+
+ip_addr
+
+remoteHost;
+
+ip_port
+
+remotePort;
+
+short
+
+{
+
+reportType;
+
+unsigned
+
+short
+
+optionalAddlinfo;
+
+unsigned
+
+long
+
+optionalAddliInfoPtr;
+
+}
+
+ICMPReport;
+
+Refer to the section “UDP Asynchronous Notification Routine” in
+Chapter 3 and “TCP Asynchronous Notification Routine” in Chapter 4 for
+details on how the ICMP report structure is used.
+
+GetMyIPAddr
+This section describes how an application obtains the IP address of the
+machine on which it is running. GetMyIPAddr describes the parameter
+block that makes the PBControl call that returns the IP address and subnet
+mask of the local host. The csCode for this call is 15, and the driver
+
+reference number is returned from the Open Driver call.
+#define
+
+ipctlGetAddr
+
+15
+
+/*
+
+csCode
+
+address
+
+our
+
+IP
+
+ioCompletion;
+
+ia
+
+OSErr
+
+a
+
+i1oCmdAddr;
+
+ProcPtr
+
+ioResult;
+
+StringPtr
+
+ioNamePtr;
+
+short
+
+ioVRefNum;
+
+short
+
+ioCRefNum;
+
+short
+
+csCode
+
+IPParamBlock
+
+a
+
+Ptr
+
+a
+
+ioTrap;
+
+aa
+
+qType;
+
+short
+
+a
+
+short
+
+*qLink;
+
+ian
+
+QElem
+
+a
+
+IPParamBlockHeader
+
+struct
+
+struct
+
+get
+
+i
+
+#define
+
+to
+*/
+
+{
+
+IPParamBlockHeader;
+
+/*
+
+standard
+
+I/O
+
+header
+
+ip_addr
+
+/*
+
+our
+
+IP
+
+address
+
+*/
+
+/*
+
+our
+
+IP
+
+net
+
+long
+
+ourAddress;
+
+ourNetMask;
+
+mask
+
+*/
+
+*/
+
+hi
+The IP address is returned in the ourAddress
+returned in the ourNetMask field.
+
+82
+
+Chapter 6 / Miscellaneous Interfaces
+
+field and the subnet mask is
+
+ICMP echo
+The ICMP echo request message allows a host to determine whether a
+remote host is operational without bringing up a protocol like TCP or UDP.
+ICMP echo can also be used to determine the responsiveness of a network.
+The following interface to ICMP echo is provided:
+#define
+
+ipctlEchoICMP
+
+17
+
+#define
+
+ipmplEchoTimeoutErr
+
+typedef
+
+void
+
+—23035
+
+(*ICMPEchoNotifyProc)
+
+(struct
+
+ICMPParamBlock
+
+*iopb);
+
+The following structure is used to make the PBControl call initiate an ICMP
+echo request. The destination address is in the dest field, and the data to
+be echoed is described by wdsEntry in the data field. The specified
+timeout indicates how long to wait for the echo reply. The icmpCompletion
+routine is called either at timeout or when a packet is returned from the
+remote site. When a timeout occurs, the result code in the
+
+ICMPParamBlock is icmpEchoTimeoutErr. When an ICMP echo returns
+successfully, the time in ticks when the reply was received is contained in
+the echoReplyIn field. The time in ticks when the request was dispatched
+is contained in the echoRequestOut
+
+field. The echoed data contains the
+
+data received in the response packet.
+You can send options in an echo packet by filling the options field.
+Options must be well-formed (see RFC 791) and terminated on a long word
+boundary. The length field specifies the length of the options field in
+bytes. The icmpCompletion routine is called with the options field set if
+options are found in the echo response packet. The userdata pointer can be
+passed into the echo call and is returned unmodified in the
+icmpCompletion routine.
+struct
+
+IPParamBlock
+
+{
+
+IPParamBlockHeader;
+struct
+
+{
+
+ip_addr
+
+dest;
+
+wdsEntry
+short
+Ptr
+
+data;
+
+timeout;
+options;
+
+unsigned
+
+short
+
+optLength;
+
+ICMPEchoNotifyProc
+unsigned
+}
+
+long
+
+icmpCompletion;
+
+userDataPtr;
+
+IPEchoPB;
+
+hi
+
+ICMP echo
+
+83
+
+struct
+
+ICMPParamBlock
+
+{
+
+IPParamBlockHeader;
+short
+
+params
+
+struct
+
+unsigned
+
+long
+
+echoRequstOut;
+
+unsigned
+
+long
+
+echoReplyIn;
+
+struct
+Ptr
+}
+
+rdsEntry
+
+echoedData;
+
+options;
+
+unsigned
+
+long
+
+iLcompEchoInfo;
+
+};
+
+84
+
+[11];
+
+{
+
+Chapter 6 / Miscellaneous Interfaces
+
+userDataPtr;
+
+Appendix
+
+Constants
+
+This appendix presents command codes, UDP asynchronous event codes,
+TCP asynchronous event codes, and reasons for TCP termination.
+
+Command codes
+UDPCreate
+
+20
+
+UDPRead
+
+21
+
+UDPBfrReturn
+
+22
+
+UDPWrite
+
+23
+
+UDPRelease
+
+24
+
+UDPMaxMTUSize
+
+25
+
+UDPStatus
+
+26
+
+UDPMultiCreate
+
+27
+
+UDPMultiSend
+
+28
+
+UDPMultiRead
+
+29
+
+TCPCreate
+
+30
+
+TCPPassiveOpen
+TCPActiveOpen
+
+31
+32
+
+TCPSend
+
+34
+
+TCPNoCopyRcv
+
+35
+
+TCPBfrReturn
+
+36
+
+TCPRcv
+
+37
+
+TCPClose
+
+38
+
+TCPAbort
+
+39
+
+TCPStatus
+
+40
+
+TCPRelease
+
+42
+
+TCPGlobalInfo
+
+43
+
+UDP asynchronous event codes
+data arrival
+ICMP message received
+
+1
+2
+
+NY
+BW
+Nm
+
+closing
+ULP timeout
+terminate
+data arrival
+urgent data outstanding
+ICMP message received
+
+eR
+
+TCP asynchronous event codes
+
+ULP abort
+ULP close
+service failure
+
+86
+
+Appendix / Constants
+
+BW
+NM
+
+security/precedence mismatch
+ULP timeout
+
+DN
+
+network failure
+
+on
+
+remote abort
+
+WN
+
+Reasons for TCP termination
+
+
