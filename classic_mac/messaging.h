@@ -61,9 +61,9 @@ TCPStreamState GetTCPSendStreamState(void);
 int GetQueuedMessageCount(void);
 
 /* ASR handlers - use StreamPtr as they're called directly by MacTCP */
-pascal void TCP_Listen_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr, 
-                                  unsigned short terminReason, struct ICMPReport *icmpMsg);
-pascal void TCP_Send_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr, 
-                                unsigned short terminReason, struct ICMPReport *icmpMsg);
+pascal void TCP_Listen_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr,
+                                   unsigned short terminReason, struct ICMPReport *icmpMsg);
+pascal void TCP_Send_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr,
+                                 unsigned short terminReason, struct ICMPReport *icmpMsg);
 
 #endif

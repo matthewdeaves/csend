@@ -39,36 +39,36 @@ OSErr InitializeNetworking(void)
 {
     OSErr err;
     unsigned long tcpStreamBufferSize;
-    
+
     log_debug("InitializeNetworking: Starting network initialization");
-    
+
     /* Initialize the network abstraction layer */
     err = InitNetworkAbstraction();
     if (err != noErr) {
         log_app_event("Fatal Error: Failed to initialize network abstraction: %d", err);
         return err;
     }
-    
-    log_debug("InitializeNetworking: Network abstraction initialized with %s", 
+
+    log_debug("InitializeNetworking: Network abstraction initialized with %s",
               GetNetworkImplementationName());
-    
+
     /* Initialize the underlying network implementation */
     if (gNetworkOps == NULL || gNetworkOps->Initialize == NULL) {
         log_app_event("Fatal Error: Network operations not available");
         return notOpenErr;
     }
-    
+
     err = gNetworkOps->Initialize(&gMacTCPRefNum, &gMyLocalIP, gMyLocalIPStr);
     if (err != noErr) {
         log_app_event("Fatal Error: Network initialization failed: %d", err);
         ShutdownNetworkAbstraction();
         return err;
     }
-    
+
     if (gMyLocalIP == 0) {
         log_app_event("Critical Warning: Local IP address is 0.0.0.0. Check network configuration.");
     }
-    
+
     /* Initialize UDP Discovery */
     err = InitUDPDiscoveryEndpoint(gMacTCPRefNum);
     if (err != noErr) {
@@ -81,15 +81,15 @@ OSErr InitializeNetworking(void)
         return err;
     }
     log_debug("UDP Discovery Endpoint Initialized.");
-    
+
     /* Initialize TCP Messaging with dual streams */
     tcpStreamBufferSize = PREFERRED_TCP_STREAM_RCV_BUFFER_SIZE;
     if (tcpStreamBufferSize < MINIMUM_TCP_STREAM_RCV_BUFFER_SIZE) {
         tcpStreamBufferSize = MINIMUM_TCP_STREAM_RCV_BUFFER_SIZE;
     }
-    
+
     log_debug("Initializing TCP with stream receive buffer size: %lu bytes.", tcpStreamBufferSize);
-    
+
     /* Create separate UPPs for listen and send streams */
     if (gTCPListenASR_UPP == NULL) {
         gTCPListenASR_UPP = NewTCPNotifyUPP(TCP_Listen_ASR_Handler);
@@ -105,7 +105,7 @@ OSErr InitializeNetworking(void)
         }
         log_debug("TCP Listen ASR UPP created at 0x%lX.", (unsigned long)gTCPListenASR_UPP);
     }
-    
+
     if (gTCPSendASR_UPP == NULL) {
         gTCPSendASR_UPP = NewTCPNotifyUPP(TCP_Send_ASR_Handler);
         if (gTCPSendASR_UPP == NULL) {
@@ -122,7 +122,7 @@ OSErr InitializeNetworking(void)
         }
         log_debug("TCP Send ASR UPP created at 0x%lX.", (unsigned long)gTCPSendASR_UPP);
     }
-    
+
     err = InitTCP(gMacTCPRefNum, tcpStreamBufferSize, gTCPListenASR_UPP, gTCPSendASR_UPP);
     if (err != noErr) {
         log_app_event("Fatal: TCP messaging initialization failed (%d).", err);
@@ -142,51 +142,51 @@ OSErr InitializeNetworking(void)
         gMacTCPRefNum = 0;
         return err;
     }
-    
+
     log_debug("TCP Messaging Initialized with dual streams.");
-    log_app_event("Networking initialization complete. Local IP: %s using %s", 
+    log_app_event("Networking initialization complete. Local IP: %s using %s",
                   gMyLocalIPStr, GetNetworkImplementationName());
-    
+
     return noErr;
 }
 
 void CleanupNetworking(void)
 {
     log_app_event("Cleaning up Networking...");
-    
+
     /* Clean up TCP Messaging */
     CleanupTCP(gMacTCPRefNum);
     log_debug("TCP Messaging Cleaned up.");
-    
+
     /* Clean up UDP Discovery */
     CleanupUDPDiscoveryEndpoint(gMacTCPRefNum);
     log_debug("UDP Discovery Cleaned up.");
-    
+
     /* Dispose of TCP ASR UPPs */
     if (gTCPListenASR_UPP != NULL) {
         log_debug("Disposing TCP Listen ASR UPP at 0x%lX.", (unsigned long)gTCPListenASR_UPP);
         DisposeRoutineDescriptor(gTCPListenASR_UPP);
         gTCPListenASR_UPP = NULL;
     }
-    
+
     if (gTCPSendASR_UPP != NULL) {
         log_debug("Disposing TCP Send ASR UPP at 0x%lX.", (unsigned long)gTCPSendASR_UPP);
         DisposeRoutineDescriptor(gTCPSendASR_UPP);
         gTCPSendASR_UPP = NULL;
     }
-    
+
     /* Shutdown network implementation */
     if (gNetworkOps != NULL && gNetworkOps->Shutdown != NULL) {
         gNetworkOps->Shutdown(gMacTCPRefNum);
     }
-    
+
     /* Shutdown abstraction layer */
     ShutdownNetworkAbstraction();
-    
+
     gMacTCPRefNum = 0;
     gMyLocalIP = 0;
     gMyLocalIPStr[0] = '\0';
-    
+
     log_app_event("Networking cleanup complete.");
 }
 
@@ -203,19 +203,19 @@ OSErr ParseIPv4(const char *ip_str, ip_addr *out_addr)
     char *token;
     char *rest_of_string;
     char buffer[INET_ADDRSTRLEN];
-    
+
     if (ip_str == NULL || out_addr == NULL) {
         return paramErr;
     }
-    
+
     strncpy(buffer, ip_str, INET_ADDRSTRLEN - 1);
     buffer[INET_ADDRSTRLEN - 1] = '\0';
-    
+
     rest_of_string = buffer;
     while ((token = strtok_r(rest_of_string, ".", &rest_of_string)) != NULL && i < 4) {
         char *endptr;
         parts[i] = strtoul(token, &endptr, 10);
-        
+
         if (*endptr != '\0' || parts[i] > 255) {
             log_debug("ParseIPv4: Invalid part '%s' in IP string '%s'", token, ip_str);
             *out_addr = 0;
@@ -223,13 +223,13 @@ OSErr ParseIPv4(const char *ip_str, ip_addr *out_addr)
         }
         i++;
     }
-    
+
     if (i != 4) {
         log_debug("ParseIPv4: Incorrect number of parts (%d) in IP string '%s'", i, ip_str);
         *out_addr = 0;
         return paramErr;
     }
-    
+
     *out_addr = (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
     return noErr;
 }
