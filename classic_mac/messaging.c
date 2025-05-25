@@ -1,5 +1,5 @@
 //====================================
-// FILE: ./classic_mac/messaging_mac.c
+// FILE: ./classic_mac/messaging.c
 //====================================
 
 #include "messaging.h"
@@ -49,6 +49,10 @@ static Boolean gListenNoCopyRdsPendingReturn = false;
 static TCPiopb gListenAsyncPB;
 static Boolean gListenAsyncOperationInProgress = false;
 
+/* Connection cleanup tracking */
+static Boolean gListenStreamNeedsReset = false;
+static unsigned long gListenStreamResetTime = 0;
+
 /* Message queue support */
 static QueuedMessage gMessageQueue[MAX_QUEUED_MESSAGES];
 static int gQueueHead = 0;
@@ -61,6 +65,7 @@ static int gQueueTail = 0;
 #define TCP_CLOSE_ULP_TIMEOUT_S 5
 #define TCP_PASSIVE_OPEN_CMD_TIMEOUT_S 0
 #define TCP_RECEIVE_CMD_TIMEOUT_S 1
+#define TCP_STREAM_RESET_DELAY_TICKS 60  /* 1 second delay after connection close */
 
 /* Forward declarations */
 static void StartPassiveListen(void);
@@ -72,8 +77,7 @@ static Boolean DequeueMessage(QueuedMessage *msg);
 static void ProcessMessageQueue(GiveTimePtr giveTime);
 
 /* Platform callbacks */
-static int mac_tcp_add_or_update_peer_callback(const char *ip, const char *username, void *platform_context)
-{
+static int mac_tcp_add_or_update_peer_callback(const char *ip, const char *username, void *platform_context) {
     (void)platform_context;
     int addResult = AddOrUpdatePeer(ip, username);
     if (addResult > 0) {
@@ -87,9 +91,7 @@ static int mac_tcp_add_or_update_peer_callback(const char *ip, const char *usern
     return addResult;
 }
 
-static void mac_tcp_display_text_message_callback(const char *username, const char *ip, 
-                                                  const char *message_content, void *platform_context)
-{
+static void mac_tcp_display_text_message_callback(const char *username, const char *ip, const char *message_content, void *platform_context) {
     (void)platform_context;
     (void)ip;
     char displayMsg[BUFFER_SIZE + 100];
@@ -101,8 +103,7 @@ static void mac_tcp_display_text_message_callback(const char *username, const ch
     log_debug("Message from %s@%s displayed: %s", username, ip, message_content);
 }
 
-static void mac_tcp_mark_peer_inactive_callback(const char *ip, void *platform_context)
-{
+static void mac_tcp_mark_peer_inactive_callback(const char *ip, void *platform_context) {
     (void)platform_context;
     if (!ip) return;
     log_debug("Peer %s has sent QUIT via TCP. Marking inactive.", ip);
@@ -118,8 +119,7 @@ static tcp_platform_callbacks_t g_mac_tcp_callbacks = {
 };
 
 /* Message queue management functions */
-static Boolean EnqueueMessage(const char *peerIP, const char *msgType, const char *content)
-{
+static Boolean EnqueueMessage(const char *peerIP, const char *msgType, const char *content) {
     int nextTail = (gQueueTail + 1) % MAX_QUEUED_MESSAGES;
     if (nextTail == gQueueHead) {
         log_debug("EnqueueMessage: Queue full, cannot enqueue message to %s", peerIP);
@@ -140,8 +140,7 @@ static Boolean EnqueueMessage(const char *peerIP, const char *msgType, const cha
     return true;
 }
 
-static Boolean DequeueMessage(QueuedMessage *msg)
-{
+static Boolean DequeueMessage(QueuedMessage *msg) {
     if (gQueueHead == gQueueTail) {
         return false;
     }
@@ -152,8 +151,7 @@ static Boolean DequeueMessage(QueuedMessage *msg)
     return true;
 }
 
-static void ProcessMessageQueue(GiveTimePtr giveTime)
-{
+static void ProcessMessageQueue(GiveTimePtr giveTime) {
     QueuedMessage msg;
     
     if (gTCPSendState == TCP_STATE_IDLE) {
@@ -165,8 +163,7 @@ static void ProcessMessageQueue(GiveTimePtr giveTime)
     }
 }
 
-int GetQueuedMessageCount(void)
-{
+int GetQueuedMessageCount(void) {
     int count = 0;
     int idx = gQueueHead;
     while (idx != gQueueTail) {
@@ -178,10 +175,7 @@ int GetQueuedMessageCount(void)
     return count;
 }
 
-OSErr MacTCP_QueueMessage(const char *peerIPStr,
-                          const char *message_content,
-                          const char *msg_type)
-{
+OSErr MacTCP_QueueMessage(const char *peerIPStr, const char *message_content, const char *msg_type) {
     if (peerIPStr == NULL || msg_type == NULL) {
         return paramErr;
     }
@@ -203,10 +197,8 @@ OSErr MacTCP_QueueMessage(const char *peerIPStr,
     }
 }
 
-pascal void TCP_Listen_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr, 
-                                  unsigned short terminReason, struct ICMPReport *icmpMsg)
-{
-#pragma unused(userDataPtr)
+pascal void TCP_Listen_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr, unsigned short terminReason, struct ICMPReport *icmpMsg) {
+    #pragma unused(userDataPtr)
     
     if (gTCPListenStream == NULL || tcpStream != (StreamPtr)gTCPListenStream) {
         return;
@@ -226,10 +218,8 @@ pascal void TCP_Listen_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode
     gListenAsrEvent.eventPending = true;
 }
 
-pascal void TCP_Send_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr, 
-                                unsigned short terminReason, struct ICMPReport *icmpMsg)
-{
-#pragma unused(userDataPtr)
+pascal void TCP_Send_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr, unsigned short terminReason, struct ICMPReport *icmpMsg) {
+    #pragma unused(userDataPtr)
     
     if (gTCPSendStream == NULL || tcpStream != (StreamPtr)gTCPSendStream) {
         return;
@@ -249,8 +239,7 @@ pascal void TCP_Send_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, 
     gSendAsrEvent.eventPending = true;
 }
 
-OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNotifyUPP listenAsrUPP, TCPNotifyUPP sendAsrUPP)
-{
+OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNotifyUPP listenAsrUPP, TCPNotifyUPP sendAsrUPP) {
     OSErr err;
     
     log_debug("Initializing TCP Messaging Subsystem with dual streams...");
@@ -331,6 +320,8 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
     gTCPSendState = TCP_STATE_IDLE;
     gListenAsyncOperationInProgress = false;
     gListenNoCopyRdsPendingReturn = false;
+    gListenStreamNeedsReset = false;
+    gListenStreamResetTime = 0;
     memset((Ptr)&gListenAsrEvent, 0, sizeof(ASR_Event_Info));
     memset((Ptr)&gSendAsrEvent, 0, sizeof(ASR_Event_Info));
     
@@ -341,8 +332,7 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
     return noErr;
 }
 
-void CleanupTCP(short macTCPRefNum)
-{
+void CleanupTCP(short macTCPRefNum) {
     log_debug("Cleaning up TCP Messaging Subsystem...");
     
     if (!gNetworkOps) {
@@ -403,8 +393,7 @@ void CleanupTCP(short macTCPRefNum)
     log_debug("TCP Messaging Subsystem cleanup finished.");
 }
 
-static void StartPassiveListen(void)
-{
+static void StartPassiveListen(void) {
     OSErr err;
     
     if (!gNetworkOps) return;
@@ -454,8 +443,7 @@ static void StartPassiveListen(void)
     }
 }
 
-void ProcessTCPStateMachine(GiveTimePtr giveTime)
-{
+void ProcessTCPStateMachine(GiveTimePtr giveTime) {
     OSErr err;
     
     if (!gNetworkOps) return;
@@ -470,6 +458,16 @@ void ProcessTCPStateMachine(GiveTimePtr giveTime)
     /* Process listen stream state */
     switch (gTCPListenState) {
     case TCP_STATE_IDLE:
+        /* Check if we need to wait before restarting listen */
+        if (gListenStreamNeedsReset) {
+            unsigned long currentTime = TickCount();
+            if ((currentTime - gListenStreamResetTime) < TCP_STREAM_RESET_DELAY_TICKS) {
+                /* Still waiting for stream to reset */
+                break;
+            }
+            /* Enough time has passed, clear the reset flag */
+            gListenStreamNeedsReset = false;
+        }
         StartPassiveListen();
         break;
         
@@ -494,24 +492,23 @@ void ProcessTCPStateMachine(GiveTimePtr giveTime)
                 log_app_event("Incoming TCP connection established from %s:%u.", ipStr, remote_port);
                 gTCPListenState = TCP_STATE_CONNECTED_IN;
                 
-                // IMPORTANT: Issue a non-blocking receive to check for data
-                // This ensures we don't miss data if it arrives before the ASR can fire
+                /* Issue a non-blocking receive to check for data */
                 Boolean urgentFlag, markFlag;
                 memset(gListenNoCopyRDS, 0, sizeof(gListenNoCopyRDS));
                 
                 OSErr rcvErr = gNetworkOps->TCPReceiveNoCopy(gTCPListenStream, (Ptr)gListenNoCopyRDS, 
-                                                            MAX_RDS_ENTRIES, 0, // 0 timeout = non-blocking
+                                                            MAX_RDS_ENTRIES, 0, /* 0 timeout = non-blocking */
                                                             &urgentFlag, &markFlag, giveTime);
                 
                 log_debug("Initial receive probe after accept: err=%d", rcvErr);
                 
                 if (rcvErr == noErr && (gListenNoCopyRDS[0].length > 0 || gListenNoCopyRDS[0].ptr != NULL)) {
-                    // Data already available!
+                    /* Data already available! */
                     log_debug("Data already available on connection accept!");
                     ProcessIncomingTCPData(gListenNoCopyRDS, remote_ip, remote_port);
                     gListenNoCopyRdsPendingReturn = true;
                     
-                    // Return the buffers
+                    /* Return the buffers */
                     OSErr bfrReturnErr = gNetworkOps->TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, giveTime);
                     if (bfrReturnErr == noErr) {
                         gListenNoCopyRdsPendingReturn = false;
@@ -520,17 +517,20 @@ void ProcessTCPStateMachine(GiveTimePtr giveTime)
             } else {
                 log_app_event("TCPPassiveOpenAsync FAILED: %d.", err);
                 gTCPListenState = TCP_STATE_IDLE;
+                /* Mark that we need to wait before trying again */
+                gListenStreamNeedsReset = true;
+                gListenStreamResetTime = TickCount();
             }
         }
         break;
 
     case TCP_STATE_CONNECTED_IN:
-        // Also periodically check for data in case we missed the ASR
+        /* Also periodically check for data in case we missed the ASR */
         if (!gListenNoCopyRdsPendingReturn && !gListenAsyncOperationInProgress) {
             static unsigned long lastCheckTime = 0;
             unsigned long currentTime = TickCount();
             
-            // Check every 30 ticks (0.5 seconds)
+            /* Check every 30 ticks (0.5 seconds) */
             if (currentTime - lastCheckTime > 30) {
                 lastCheckTime = currentTime;
                 
@@ -538,7 +538,7 @@ void ProcessTCPStateMachine(GiveTimePtr giveTime)
                 memset(gListenNoCopyRDS, 0, sizeof(gListenNoCopyRDS));
                 
                 OSErr rcvErr = gNetworkOps->TCPReceiveNoCopy(gTCPListenStream, (Ptr)gListenNoCopyRDS, 
-                                                            MAX_RDS_ENTRIES, 0, // non-blocking
+                                                            MAX_RDS_ENTRIES, 0, /* non-blocking */
                                                             &urgentFlag, &markFlag, giveTime);
                 
                 if (rcvErr == noErr && (gListenNoCopyRDS[0].length > 0 || gListenNoCopyRDS[0].ptr != NULL)) {
@@ -557,6 +557,8 @@ void ProcessTCPStateMachine(GiveTimePtr giveTime)
                     log_app_event("Listen connection closed by peer (periodic check).");
                     gNetworkOps->TCPAbort(gTCPListenStream);
                     gTCPListenState = TCP_STATE_IDLE;
+                    gListenStreamNeedsReset = true;
+                    gListenStreamResetTime = TickCount();
                 }
             }
         }
@@ -569,8 +571,7 @@ void ProcessTCPStateMachine(GiveTimePtr giveTime)
     if (giveTime) giveTime();
 }
 
-static void HandleListenASREvents(GiveTimePtr giveTime)
-{
+static void HandleListenASREvents(GiveTimePtr giveTime) {
     if (!gNetworkOps) return;
     if (!gListenAsrEvent.eventPending) return;
     
@@ -594,6 +595,8 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
                 log_debug("Listen ASR: TCPDataArrival, but GetStatus failed.");
                 gNetworkOps->TCPAbort(gTCPListenStream);
                 gTCPListenState = TCP_STATE_IDLE;
+                gListenStreamNeedsReset = true;
+                gListenStreamResetTime = TickCount();
                 break;
             }
             
@@ -621,10 +624,14 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
                 log_app_event("Listen connection closing by peer.");
                 gNetworkOps->TCPAbort(gTCPListenStream);
                 gTCPListenState = TCP_STATE_IDLE;
+                gListenStreamNeedsReset = true;
+                gListenStreamResetTime = TickCount();
             } else if (rcvErr != commandTimeout) {
                 log_app_event("Error during Listen TCPNoCopyRcv: %d", rcvErr);
                 gNetworkOps->TCPAbort(gTCPListenStream);
                 gTCPListenState = TCP_STATE_IDLE;
+                gListenStreamNeedsReset = true;
+                gListenStreamResetTime = TickCount();
             }
         }
         break;
@@ -637,12 +644,17 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
         }
         gListenAsyncOperationInProgress = false;
         gTCPListenState = TCP_STATE_IDLE;
+        /* Always set reset flag when connection terminates */
+        gListenStreamNeedsReset = true;
+        gListenStreamResetTime = TickCount();
         break;
         
     case TCPClosing:
         log_app_event("Listen ASR: Remote peer closed connection.");
         gNetworkOps->TCPAbort(gTCPListenStream);
         gTCPListenState = TCP_STATE_IDLE;
+        gListenStreamNeedsReset = true;
+        gListenStreamResetTime = TickCount();
         break;
         
     default:
@@ -650,8 +662,7 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
     }
 }
 
-static void HandleSendASREvents(GiveTimePtr giveTime)
-{
+static void HandleSendASREvents(GiveTimePtr giveTime) {
     if (!gNetworkOps) return;
     if (!gSendAsrEvent.eventPending) return;
     
@@ -672,8 +683,7 @@ static void HandleSendASREvents(GiveTimePtr giveTime)
     }
 }
 
-static void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status, tcp_port remote_port_from_status)
-{
+static void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status, tcp_port remote_port_from_status) {
     char senderIPStrFromPayload[INET_ADDRSTRLEN];
     char senderUsername[32];
     char msgType[32];
@@ -723,23 +733,15 @@ static void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status
     }
 }
 
-TCPStreamState GetTCPListenStreamState(void)
-{
+TCPStreamState GetTCPListenStreamState(void) {
     return gTCPListenState;
 }
 
-TCPStreamState GetTCPSendStreamState(void)
-{
+TCPStreamState GetTCPSendStreamState(void) {
     return gTCPSendState;
 }
 
-OSErr MacTCP_SendMessageSync(const char *peerIPStr,
-                             const char *message_content,
-                             const char *msg_type,
-                             const char *local_username,
-                             const char *local_ip_str,
-                             GiveTimePtr giveTime)
-{
+OSErr MacTCP_SendMessageSync(const char *peerIPStr, const char *message_content, const char *msg_type, const char *local_username, const char *local_ip_str, GiveTimePtr giveTime) {
     OSErr err = noErr;
     ip_addr targetIP = 0;
     char messageBuffer[BUFFER_SIZE];
