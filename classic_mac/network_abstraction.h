@@ -87,6 +87,19 @@ typedef struct {
     OSErr(*TCPAbort)(NetworkStreamRef streamRef);
     OSErr(*TCPStatus)(NetworkStreamRef streamRef, NetworkTCPInfo *info);
 
+    /* Async TCP operations */
+    OSErr(*TCPListenAsync)(NetworkStreamRef streamRef, tcp_port localPort,
+                           NetworkAsyncHandle *asyncHandle);
+    OSErr(*TCPConnectAsync)(NetworkStreamRef streamRef, ip_addr remoteHost,
+                            tcp_port remotePort, NetworkAsyncHandle *asyncHandle);
+    OSErr(*TCPSendAsync)(NetworkStreamRef streamRef, Ptr data, unsigned short length,
+                         Boolean push, NetworkAsyncHandle *asyncHandle);
+    OSErr(*TCPReceiveAsync)(NetworkStreamRef streamRef, Ptr rdsPtr,
+                            short maxEntries, NetworkAsyncHandle *asyncHandle);
+    OSErr(*TCPCheckAsyncStatus)(NetworkAsyncHandle asyncHandle, 
+                                OSErr *operationResult, void **resultData);
+    void (*TCPCancelAsync)(NetworkAsyncHandle asyncHandle);
+
     /* UDP operations */
     OSErr(*UDPCreate)(short refNum, NetworkEndpointRef *endpointRef,
                       udp_port localPort, Ptr recvBuffer,
