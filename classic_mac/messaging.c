@@ -702,7 +702,11 @@ static void HandleSendASREvents(GiveTimePtr giveTime)
     switch (currentEvent.eventCode) {
     case TCPTerminate:
         log_debug("Send ASR: TCPTerminate. Reason: %u.", currentEvent.termReason);
-        gTCPSendState = TCP_STATE_IDLE;
+        /* Only set to IDLE if we were expecting the termination */
+        if (gTCPSendState == TCP_STATE_CLOSING_GRACEFUL || 
+            gTCPSendState == TCP_STATE_IDLE) {
+            gTCPSendState = TCP_STATE_IDLE;
+        }
         break;
 
     default:
@@ -775,8 +779,9 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
                         if (err != noErr) {
                             log_debug("Graceful close failed (%d), using abort", err);
                             gNetworkOps->TCPAbort(gTCPSendStream);
+                            gTCPSendState = TCP_STATE_IDLE;
                         }
-                        gTCPSendState = TCP_STATE_IDLE;
+                        /* Don't set IDLE here - wait for close to complete */
                     }
                 } else {
                     log_app_event("Error: Send to %s failed: %d", 
@@ -786,6 +791,13 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
                 }
             }
         }
+        break;
+        
+    case TCP_STATE_CLOSING_GRACEFUL:
+        /* Check if close operation completed */
+        /* For now, assume close completes quickly and set to IDLE */
+        /* In a full implementation, we'd check async close status */
+        gTCPSendState = TCP_STATE_IDLE;
         break;
         
     default:
