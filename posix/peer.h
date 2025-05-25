@@ -12,6 +12,7 @@ typedef struct app_state_t {
     int udp_socket;
     char username[32];
     pthread_mutex_t peers_mutex;
+    struct ui_context *ui;  /* UI interface pointer */
 } app_state_t;
 void init_app_state(app_state_t *state, const char *username);
 void cleanup_app_state(app_state_t *state);
