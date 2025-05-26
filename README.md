@@ -7,7 +7,7 @@ The **POSIX version** is a multi-threaded, command-line application. It uses UDP
 The **Classic Mac version** is a GUI application for System 7.x (via Retro68). It utilises MacTCP for UDP peer discovery and TCP messaging (TEXT and QUIT types). The application now features a network abstraction layer that enables easier porting to OpenTransport in the future. It uses dual TCP streams - one dedicated to listening for incoming connections and another for outgoing connections, managed through a single-threaded event loop with asynchronous operations.
 
 Both versions utilise a shared C codebase for core protocol handling, peer list management, and the underlying discovery and messaging logic.
-You can watch a [demo video on YouTube](https://www.youtube.com/watch?v=_9iXCBZ_FjE) (Note: Video shows an older version; current functionality is more advanced!).
+You can watch a [demo video on YouTube](https://www.youtube.com/watch?v=_9iXCBZ_FjE) (Note: Video shows an older version; current functionality is more advanced!). Here [is the latest](https://m.youtube.com/watch?v=YHCS2WfRO2Y).
 
 Detailed information on the evolving versions of the project can be found [here](TAGS.md).
 
