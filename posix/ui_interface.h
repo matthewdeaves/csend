@@ -25,6 +25,12 @@ typedef struct ui_operations {
     void (*notify_peer_update)(void *context);
     void (*notify_debug_toggle)(void *context, int enabled);
     
+    /* Extended command notifications */
+    void (*notify_status)(void *context, app_state_t *state);
+    void (*notify_stats)(void *context, app_state_t *state);
+    void (*notify_history)(void *context, int count);
+    void (*notify_version)(void *context);
+    
     /* Input operations */
     void (*show_prompt)(void *context);
     void (*handle_command_start)(void *context, const char *command);

@@ -50,26 +50,36 @@ int handle_command(app_state_t *state, const char *input)
     
     int result = 0;
     
-    if (strcmp(input, "/list") == 0) {
+    /* Strip --id parameter for command processing */
+    char clean_input[BUFFER_SIZE];
+    strncpy(clean_input, input, BUFFER_SIZE - 1);
+    clean_input[BUFFER_SIZE - 1] = '\0';
+    
+    char *id_pos = strstr(clean_input, " --id=");
+    if (id_pos) {
+        *id_pos = '\0';  /* Truncate at --id parameter */
+    }
+    
+    if (strcmp(clean_input, "/list") == 0) {
         if (state->ui) {
             UI_CALL(state->ui, display_peer_list, state);
         }
-    } else if (strcmp(input, "/help") == 0) {
+    } else if (strcmp(clean_input, "/help") == 0) {
         if (state->ui) {
             UI_CALL(state->ui, display_help);
         }
-    } else if (strcmp(input, "/debug") == 0) {
+    } else if (strcmp(clean_input, "/debug") == 0) {
         Boolean current_debug_state = is_debug_output_enabled();
         set_debug_output_enabled(!current_debug_state);
         log_app_event("Debug output %s.", is_debug_output_enabled() ? "ENABLED" : "DISABLED");
         if (state->ui) {
             UI_CALL(state->ui, notify_debug_toggle, is_debug_output_enabled());
         }
-    } else if (strncmp(input, "/send ", 6) == 0) {
+    } else if (strncmp(clean_input, "/send ", 6) == 0) {
         int peer_num_input;
         char *msg_start;
         char input_copy[BUFFER_SIZE];
-        strncpy(input_copy, input, BUFFER_SIZE - 1);
+        strncpy(input_copy, clean_input, BUFFER_SIZE - 1);
         input_copy[BUFFER_SIZE - 1] = '\0';
         msg_start = strchr(input_copy + 6, ' ');
         if (msg_start == NULL) {
@@ -126,8 +136,8 @@ int handle_command(app_state_t *state, const char *input)
                 UI_CALL(state->ui, notify_send_result, 0, -1, NULL);
             }
         }
-    } else if (strncmp(input, "/broadcast ", 11) == 0) {
-        const char *message_content = input + 11;
+    } else if (strncmp(clean_input, "/broadcast ", 11) == 0) {
+        const char *message_content = clean_input + 11;
         log_app_event("Broadcasting message: %s", message_content);
         
         pthread_mutex_lock(&state->peers_mutex);
@@ -148,7 +158,7 @@ int handle_command(app_state_t *state, const char *input)
         if (state->ui) {
             UI_CALL(state->ui, notify_broadcast_result, sent_count);
         }
-    } else if (strcmp(input, "/quit") == 0) {
+    } else if (strcmp(clean_input, "/quit") == 0) {
         log_debug("Initiating quit sequence...");
         pthread_mutex_lock(&state->peers_mutex);
         log_debug("Sending QUIT notifications to peers...");
@@ -171,6 +181,34 @@ int handle_command(app_state_t *state, const char *input)
         }
         log_debug("Exiting application via /quit command...");
         result = 1;  /* Signal quit */
+    } else if (strcmp(clean_input, "/status") == 0) {
+        if (state->ui && state->ui->ops->notify_status) {
+            UI_CALL(state->ui, notify_status, state);
+        }
+    } else if (strcmp(clean_input, "/stats") == 0) {
+        if (state->ui && state->ui->ops->notify_stats) {
+            UI_CALL(state->ui, notify_stats, state);
+        }
+    } else if (strncmp(clean_input, "/history", 8) == 0) {
+        int count = 10;  /* Default to 10 messages */
+        if (strlen(clean_input) > 9) {
+            count = atoi(clean_input + 9);
+            if (count <= 0) count = 10;
+            if (count > 100) count = 100;  /* Cap at 100 */
+        }
+        if (state->ui && state->ui->ops->notify_history) {
+            UI_CALL(state->ui, notify_history, count);
+        }
+    } else if (strcmp(clean_input, "/version") == 0) {
+        if (state->ui && state->ui->ops->notify_version) {
+            UI_CALL(state->ui, notify_version);
+        }
+    } else if (strncmp(clean_input, "/peers --filter ", 16) == 0) {
+        /* TODO: Implement peer filtering */
+        log_app_event("Peer filtering not yet implemented.");
+        if (state->ui) {
+            UI_CALL(state->ui, notify_command_unknown, input);
+        }
     } else {
         log_app_event("Unknown command: '%s'. Type /help for available commands.", input);
         if (state->ui) {

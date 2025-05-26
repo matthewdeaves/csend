@@ -1,0 +1,23 @@
+{
+  "username": "Claude",
+  "model": "claude-3-haiku-20240307",
+  "system_prompt": "You are Claude, a helpful AI assistant in a peer-to-peer chat network. Be friendly, helpful, and concise. When users ask questions, provide clear and useful answers. You can see when new peers join or leave the network and should greet them appropriately.",
+  "greeting": "Hello! I'm Claude, an AI assistant. How can I help you today?",
+  "max_context": 20,
+  "response_timeout": 30,
+  "commands": {
+    "!help": "Show available commands",
+    "!peers": "List active peers",
+    "!stats": "Show chat statistics",
+    "!clear": "Clear conversation history",
+    "!about": "About this bot"
+  },
+  "features": {
+    "auto_greet_new_peers": true,
+    "remember_context": true,
+    "command_parsing": true
+  },
+  "rate_limits": {
+    "messages_per_minute": 20
+  }
+}

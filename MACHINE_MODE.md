@@ -1,180 +1,443 @@
 # CSend Machine Mode Protocol
 
-## Implementation Note
-
-Machine mode uses the Strategy Pattern for better code organization:
-- `ui_interface.h` - Defines the UI operations interface
-- `ui_terminal_interactive.c` - Interactive terminal UI implementation
-- `ui_terminal_machine.c` - Machine mode UI implementation with thread-safe I/O
-- `ui_factory.c` - Factory for creating the appropriate UI
-
-This design makes it easy to add new UI modes and keeps the core application logic separate from presentation concerns.
-
-## Recent Improvements
-
-Machine mode has been enhanced with:
-1. **Signal handling** - SIGPIPE is ignored to prevent crashes on broken pipes
-2. **Thread-safe output** - All output uses mutex-protected functions
-3. **Line buffering** - Both stdin and stdout use line buffering for reliability
-4. **Error recovery** - Input errors are handled gracefully with retry logic
-5. **Proper shutdown** - Clean termination on EOF or quit command
-
 ## Overview
 
-Machine mode allows programmatic interaction with the CSend POSIX application through structured input/output. This enables automated testing and integration with other tools (like Claude).
+Machine mode provides JSON-based programmatic interaction with the CSend POSIX application, enabling seamless integration with LLMs and automation tools.
+
+## Architecture
+
+Machine mode uses the Strategy Pattern:
+- `ui_interface.h` - UI operations interface
+- `ui_terminal_machine.c` - Machine mode implementation with JSON output
+- `ui_factory.c` - Factory for creating UI instances
+
+Key features:
+- Thread-safe JSON output
+- Structured error handling
+- Real-time event streaming
+- Correlation ID support for request/response tracking
 
 ## Usage
 
-Launch the application with the `--machine-mode` flag:
-
 ```bash
+# Basic usage
 ./build/posix/csend_posix --machine-mode [username]
+
+# With environment variables
+CSEND_USERNAME=bot1 ./build/posix/csend_posix --machine-mode
+
+# Enable debug logging
+CSEND_LOG_LEVEL=debug ./build/posix/csend_posix --machine-mode claude
 ```
 
 ## Protocol Format
 
 ### Startup Sequence
 
-1. Application outputs: `START:username=<username>`
-2. Application outputs: `READY` (indicates ready for commands)
+```json
+{"type": "start", "version": "2.0", "username": "claude", "timestamp": "2024-01-15T10:30:00Z"}
+{"type": "ready", "timestamp": "2024-01-15T10:30:01Z"}
+```
 
-### Commands
+### Response Structure
 
-All commands are the same as interactive mode but without prompts:
+All responses follow this structure:
+```json
+{
+  "type": "response|event|error",
+  "id": "correlation_id",        // Optional, echoes request ID
+  "timestamp": "ISO8601",
+  "data": { ... }                 // Type-specific data
+}
+```
 
-- `/list` - List peers
-- `/send <peer_num> <message>` - Send message to peer
-- `/broadcast <message>` - Send to all peers
+## Commands
+
+### Core Commands
+- `/list [--id=<id>]` - List active peers
+- `/send <peer_id> <message> [--id=<id>]` - Send to specific peer
+- `/broadcast <message> [--id=<id>]` - Send to all peers
 - `/quit` - Exit application
-- `/help` - Show help
-- `/debug` - Toggle debug output
+- `/help` - Show commands (returns JSON)
+- `/debug` - Toggle debug mode
 
-### Output Format
+### Extended Commands
+- `/status [--id=<id>]` - Get application status
+- `/stats [--id=<id>]` - Get detailed statistics
+- `/history [count] [--id=<id>]` - Get message history
+- `/peers --filter <pattern> [--id=<id>]` - Search peers
+- `/version [--id=<id>]` - Get version info
 
-#### Command Echo
-Each command is echoed back:
-```
-CMD:<command>
-```
+## Response Examples
 
-#### Command Completion
-After each command completes:
-```
-CMD_COMPLETE
-```
-
-#### Peer List
-```
-PEER_LIST_START
-PEER:<number>:<username>:<ip>:<last_seen_seconds>
-...
-PEER_LIST_END:count=<total>
-```
-
-#### Send Result
-Success:
-```
-SEND_RESULT:success:peer=<num>:ip=<ip>
-```
-
-Error:
-```
-SEND_RESULT:error:invalid_peer
-SEND_RESULT:error:failed_to_send
+### List Command
+```json
+{
+  "type": "response",
+  "id": "list001",
+  "timestamp": "2024-01-15T10:30:02Z",
+  "command": "/list",
+  "data": {
+    "peers": [
+      {
+        "id": 1,
+        "username": "alice",
+        "ip": "192.168.1.100",
+        "last_seen": "2024-01-15T10:29:57Z",
+        "status": "active"
+      }
+    ],
+    "count": 1
+  }
+}
 ```
 
-#### Broadcast Result
-```
-BROADCAST_RESULT:sent_count=<num>
+### Send Command
+```json
+{
+  "type": "response",
+  "id": "send001",
+  "timestamp": "2024-01-15T10:30:03Z",
+  "command": "/send",
+  "data": {
+    "success": true,
+    "peer": {
+      "id": 1,
+      "username": "alice",
+      "ip": "192.168.1.100"
+    },
+    "message_id": "msg_789"
+  }
+}
 ```
 
-#### Incoming Message
-```
-MESSAGE:from=<username>:ip=<ip>:content=<message>
+### Status Command
+```json
+{
+  "type": "response",
+  "id": "status001",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "command": "/status",
+  "data": {
+    "uptime_seconds": 3600,
+    "version": "2.0",
+    "username": "claude",
+    "network": {
+      "tcp_port": 2555,
+      "udp_port": 2556
+    },
+    "statistics": {
+      "messages_sent": 42,
+      "messages_received": 38,
+      "broadcasts_sent": 5,
+      "active_peers": 3
+    }
+  }
+}
 ```
 
-#### Peer Updates
-When peer list changes:
+## Event Examples
+
+### Message Event
+```json
+{
+  "type": "event",
+  "event": "message",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "data": {
+    "from": {
+      "id": 1,
+      "username": "alice",
+      "ip": "192.168.1.100"
+    },
+    "content": "Hello, Claude!",
+    "message_id": "msg_123"
+  }
+}
 ```
-PEER_UPDATE
+
+### Peer Update Event
+```json
+{
+  "type": "event",
+  "event": "peer_update",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "data": {
+    "action": "joined",
+    "peer": {
+      "id": 2,
+      "username": "bob",
+      "ip": "192.168.1.101"
+    }
+  }
+}
+```
+
+## Error Handling
+
+### Error Response
+```json
+{
+  "type": "error",
+  "id": "cmd123",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "error": {
+    "code": "PEER_NOT_FOUND",
+    "message": "Peer with ID 5 not found",
+    "details": {
+      "peer_id": 5,
+      "available_peers": [1, 2, 3]
+    }
+  }
+}
+```
+
+### Error Codes
+- `UNKNOWN_COMMAND` - Command not recognized
+- `INVALID_SYNTAX` - Command syntax error
+- `PEER_NOT_FOUND` - Specified peer doesn't exist
+- `NETWORK_ERROR` - Network operation failed
+- `INTERNAL_ERROR` - Unexpected error
+
+## Python Client Library
+
+### Basic Usage
+```python
+from csend_client import CSendClient
+import asyncio
+
+async def main():
+    client = CSendClient(username="my_bot")
+    await client.connect()
+    
+    # List peers
+    peers = await client.list_peers()
+    
+    # Send message
+    if peers:
+        await client.send_message(peers[0]['id'], "Hello!")
+    
+    # Handle incoming messages
+    async def on_message(msg):
+        print(f"{msg['from']['username']}: {msg['content']}")
+    
+    client.on_message(on_message)
+    await client.run_forever()
+
+asyncio.run(main())
+```
+
+## Claude Haiku Chatbot
+
+### Prerequisites
+
+The launcher script automatically handles Python package installation using a virtual environment. No manual setup required!
+
+If you need to install packages manually:
+
+1. **Automatic Setup (Recommended)**:
+   ```bash
+   # The launcher script handles everything
+   ./run_machine_mode.sh --chatbot
+   ```
+   This will:
+   - Create a virtual environment (`csend_venv`)
+   - Install the anthropic package automatically
+   - Activate the environment when running
+
+2. **Manual Setup**:
+   ```bash
+   # Create and activate virtual environment
+   python3 -m venv csend_venv
+   source csend_venv/bin/activate
+   
+   # Install required packages
+   pip install anthropic
+   ```
+
+3. **System-wide install (not recommended)**:
+   ```bash
+   # For older Python or non-Debian systems
+   pip install anthropic
+   
+   # For Ubuntu/Debian with Python 3.12+
+   pip3 install --break-system-packages anthropic
+   ```
+
+### Setting up the API Key
+
+Before running the chatbot, you need to obtain and set your Anthropic API key:
+
+1. **Get an API key** from [Anthropic Console](https://console.anthropic.com/)
+2. **Set the environment variable**:
+   ```bash
+   export ANTHROPIC_API_KEY="your-api-key-here"
+   ```
+   
+   Or add it to your shell profile (e.g., `~/.bashrc`, `~/.zshrc`):
+   ```bash
+   echo 'export ANTHROPIC_API_KEY="your-api-key-here"' >> ~/.bashrc
+   source ~/.bashrc
+   ```
+   
+   **Note**: The launcher script automatically sources `~/.bashrc`, so if you've added the API key there, it will be picked up automatically.
+
+3. **Verify it's set**:
+   ```bash
+   echo $ANTHROPIC_API_KEY
+   ```
+
+### Quick Start
+
+With the API key set, you can run the chatbot:
+
+```bash
+# Using the launcher script (recommended)
+./run_machine_mode.sh --chatbot
+
+# Or run directly
+python3 csend_chatbot.py Claude
+```
+
+### Python Example
+```python
+from csend_chatbot import CSendChatbot
+import os
+
+# The API key is read from environment
+api_key = os.getenv("ANTHROPIC_API_KEY")
+if not api_key:
+    print("Error: ANTHROPIC_API_KEY not set")
+    exit(1)
+
+bot = CSendChatbot(
+    api_key=api_key,
+    username="Claude",
+    model="claude-3-haiku-20240307"
+)
+
+# Configure behavior
+bot.config.update({
+    "greeting": "Hi! I'm Claude, an AI assistant.",
+    "max_context": 20,
+    "commands": {
+        "!help": "Show commands",
+        "!peers": "List active peers"
+    }
+})
+
+bot.run()
+```
+
+### Configuration
+Create `chatbot_config.json`:
+```json
+{
+  "username": "Claude",
+  "model": "claude-3-haiku-20240307",
+  "system_prompt": "You are a helpful AI assistant in a P2P chat.",
+  "features": {
+    "context_memory": true,
+    "command_parsing": true,
+    "auto_greet": true
+  },
+  "rate_limits": {
+    "messages_per_minute": 20
+  }
+}
 ```
 
 ## Example Session
 
-```
-START:username=claude
-READY
-/list
-CMD:/list
-PEER_LIST_START
-PEER:1:matt:192.168.1.100:2
-PEER_LIST_END:count=1
-CMD_COMPLETE
-/send 1 Hello from Claude!
-CMD:/send 1 Hello from Claude!
-SEND_RESULT:success:peer=1:ip=192.168.1.100
-CMD_COMPLETE
-MESSAGE:from=matt:ip=192.168.1.100:content=Hi Claude!
-/quit
-CMD:/quit
+```json
+{"type": "start", "version": "2.0", "username": "claude", "timestamp": "2024-01-15T10:30:00Z"}
+{"type": "ready", "timestamp": "2024-01-15T10:30:01Z"}
+
+> /list --id=1
+{"type": "response", "id": "1", "timestamp": "2024-01-15T10:30:02Z", "command": "/list", "data": {"peers": [{"id": 1, "username": "alice", "ip": "192.168.1.100", "last_seen": "2024-01-15T10:29:57Z", "status": "active"}], "count": 1}}
+
+> /send 1 "Hello!" --id=2
+{"type": "response", "id": "2", "timestamp": "2024-01-15T10:30:03Z", "command": "/send", "data": {"success": true, "peer": {"id": 1, "username": "alice", "ip": "192.168.1.100"}, "message_id": "msg_001"}}
+
+{"type": "event", "event": "message", "timestamp": "2024-01-15T10:30:04Z", "data": {"from": {"id": 1, "username": "alice", "ip": "192.168.1.100"}, "content": "Hi Claude!", "message_id": "msg_002"}}
 ```
 
-## Integration with Claude Code
+## Best Practices
 
-### Quick Start for Claude Code
+1. **Use correlation IDs** - Track async requests with `--id`
+2. **Handle events separately** - Events can arrive anytime
+3. **Implement reconnection** - Handle network failures gracefully
+4. **Rate limit messages** - Prevent flooding the network
+5. **Validate JSON** - Always parse responses safely
+6. **Log errors** - Keep audit trail for debugging
 
-To use CSend in machine mode with Claude Code:
+## Troubleshooting
 
+### Common Issues
+
+**No output received**
+- Check process is running: `ps aux | grep csend`
+- Verify ports 8080-8081 are not blocked
+- Enable debug mode: `CSEND_LOG_LEVEL=debug`
+
+**JSON parsing errors**
+- Ensure proper escaping in messages
+- Check for UTF-8 encoding issues
+- Validate against response schema
+
+**Connection failures**
+- Verify network interface is up
+- Check firewall rules
+- Ensure UDP broadcast is enabled
+
+**Performance issues**
+- Monitor system resources
+- Check network latency
+- Consider batching operations
+
+### Claude Haiku Chatbot Issues
+
+**API Key Not Found**
 ```bash
-# Start CSend in machine mode
-./build/posix/csend_posix --machine-mode claude > csend_output.txt 2>&1 < csend_input.txt &
-echo $! > csend_pid.txt
-
-# Wait for it to start
-sleep 2
-
-# Send commands via the input file
-echo "/list" >> csend_input.txt
-
-# Read output
-tail -f csend_output.txt
+Error: ANTHROPIC_API_KEY environment variable not set
 ```
+Solution:
+- Ensure you've exported the API key: `export ANTHROPIC_API_KEY="sk-ant-..."`
+- Check it's set: `echo $ANTHROPIC_API_KEY`
+- If using sudo, preserve environment: `sudo -E python3 csend_chatbot.py`
 
-### Python Integration Example
-
-When using this with Claude Code, you can use the Bash tool to interact:
-
-```python
-# Start the application
-process = subprocess.Popen(['./build/posix/csend_posix', '--machine-mode', 'claude'], 
-                          stdin=subprocess.PIPE, 
-                          stdout=subprocess.PIPE, 
-                          stderr=subprocess.PIPE,
-                          text=True,
-                          bufsize=0)  # Unbuffered for real-time communication
-
-# Wait for READY
-while True:
-    line = process.stdout.readline()
-    if line.strip() == 'READY':
-        break
-
-# Send command
-process.stdin.write('/list\n')
-process.stdin.flush()
-
-# Read response
-while True:
-    line = process.stdout.readline()
-    print(line.strip())
-    if line.strip() == 'CMD_COMPLETE':
-        break
+**Invalid API Key**
 ```
+Claude API error: 401 Unauthorized
+```
+Solution:
+- Verify your API key is correct and active
+- Check your Anthropic account has available credits
+- Ensure the key has permissions for Claude Haiku model
 
-### Best Practices
+**Rate Limiting**
+```
+Error: Rate limit exceeded
+```
+Solution:
+- The bot has built-in rate limiting (20 messages/minute per user)
+- For API rate limits, check your Anthropic plan limits
+- Consider upgrading your plan if needed
 
-1. **Always wait for READY** - Don't send commands until you receive the READY signal
-2. **Handle PEER_UPDATE** - Peer list changes trigger PEER_UPDATE notifications
-3. **Check for CMD_COMPLETE** - Every command ends with CMD_COMPLETE
-4. **Use unbuffered I/O** - Set bufsize=0 for real-time communication
-5. **Handle shutdown gracefully** - Send /quit command before terminating the process
+**Model Not Available**
+```
+Error: Model claude-3-haiku-20240307 not found
+```
+Solution:
+- Ensure your API key has access to Claude Haiku
+- Check the model name is correct in your config
+- Try using a different Claude model if needed
+
+**Module Not Found**
+```
+ModuleNotFoundError: No module named 'anthropic'
+```
+Solution:
+- Install the required package: `pip install anthropic` or `pip3 install anthropic`
+- If using a virtual environment, ensure it's activated
+- Check pip installation: `python3 -m pip install anthropic`

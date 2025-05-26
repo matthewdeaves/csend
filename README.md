@@ -2,7 +2,7 @@
 
 `csend` is a cross-platform peer-to-peer chat application in C, with functional versions for POSIX systems and Classic Macintosh.
 
-The **POSIX version** is a multi-threaded, command-line application. It uses UDP for local network peer discovery and TCP for direct messaging. Docker support is provided for testing.
+The **POSIX version** is a multi-threaded, command-line application. It uses UDP for local network peer discovery and TCP for direct messaging. Docker support is provided for testing. There is also a JSON-based machine mode for programmatic interaction, including a Claude Haiku chatbot integration. See [Machine Mode Documentation](MACHINE_MODE.md) for details.
 
 The **Classic Mac version** is a GUI application for System 7.x (via Retro68). It utilises MacTCP for UDP peer discovery and TCP messaging (TEXT and QUIT types). The application now features a network abstraction layer that enables easier porting to OpenTransport in the future. It uses dual TCP streams - one dedicated to listening for incoming connections and another for outgoing connections, managed through a single-threaded event loop with asynchronous operations.
 
@@ -56,6 +56,7 @@ The `shared/` directory contains the core logic that is platform-independent:
 *   **Network Utilities:** Includes helpers for getting the local IP address (`get_local_ip`) and setting socket timeouts (`set_socket_timeout`) (`posix/network.c`).
 *   **Logging:** Uses the shared logging system. Platform-specific callbacks provide POSIX-style timestamps and print debug messages to `stdout` (`posix/logging.c`). Log messages are also written to `csend_posix.log`.
 *   **Docker Support:** Includes `Dockerfile`, `docker-compose.yml` (and a helper script `docker.sh`) to easily build and run multiple peer instances.
+*   **Machine Mode & AI Integration:** Provides a JSON-based machine mode for programmatic interaction, including a Claude Haiku chatbot integration. See [Machine Mode Documentation](MACHINE_MODE.md) for details.
 
 ## Features (Classic Mac Version)
 
