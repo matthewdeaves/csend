@@ -207,10 +207,16 @@ I maintain context of our conversation and can help multiple users simultaneousl
             
             response_text = response.content[0].text
             
-            # Add assistant response to history
+            # Convert to single line for Classic Mac compatibility
+            single_line_response = response_text.replace('\n', ' ').replace('\r', ' ').strip()
+            # Remove multiple spaces
+            while '  ' in single_line_response:
+                single_line_response = single_line_response.replace('  ', ' ')
+            
+            # Add assistant response to history (keep original for context)
             self.conversations[username].append({"role": "assistant", "content": response_text})
             
-            return response_text
+            return single_line_response
             
         except Exception as e:
             print(f"Claude API error: {e}")
