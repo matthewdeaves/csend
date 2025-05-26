@@ -227,7 +227,7 @@ if [ "$strip_comments" = true ]; then echo "Stripping comments from .c/.h: Yes (
 tree_output_added=false
 if [ "$include_tree" = true ]; then
     # Construct the ignore pattern dynamically to include the output file name and exclude .sh files
-    ignore_pattern="build|obj|tools|misc|*.md|*.sh|$output_file"
+    ignore_pattern="build|obj|tools|misc|csend_venv|doxygen_docs|images|logs|__pycache__|Books|*.md|*.sh|$output_file"
 
     if command -v tree &> /dev/null; then
         echo "Adding project structure (tree .)..."
@@ -241,7 +241,7 @@ if [ "$include_tree" = true ]; then
             if ! tree_output=$(tree -I "$ignore_pattern" . 2>/dev/null) || [ -z "$tree_output" ]; then
                 echo "# Tree command failed or produced no output. Using simple directory listing:"
                 echo "# Main directories (excluding build, obj, tools, misc):"
-                find . -type d -maxdepth 1 -not -path "*/\.*" -not -path "./build" -not -path "./obj" -not -path "./tools" -not -path "./misc" | sort
+                find . -type d -maxdepth 1 -not -path "*/\.*" -not -path "./build" -not -path "./obj" -not -path "./tools" -not -path "./misc" -not -path "./Books" -not -path "./images" -not -path "./doxygen_docs" | sort
                 echo "# ----------------"
                 echo "# Files in root (excluding .md, .sh, $output_file):"
                 find . -type f -maxdepth 1 -not -path "*/\.*" -not -name '*.md' -not -name '*.sh' -not -name "$output_file" | sort
@@ -260,7 +260,7 @@ if [ "$include_tree" = true ]; then
             echo "# Excluded: build/, obj/, tools/, misc/, *.md, *.sh, $output_file"
             echo "#===================================="
             echo "# Main directories (excluding build, obj, tools, misc):"
-            find . -type d -maxdepth 1 -not -path "*/\.*" -not -path "./build" -not -path "./obj" -not -path "./tools" -not -path "./misc" | sort
+            find . -type d -maxdepth 1 -not -path "*/\.*" -not -path "./build" -not -path "./obj" -not -path "./tools" -not -path "./misc" -not -path "./Books" -not -path "./images" -not -path "./doxygen_docs" | sort
             echo "# ----------------"
             echo "# Files in root (excluding .md, .sh, $output_file):"
             find . -type f -maxdepth 1 -not -path "*/\.*" -not -name '*.md' -not -name '*.sh' -not -name "$output_file" | sort
