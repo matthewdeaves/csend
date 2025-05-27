@@ -5,11 +5,34 @@
 #define MAX_LOG_LINE_LENGTH 1024
 #define USER_MESSAGE_BUFFER_SIZE (MAX_LOG_LINE_LENGTH - 60)
 #define TIMESTAMP_BUFFER_SIZE 30
+#define CATEGORY_NAME_SIZE 12
+
 static FILE *g_log_file = NULL;
 static platform_logging_callbacks_t g_platform_callbacks;
 static Boolean g_callbacks_initialized = false;
 static Boolean g_show_debug_output = false;
 static char g_log_file_name[256];
+static log_level_t g_current_log_level = LOG_LEVEL_DEBUG;
+
+/* Category names for output */
+static const char* g_category_names[LOG_CAT_COUNT] = {
+    "GENERAL",
+    "NETWORKING",
+    "DISCOVERY",
+    "PEER_MGMT",
+    "UI",
+    "PROTOCOL",
+    "SYSTEM",
+    "MESSAGING"
+};
+
+/* Level names for output */
+static const char* g_level_names[] = {
+    "ERROR",
+    "WARNING",
+    "INFO",
+    "DEBUG"
+};
 static void fallback_get_timestamp(char *buffer, size_t buffer_size)
 {
     time_t now;
@@ -73,44 +96,87 @@ void log_shutdown(void)
     g_callbacks_initialized = false;
     memset(&g_platform_callbacks, 0, sizeof(platform_logging_callbacks_t));
 }
-void log_debug(const char *format, ...)
+static void log_message_internal(log_level_t level, log_category_t category, const char *format, va_list args)
 {
     char message_body[USER_MESSAGE_BUFFER_SIZE];
     char timestamp_str[TIMESTAMP_BUFFER_SIZE];
     char full_log_message[MAX_LOG_LINE_LENGTH];
-    char timestamp_and_prefix_for_ui[TIMESTAMP_BUFFER_SIZE + 10];
-    va_list args;
-    va_start(args, format);
+    char timestamp_and_prefix_for_ui[TIMESTAMP_BUFFER_SIZE + 30];
+    
+    /* Check if we should log this message based on level */
+    if (level > g_current_log_level) {
+        return;
+    }
+    
 #ifdef __MACOS__
     vsprintf(message_body, format, args);
 #else
     vsnprintf(message_body, USER_MESSAGE_BUFFER_SIZE, format, args);
 #endif
-    va_end(args);
     message_body[USER_MESSAGE_BUFFER_SIZE - 1] = '\0';
+    
     if (g_callbacks_initialized && g_platform_callbacks.get_timestamp) {
         g_platform_callbacks.get_timestamp(timestamp_str, sizeof(timestamp_str));
     } else {
         fallback_get_timestamp(timestamp_str, sizeof(timestamp_str));
     }
+    
     if (g_log_file != NULL) {
 #ifdef __MACOS__
-        sprintf(full_log_message, "%s [DEBUG] %s", timestamp_str, message_body);
+        sprintf(full_log_message, "%s [%s][%s] %s", 
+                timestamp_str, g_level_names[level], g_category_names[category], message_body);
 #else
-        snprintf(full_log_message, MAX_LOG_LINE_LENGTH, "%s [DEBUG] %s", timestamp_str, message_body);
+        snprintf(full_log_message, MAX_LOG_LINE_LENGTH, "%s [%s][%s] %s", 
+                 timestamp_str, g_level_names[level], g_category_names[category], message_body);
 #endif
         fprintf(g_log_file, "%s\n", full_log_message);
         fflush(g_log_file);
     }
+    
     if (g_show_debug_output && g_callbacks_initialized && g_platform_callbacks.display_debug_log != NULL) {
 #ifdef __MACOS__
-        sprintf(timestamp_and_prefix_for_ui, "%s [DEBUG] ", timestamp_str);
+        sprintf(timestamp_and_prefix_for_ui, "%s [%s][%s] ", 
+                timestamp_str, g_level_names[level], g_category_names[category]);
 #else
-        snprintf(timestamp_and_prefix_for_ui, sizeof(timestamp_and_prefix_for_ui), "%s [DEBUG] ", timestamp_str);
+        snprintf(timestamp_and_prefix_for_ui, sizeof(timestamp_and_prefix_for_ui), "%s [%s][%s] ", 
+                 timestamp_str, g_level_names[level], g_category_names[category]);
 #endif
         g_platform_callbacks.display_debug_log(timestamp_and_prefix_for_ui, message_body);
     }
 }
+
+void log_error_cat(log_category_t category, const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    log_message_internal(LOG_LEVEL_ERROR, category, format, args);
+    va_end(args);
+}
+
+void log_warning_cat(log_category_t category, const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    log_message_internal(LOG_LEVEL_WARNING, category, format, args);
+    va_end(args);
+}
+
+void log_info_cat(log_category_t category, const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    log_message_internal(LOG_LEVEL_INFO, category, format, args);
+    va_end(args);
+}
+
+void log_debug_cat(log_category_t category, const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    log_message_internal(LOG_LEVEL_DEBUG, category, format, args);
+    va_end(args);
+}
+
 void log_app_event(const char *format, ...)
 {
     char message_body[USER_MESSAGE_BUFFER_SIZE];
@@ -147,4 +213,16 @@ void set_debug_output_enabled(Boolean enabled)
 Boolean is_debug_output_enabled(void)
 {
     return g_show_debug_output;
+}
+
+void set_log_level(log_level_t level)
+{
+    if (level >= LOG_LEVEL_ERROR && level <= LOG_LEVEL_DEBUG) {
+        g_current_log_level = level;
+    }
+}
+
+log_level_t get_log_level(void)
+{
+    return g_current_log_level;
 }

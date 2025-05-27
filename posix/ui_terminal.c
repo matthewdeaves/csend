@@ -120,7 +120,7 @@ int handle_command(app_state_t *state, const char *input)
         
         if (found) {
             if (send_message(target_ip, msg_start, MSG_TEXT, state->username) < 0) {
-                log_debug("Failed to send message to %s", target_ip);
+                log_error_cat(LOG_CAT_MESSAGING, "Failed to send message to %s", target_ip);
                 if (state->ui) {
                     UI_CALL(state->ui, notify_send_result, 0, peer_num_input, target_ip);
                 }
@@ -146,7 +146,7 @@ int handle_command(app_state_t *state, const char *input)
             if (state->peer_manager.peers[i].active &&
                     (difftime(time(NULL), state->peer_manager.peers[i].last_seen) <= PEER_TIMEOUT)) {
                 if (send_message(state->peer_manager.peers[i].ip, message_content, MSG_TEXT, state->username) < 0) {
-                    log_debug("Failed to send broadcast message to %s", state->peer_manager.peers[i].ip);
+                    log_error_cat(LOG_CAT_MESSAGING, "Failed to send broadcast message to %s", state->peer_manager.peers[i].ip);
                 } else {
                     sent_count++;
                 }
@@ -159,27 +159,27 @@ int handle_command(app_state_t *state, const char *input)
             UI_CALL(state->ui, notify_broadcast_result, sent_count);
         }
     } else if (strcmp(clean_input, "/quit") == 0) {
-        log_debug("Initiating quit sequence...");
+        log_info_cat(LOG_CAT_SYSTEM, "Initiating quit sequence...");
         pthread_mutex_lock(&state->peers_mutex);
-        log_debug("Sending QUIT notifications to peers...");
+        log_info_cat(LOG_CAT_MESSAGING, "Sending QUIT notifications to peers...");
         int notify_count = 0;
         for (int i = 0; i < MAX_PEERS; i++) {
             if (state->peer_manager.peers[i].active) {
                 if (send_message(state->peer_manager.peers[i].ip, "", MSG_QUIT, state->username) < 0) {
-                    log_debug("Failed to send quit notification to %s", state->peer_manager.peers[i].ip);
+                    log_error_cat(LOG_CAT_MESSAGING, "Failed to send quit notification to %s", state->peer_manager.peers[i].ip);
                 } else {
                     notify_count++;
                 }
             }
         }
         pthread_mutex_unlock(&state->peers_mutex);
-        log_debug("Quit notifications sent to %d peer(s).", notify_count);
+        log_info_cat(LOG_CAT_MESSAGING, "Quit notifications sent to %d peer(s).", notify_count);
         if (g_state) {
             g_state->running = 0;
         } else {
             state->running = 0;
         }
-        log_debug("Exiting application via /quit command...");
+        log_info_cat(LOG_CAT_SYSTEM, "Exiting application via /quit command...");
         result = 1;  /* Signal quit */
     } else if (strcmp(clean_input, "/status") == 0) {
         if (state->ui && state->ui->ops->notify_status) {
@@ -262,7 +262,7 @@ void *user_input_thread(void *arg)
         if (fgets(input, BUFFER_SIZE, stdin) == NULL) {
             if (state->running) {
                 if (feof(stdin)) {
-                    log_debug("EOF detected on stdin. Exiting input loop.");
+                    log_info_cat(LOG_CAT_UI, "EOF detected on stdin. Exiting input loop.");
                     /* Notify about EOF via terminal display */
                     terminal_display_app_message("Input stream closed. Shutting down...");
                     if (g_state) g_state->running = 0;
@@ -271,7 +271,7 @@ void *user_input_thread(void *arg)
                     /* Interrupted by signal, continue */
                     continue;
                 } else {
-                    log_debug("Error reading input from stdin: %s", strerror(errno));
+                    log_error_cat(LOG_CAT_UI, "Error reading input from stdin: %s", strerror(errno));
                     /* For errors, we'll just log them and try to recover */
                     /* Try to recover from transient errors */
                     clearerr(stdin);
@@ -297,7 +297,7 @@ void *user_input_thread(void *arg)
             UI_CALL(state->ui, show_prompt);
         }
     }
-    log_debug("User input thread stopped.");
+    log_info_cat(LOG_CAT_UI, "User input thread stopped.");
     return NULL;
 }
 

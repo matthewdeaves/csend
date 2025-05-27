@@ -27,11 +27,11 @@ OSErr InitNetworkAbstraction(void)
 {
     OSErr err = noErr;
 
-    log_debug("InitNetworkAbstraction: Starting network abstraction initialization");
+    log_info_cat(LOG_CAT_NETWORKING, "InitNetworkAbstraction: Starting network abstraction initialization");
 
     /* Check if already initialized */
     if (gNetworkOps != NULL) {
-        log_debug("InitNetworkAbstraction: Already initialized with %s",
+        log_debug_cat(LOG_CAT_NETWORKING, "InitNetworkAbstraction: Already initialized with %s",
                   GetNetworkImplementationName());
         return noErr;
     }
@@ -39,10 +39,10 @@ OSErr InitNetworkAbstraction(void)
     /* Determine which implementation to use */
     if (IsOpenTransportAvailable()) {
         /* TODO: Initialize OpenTransport implementation */
-        log_debug("InitNetworkAbstraction: OpenTransport detected but not yet implemented");
+        log_debug_cat(LOG_CAT_NETWORKING, "InitNetworkAbstraction: OpenTransport detected but not yet implemented");
         gCurrentNetworkImpl = NETWORK_IMPL_MACTCP; /* Fall back to MacTCP for now */
     } else {
-        log_debug("InitNetworkAbstraction: Using MacTCP implementation");
+        log_info_cat(LOG_CAT_NETWORKING, "InitNetworkAbstraction: Using MacTCP implementation");
         gCurrentNetworkImpl = NETWORK_IMPL_MACTCP;
     }
 
@@ -84,13 +84,13 @@ OSErr InitNetworkAbstraction(void)
 /* Shutdown the network abstraction layer */
 void ShutdownNetworkAbstraction(void)
 {
-    log_debug("ShutdownNetworkAbstraction: Shutting down network abstraction");
+    log_debug_cat(LOG_CAT_NETWORKING, "ShutdownNetworkAbstraction: Shutting down network abstraction");
 
     /* The operations table is static, just clear the pointer */
     gNetworkOps = NULL;
     gCurrentNetworkImpl = NETWORK_IMPL_NONE;
 
-    log_debug("ShutdownNetworkAbstraction: Complete");
+    log_debug_cat(LOG_CAT_NETWORKING, "ShutdownNetworkAbstraction: Complete");
 }
 
 /* Get current network implementation type */

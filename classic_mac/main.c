@@ -64,7 +64,7 @@ int main(void)
     MaxApplZone();
     InitializeToolbox();
     log_app_event("Starting Classic Mac P2P Messenger...");
-    log_debug("MaxApplZone called. Toolbox Initialized.");
+    log_debug_cat(LOG_CAT_SYSTEM, "MaxApplZone called. Toolbox Initialized.");
     networkErr = InitializeNetworking();
     if (networkErr != noErr) {
         sprintf(ui_message_buffer, "Fatal: Network initialization failed (Error: %d). Application cannot continue.", (int)networkErr);
@@ -77,9 +77,9 @@ int main(void)
         log_shutdown();
         return 1;
     }
-    log_debug("Networking stack initialized.");
+    log_info_cat(LOG_CAT_NETWORKING, "Networking stack initialized.");
     InitPeerList();
-    log_debug("Peer list data structure initialized.");
+    log_debug_cat(LOG_CAT_PEER_MGMT, "Peer list data structure initialized.");
     dialogOk = InitDialog();
     if (!dialogOk) {
         log_app_event("Fatal: Dialog initialization failed. Exiting.");
@@ -91,9 +91,9 @@ int main(void)
     AppendToMessagesTE("Classic Mac P2P Messenger Started.\r");
     sprintf(ui_message_buffer, "My IP: %s, Username: %s\r", gMyLocalIPStr, gMyUsername);
     AppendToMessagesTE(ui_message_buffer);
-    log_debug("Dialog initialized. Entering main event loop...");
+    log_info_cat(LOG_CAT_UI, "Dialog initialized. Entering main event loop...");
     MainEventLoop();
-    log_debug("Exited main event loop.");
+    log_debug_cat(LOG_CAT_SYSTEM, "Exited main event loop.");
     log_app_event("Initiating shutdown sequence...");
     AppendToMessagesTE("Shutting down...\r");
     int quit_sent_count = 0;
@@ -103,7 +103,7 @@ int main(void)
     for (int i = 0; i < MAX_PEERS; i++) {
         if (gPeerManager.peers[i].active) {
             quit_active_peers++;
-            log_debug("Attempting to send QUIT to %s@%s", gPeerManager.peers[i].username, gPeerManager.peers[i].ip);
+            log_debug_cat(LOG_CAT_MESSAGING, "Attempting to send QUIT to %s@%s", gPeerManager.peers[i].username, gPeerManager.peers[i].ip);
             OSErr current_quit_err = MacTCP_QueueMessage(
                                          gPeerManager.peers[i].ip,
                                          "",
@@ -111,7 +111,7 @@ int main(void)
             if (current_quit_err == noErr) {
                 quit_sent_count++;
             } else {
-                log_debug("Failed to send QUIT to %s@%s: Error %d", gPeerManager.peers[i].username, gPeerManager.peers[i].ip, (int)current_quit_err);
+                log_error_cat(LOG_CAT_MESSAGING, "Failed to send QUIT to %s@%s: Error %d", gPeerManager.peers[i].username, gPeerManager.peers[i].ip, (int)current_quit_err);
                 if (last_quit_err == noErr || (last_quit_err == streamBusyErr && current_quit_err != streamBusyErr)) {
                     last_quit_err = current_quit_err;
                 }
@@ -123,7 +123,7 @@ int main(void)
     
     /* Process the message queue to ensure QUIT messages are sent */
     if (quit_sent_count > 0) {
-        log_debug("Processing message queue for QUIT messages...");
+        log_debug_cat(LOG_CAT_MESSAGING, "Processing message queue for QUIT messages...");
         unsigned long startTime = TickCount();
         unsigned long timeoutTicks = 180; /* 3 seconds timeout */
         
@@ -133,7 +133,7 @@ int main(void)
             
             /* Check if all messages have been sent */
             if (GetQueuedMessageCount() == 0 && GetTCPSendStreamState() == TCP_STATE_IDLE) {
-                log_debug("All QUIT messages processed");
+                log_debug_cat(LOG_CAT_MESSAGING, "All QUIT messages processed");
                 break;
             }
             
@@ -152,14 +152,14 @@ int main(void)
         AppendToMessagesTE("No active peers to send QUIT messages to.\r");
     }
     if (last_quit_err != noErr) {
-        log_debug("Warning: Sending QUIT messages encountered error: %d.", (int)last_quit_err);
+        log_warning_cat(LOG_CAT_MESSAGING, "Sending QUIT messages encountered error: %d.", (int)last_quit_err);
     }
     CleanupDialog();
-    log_debug("Dialog resources cleaned up.");
+    log_debug_cat(LOG_CAT_UI, "Dialog resources cleaned up.");
     CleanupNetworking();
-    log_debug("Networking stack cleaned up.");
+    log_debug_cat(LOG_CAT_NETWORKING, "Networking stack cleaned up.");
     if (gAEQuitAppUPP) {
-        log_debug("Disposing AEQuitAppUPP.");
+        log_debug_cat(LOG_CAT_SYSTEM, "Disposing AEQuitAppUPP.");
         DisposeAEEventHandlerUPP(gAEQuitAppUPP);
         gAEQuitAppUPP = NULL;
     }
@@ -186,10 +186,10 @@ void InitializeToolbox(void)
         if (appleMenu) {
             AppendResMenu(appleMenu, 'DRVR');
         } else {
-            log_debug("Warning: Could not get Apple Menu (ID %d). Desk Accessories may not be available.", kAppleMenuID);
+            log_warning_cat(LOG_CAT_UI, "Could not get Apple Menu (ID %d). Desk Accessories may not be available.", kAppleMenuID);
         }
         DrawMenuBar();
-        log_debug("Menu bar initialized and drawn.");
+        log_debug_cat(LOG_CAT_UI, "Menu bar initialized and drawn.");
     }
     InstallAppleEventHandlers();
     InitCursor();
@@ -197,7 +197,7 @@ void InitializeToolbox(void)
 void InstallAppleEventHandlers(void)
 {
     OSErr err;
-    log_debug("InstallAppleEventHandlers: Entry.");
+    log_debug_cat(LOG_CAT_SYSTEM, "InstallAppleEventHandlers: Entry.");
     if (gAEQuitAppUPP == NULL) {
         gAEQuitAppUPP = NewAEEventHandlerUPP(MyAEQuitApplication);
         if (gAEQuitAppUPP == NULL) {
@@ -211,9 +211,9 @@ void InstallAppleEventHandlers(void)
     if (err != noErr) {
         log_app_event("CRITICAL: AEInstallEventHandler failed for kAEQuitApplication: %d", err);
     } else {
-        log_debug("InstallAppleEventHandlers: kAEQuitApplication handler installed.");
+        log_debug_cat(LOG_CAT_SYSTEM, "InstallAppleEventHandlers: kAEQuitApplication handler installed.");
     }
-    log_debug("InstallAppleEventHandlers: Exit.");
+    log_debug_cat(LOG_CAT_SYSTEM, "InstallAppleEventHandlers: Exit.");
 }
 pascal OSErr MyAEQuitApplication(const AppleEvent *theAppleEvent, AppleEvent *reply, long handlerRefCon)
 {
@@ -227,7 +227,7 @@ void HandleMenuChoice(long menuResult)
     short menuID = HiWord(menuResult);
     short menuItem = LoWord(menuResult);
     Str255 daName;
-    log_debug("HandleMenuChoice: menuID=%d, menuItem=%d", menuID, menuItem);
+    log_debug_cat(LOG_CAT_UI, "HandleMenuChoice: menuID=%d, menuItem=%d", menuID, menuItem);
     switch (menuID) {
     case kAppleMenuID:
         if (menuItem == kAboutItem) {
@@ -238,7 +238,7 @@ void HandleMenuChoice(long menuResult)
             if (appleMenu) {
                 GetMenuItemText(appleMenu, menuItem, daName);
                 OpenDeskAcc(daName);
-                log_debug("HandleMenuChoice: Desk Accessory '%p' selected.", daName);
+                log_debug_cat(LOG_CAT_UI, "HandleMenuChoice: Desk Accessory '%p' selected.", daName);
             }
         }
         break;
@@ -249,7 +249,7 @@ void HandleMenuChoice(long menuResult)
         }
         break;
     default:
-        log_debug("HandleMenuChoice: Unhandled menuID %d.", menuID);
+        log_debug_cat(LOG_CAT_UI, "HandleMenuChoice: Unhandled menuID %d.", menuID);
         break;
     }
     HiliteMenu(0);
@@ -270,7 +270,7 @@ void MainEventLoop(void)
                 WindowPtr whichWindow;
                 short windowPart = FindWindow(event.where, &whichWindow);
                 if (windowPart == inMenuBar) {
-                    log_debug("MainEventLoop: MouseDown inMenuBar.");
+                    log_debug_cat(LOG_CAT_UI, "MainEventLoop: MouseDown inMenuBar.");
                     long menuResult = MenuSelect(event.where);
                     if (HiWord(menuResult) != 0) {
                         HandleMenuChoice(menuResult);
@@ -287,7 +287,7 @@ void MainEventLoop(void)
                     foundControlPart = FindControl(localPt, whichWindow, &foundControl);
                     if (foundControl == gMessagesScrollBar && foundControlPart != 0 &&
                             (**foundControl).contrlVis && (**foundControl).contrlHilite == 0) {
-                        log_debug("MouseDown: Click in Messages Scrollbar (part %d).", foundControlPart);
+                        log_debug_cat(LOG_CAT_UI, "MouseDown: Click in Messages Scrollbar (part %d).", foundControlPart);
                         if (foundControlPart == kControlIndicatorPart) {
                             short oldValue = GetControlValue(foundControl);
                             TrackControl(foundControl, localPt, nil);
@@ -300,7 +300,7 @@ void MainEventLoop(void)
                         }
                         eventHandledByApp = true;
                     } else if (!eventHandledByApp && gPeerListHandle != NULL && PtInRect(localPt, &(**gPeerListHandle).rView)) {
-                        log_debug("MouseDown: Click potentially in Peer List user item.");
+                        log_debug_cat(LOG_CAT_UI, "MouseDown: Click potentially in Peer List user item.");
                         eventHandledByApp = HandlePeerListClick(gMainWindow, &event);
                     } else if (!eventHandledByApp) {
                         Rect inputTERectDITL;
@@ -308,7 +308,7 @@ void MainEventLoop(void)
                         Handle itemHandleDITL;
                         GetDialogItem(gMainWindow, kInputTextEdit, &itemTypeDITL, &itemHandleDITL, &inputTERectDITL);
                         if (PtInRect(localPt, &inputTERectDITL)) {
-                            log_debug("MouseDown: Click in Input TE user item.");
+                            log_debug_cat(LOG_CAT_UI, "MouseDown: Click in Input TE user item.");
                             HandleInputTEClick(gMainWindow, &event);
                             eventHandledByApp = true;
                         }
@@ -339,7 +339,7 @@ void MainEventLoop(void)
                                 SetControlValue(controlH, !currentValue);
                                 Boolean newState = (GetControlValue(controlH) == 1);
                                 set_debug_output_enabled(newState);
-                                log_debug("Debug output %s.", newState ? "ENABLED" : "DISABLED");
+                                log_info_cat(LOG_CAT_SYSTEM, "Debug output %s.", newState ? "ENABLED" : "DISABLED");
                             }
                             break;
                         case kBroadcastCheckbox:
@@ -349,18 +349,18 @@ void MainEventLoop(void)
                                 currentValue = GetControlValue(controlH);
                                 SetControlValue(controlH, !currentValue);
                                 if (GetControlValue(controlH) == 1) {
-                                    log_debug("Broadcast checkbox checked. Deselecting peer.");
+                                    log_debug_cat(LOG_CAT_UI, "Broadcast checkbox checked. Deselecting peer.");
                                     DialogPeerList_DeselectAll();
                                 } else {
-                                    log_debug("Broadcast checkbox unchecked.");
+                                    log_debug_cat(LOG_CAT_UI, "Broadcast checkbox unchecked.");
                                 }
                             }
                             break;
                         case kMessagesScrollbar:
-                            log_debug("DialogSelect returned kMessagesScrollbar (item %d). Typically handled by FindControl.", itemHit);
+                            log_debug_cat(LOG_CAT_UI, "DialogSelect returned kMessagesScrollbar (item %d). Typically handled by FindControl.", itemHit);
                             break;
                         default:
-                            log_debug("DialogSelect unhandled item: %d", itemHit);
+                            log_debug_cat(LOG_CAT_UI, "DialogSelect unhandled item: %d", itemHit);
                             break;
                         }
                     }
@@ -408,7 +408,7 @@ void HandleEvent(EventRecord *event)
             break;
         case inGoAway:
             if (whichWindow == (WindowPtr)gMainWindow && TrackGoAway(whichWindow, event->where)) {
-                log_debug("Close box clicked on main window. Setting gDone = true.");
+                log_debug_cat(LOG_CAT_UI, "Close box clicked on main window. Setting gDone = true.");
                 gDone = true;
             }
             break;
@@ -418,11 +418,11 @@ void HandleEvent(EventRecord *event)
             } else if (whichWindow != (WindowPtr)gMainWindow && whichWindow != FrontWindow()) {
                 SelectWindow(whichWindow);
             } else {
-                log_debug("HandleEvent: mouseDown in content of front window (unhandled by specific checks). Window: 0x%lX", (unsigned long)whichWindow);
+                log_debug_cat(LOG_CAT_UI, "HandleEvent: mouseDown in content of front window (unhandled by specific checks). Window: 0x%lX", (unsigned long)whichWindow);
             }
             break;
         default:
-            log_debug("HandleEvent: mouseDown in unknown window part: %d", windowPart);
+            log_debug_cat(LOG_CAT_UI, "HandleEvent: mouseDown in unknown window part: %d", windowPart);
             break;
         }
         break;
@@ -469,12 +469,12 @@ void HandleEvent(EventRecord *event)
     case kHighLevelEvent:
         OSErr aeErr = AEProcessAppleEvent(event);
         if (aeErr != noErr && aeErr != errAEEventNotHandled) {
-            log_debug("HandleEvent: AEProcessAppleEvent returned error: %d", aeErr);
+            log_error_cat(LOG_CAT_SYSTEM, "HandleEvent: AEProcessAppleEvent returned error: %d", aeErr);
         } else if (aeErr == errAEEventNotHandled) {
         }
         break;
     case osEvt:
-        log_debug("HandleEvent: osEvt, message: 0x%lX (HighByte: 0x%lX)", event->message, (event->message >> 24) & 0xFF);
+        log_debug_cat(LOG_CAT_SYSTEM, "HandleEvent: osEvt, message: 0x%lX (HighByte: 0x%lX)", event->message, (event->message >> 24) & 0xFF);
         break;
     default:
         break;

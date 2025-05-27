@@ -4,7 +4,7 @@
 
 #include "messaging.h"
 #include "network_abstraction.h"
-#include "logging.h"
+#include "../shared/logging.h"
 #include "../shared/logging.h"
 #include "protocol.h"
 #include "peer.h"
@@ -93,12 +93,12 @@ static int mac_tcp_add_or_update_peer_callback(const char *ip, const char *usern
     (void)platform_context;
     int addResult = AddOrUpdatePeer(ip, username);
     if (addResult > 0) {
-        log_debug("Peer added/updated via TCP: %s@%s", username, ip);
+        log_debug_cat(LOG_CAT_PEER_MGMT, "Peer added/updated via TCP: %s@%s", username, ip);
         if (gMainWindow != NULL && gPeerListHandle != NULL) UpdatePeerDisplayList(true);
     } else if (addResult == 0) {
-        log_debug("Peer updated via TCP: %s@%s", username, ip);
+        log_debug_cat(LOG_CAT_PEER_MGMT, "Peer updated via TCP: %s@%s", username, ip);
     } else {
-        log_debug("Peer list full or error for %s@%s from TCP.", username, ip);
+        log_error_cat(LOG_CAT_PEER_MGMT, "Peer list full or error for %s@%s from TCP.", username, ip);
     }
     return addResult;
 }
@@ -113,14 +113,14 @@ static void mac_tcp_display_text_message_callback(const char *username, const ch
         AppendToMessagesTE(displayMsg);
         AppendToMessagesTE("\r");
     }
-    log_debug("Message from %s@%s displayed: %s", username, ip, message_content);
+    log_debug_cat(LOG_CAT_MESSAGING, "Message from %s@%s displayed: %s", username, ip, message_content);
 }
 
 static void mac_tcp_mark_peer_inactive_callback(const char *ip, void *platform_context)
 {
     (void)platform_context;
     if (!ip) return;
-    log_debug("Peer %s has sent QUIT via TCP. Marking inactive.", ip);
+    log_info_cat(LOG_CAT_PEER_MGMT, "Peer %s has sent QUIT via TCP. Marking inactive.", ip);
     if (MarkPeerInactive(ip)) {
         if (gMainWindow != NULL && gPeerListHandle != NULL) UpdatePeerDisplayList(true);
     }
@@ -137,7 +137,7 @@ static Boolean EnqueueMessage(const char *peerIP, const char *msgType, const cha
 {
     int nextTail = (gQueueTail + 1) % MAX_QUEUED_MESSAGES;
     if (nextTail == gQueueHead) {
-        log_debug("EnqueueMessage: Queue full, cannot enqueue message to %s", peerIP);
+        log_error_cat(LOG_CAT_MESSAGING, "EnqueueMessage: Queue full, cannot enqueue message to %s", peerIP);
         return false;
     }
 
@@ -151,7 +151,7 @@ static Boolean EnqueueMessage(const char *peerIP, const char *msgType, const cha
     msg->inUse = true;
 
     gQueueTail = nextTail;
-    log_debug("EnqueueMessage: Queued message to %s (type: %s)", peerIP, msgType);
+    log_debug_cat(LOG_CAT_MESSAGING, "EnqueueMessage: Queued message to %s (type: %s)", peerIP, msgType);
     return true;
 }
 
@@ -173,7 +173,7 @@ static void ProcessMessageQueue(GiveTimePtr giveTime)
 
     if (gTCPSendState == TCP_STATE_IDLE) {
         if (DequeueMessage(&msg)) {
-            log_debug("ProcessMessageQueue: Processing queued message to %s", msg.peerIP);
+            log_debug_cat(LOG_CAT_MESSAGING, "ProcessMessageQueue: Processing queued message to %s", msg.peerIP);
             StartAsyncSend(msg.peerIP, msg.content, msg.messageType);
         }
     }
@@ -200,16 +200,16 @@ OSErr MacTCP_QueueMessage(const char *peerIPStr, const char *message_content, co
 
     /* Try to send immediately if send stream is idle */
     if (gTCPSendState == TCP_STATE_IDLE) {
-        log_debug("MacTCP_QueueMessage: Send stream idle, attempting immediate send to %s", peerIPStr);
+        log_debug_cat(LOG_CAT_MESSAGING, "MacTCP_QueueMessage: Send stream idle, attempting immediate send to %s", peerIPStr);
         return StartAsyncSend(peerIPStr, message_content, msg_type);
     }
 
     /* Otherwise queue it */
     if (EnqueueMessage(peerIPStr, msg_type, message_content)) {
-        log_debug("MacTCP_QueueMessage: Message queued for later delivery to %s", peerIPStr);
+        log_debug_cat(LOG_CAT_MESSAGING, "MacTCP_QueueMessage: Message queued for later delivery to %s", peerIPStr);
         return noErr;
     } else {
-        log_debug("MacTCP_QueueMessage: Failed to queue message - queue full");
+        log_error_cat(LOG_CAT_MESSAGING, "MacTCP_QueueMessage: Failed to queue message - queue full");
         return memFullErr;
     }
 }
@@ -262,7 +262,7 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
 {
     OSErr err;
 
-    log_debug("Initializing TCP Messaging Subsystem with dual streams...");
+    log_info_cat(LOG_CAT_MESSAGING, "Initializing TCP Messaging Subsystem with dual streams...");
 
     if (!gNetworkOps) {
         log_app_event("Error: Network abstraction not initialized");
@@ -270,13 +270,13 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
     }
 
     if (gTCPListenState != TCP_STATE_UNINITIALIZED || gTCPSendState != TCP_STATE_UNINITIALIZED) {
-        log_debug("InitTCP: Already initialized");
+        log_debug_cat(LOG_CAT_MESSAGING, "InitTCP: Already initialized");
         return streamAlreadyOpen;
     }
 
     if (macTCPRefNum == 0) return paramErr;
     if (listenAsrUPP == NULL || sendAsrUPP == NULL) {
-        log_debug("InitTCP: ASR UPPs are NULL. Cannot proceed.");
+        log_error_cat(LOG_CAT_MESSAGING, "InitTCP: ASR UPPs are NULL. Cannot proceed.");
         return paramErr;
     }
 
@@ -300,7 +300,7 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
         return memFullErr;
     }
 
-    log_debug("Allocated TCP stream receive buffers: %lu bytes each", gTCPStreamRcvBufferSize);
+    log_debug_cat(LOG_CAT_MESSAGING, "Allocated TCP stream receive buffers: %lu bytes each", gTCPStreamRcvBufferSize);
 
     /* Create listen stream */
     err = gNetworkOps->TCPCreate(macTCPRefNum, &gTCPListenStream, gTCPStreamRcvBufferSize,
@@ -328,7 +328,7 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
         return err;
     }
 
-    log_debug("TCP Streams created successfully using network abstraction.");
+    log_info_cat(LOG_CAT_MESSAGING, "TCP Streams created successfully using network abstraction.");
 
     /* Initialize message queue */
     memset(gMessageQueue, 0, sizeof(gMessageQueue));
@@ -348,16 +348,16 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
     /* Start listening */
     StartPassiveListen();
 
-    log_debug("TCP Messaging Subsystem initialized with dual streams.");
+    log_info_cat(LOG_CAT_MESSAGING, "TCP Messaging Subsystem initialized with dual streams.");
     return noErr;
 }
 
 void CleanupTCP(short macTCPRefNum)
 {
-    log_debug("Cleaning up TCP Messaging Subsystem...");
+    log_debug_cat(LOG_CAT_MESSAGING, "Cleaning up TCP Messaging Subsystem...");
 
     if (!gNetworkOps) {
-        log_debug("Network abstraction not available during cleanup");
+        log_debug_cat(LOG_CAT_MESSAGING, "Network abstraction not available during cleanup");
         return;
     }
 
@@ -368,39 +368,39 @@ void CleanupTCP(short macTCPRefNum)
 
     /* Clean up listen stream */
     if (gListenAsyncOperationInProgress && gTCPListenStream != NULL) {
-        log_debug("Listen async operation was in progress. Aborting.");
+        log_debug_cat(LOG_CAT_MESSAGING, "Listen async operation was in progress. Aborting.");
         gNetworkOps->TCPAbort(gTCPListenStream);
         gListenAsyncOperationInProgress = false;
     }
 
     if (gListenNoCopyRdsPendingReturn && gTCPListenStream != NULL) {
-        log_debug("Listen RDS Buffers were pending return. Attempting return.");
+        log_debug_cat(LOG_CAT_MESSAGING, "Listen RDS Buffers were pending return. Attempting return.");
         gNetworkOps->TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, YieldTimeToSystem);
         gListenNoCopyRdsPendingReturn = false;
     }
 
     if (gTCPListenStream != NULL) {
-        log_debug("Releasing TCP Listen Stream...");
+        log_debug_cat(LOG_CAT_MESSAGING, "Releasing TCP Listen Stream...");
         gNetworkOps->TCPRelease(macTCPRefNum, gTCPListenStream);
         gTCPListenStream = NULL;
     }
 
     /* Clean up send stream */
     if (gTCPSendStream != NULL) {
-        log_debug("Releasing TCP Send Stream...");
+        log_debug_cat(LOG_CAT_MESSAGING, "Releasing TCP Send Stream...");
         gNetworkOps->TCPRelease(macTCPRefNum, gTCPSendStream);
         gTCPSendStream = NULL;
     }
 
     /* Dispose buffers */
     if (gTCPListenRcvBuffer != NULL) {
-        log_debug("Disposing TCP listen stream receive buffer.");
+        log_debug_cat(LOG_CAT_MESSAGING, "Disposing TCP listen stream receive buffer.");
         DisposePtr(gTCPListenRcvBuffer);
         gTCPListenRcvBuffer = NULL;
     }
 
     if (gTCPSendRcvBuffer != NULL) {
-        log_debug("Disposing TCP send stream receive buffer.");
+        log_debug_cat(LOG_CAT_MESSAGING, "Disposing TCP send stream receive buffer.");
         DisposePtr(gTCPSendRcvBuffer);
         gTCPSendRcvBuffer = NULL;
     }
@@ -411,7 +411,7 @@ void CleanupTCP(short macTCPRefNum)
     gTCPListenState = TCP_STATE_UNINITIALIZED;
     gTCPSendState = TCP_STATE_UNINITIALIZED;
 
-    log_debug("TCP Messaging Subsystem cleanup finished.");
+    log_debug_cat(LOG_CAT_MESSAGING, "TCP Messaging Subsystem cleanup finished.");
 }
 
 static void StartPassiveListen(void)
@@ -421,27 +421,27 @@ static void StartPassiveListen(void)
     if (!gNetworkOps) return;
 
     if (gTCPListenState != TCP_STATE_IDLE) {
-        log_debug("StartPassiveListen: Cannot listen, current state is %d (not IDLE).", gTCPListenState);
+        log_error_cat(LOG_CAT_MESSAGING, "StartPassiveListen: Cannot listen, current state is %d (not IDLE).", gTCPListenState);
         return;
     }
 
     if (gTCPListenStream == NULL) {
-        log_debug("CRITICAL (StartPassiveListen): Listen stream is NULL. Cannot listen.");
+        log_error_cat(LOG_CAT_MESSAGING, "CRITICAL (StartPassiveListen): Listen stream is NULL. Cannot listen.");
         gTCPListenState = TCP_STATE_ERROR;
         return;
     }
 
     if (gListenAsyncOperationInProgress) {
-        log_debug("StartPassiveListen: Another async operation is already in progress.");
+        log_debug_cat(LOG_CAT_MESSAGING, "StartPassiveListen: Another async operation is already in progress.");
         return;
     }
 
-    log_debug("Attempting asynchronous TCPListenAsync on port %u...", PORT_TCP);
+    log_debug_cat(LOG_CAT_MESSAGING, "Attempting asynchronous TCPListenAsync on port %u...", PORT_TCP);
 
     err = gNetworkOps->TCPListenAsync(gTCPListenStream, PORT_TCP, &gListenAsyncHandle);
 
     if (err == noErr) {
-        log_debug("TCPListenAsync successfully initiated.");
+        log_debug_cat(LOG_CAT_MESSAGING, "TCPListenAsync successfully initiated.");
         gTCPListenState = TCP_STATE_LISTENING;
         gListenAsyncOperationInProgress = true;
     } else {
@@ -520,11 +520,11 @@ void ProcessTCPStateMachine(GiveTimePtr giveTime)
                                        MAX_RDS_ENTRIES, 0, /* 0 timeout = non-blocking */
                                        &urgentFlag, &markFlag, giveTime);
 
-                        log_debug("Initial receive probe after accept: err=%d", rcvErr);
+                        log_debug_cat(LOG_CAT_MESSAGING, "Initial receive probe after accept: err=%d", rcvErr);
 
                         if (rcvErr == noErr && (gListenNoCopyRDS[0].length > 0 || gListenNoCopyRDS[0].ptr != NULL)) {
                             /* Data already available! */
-                            log_debug("Data already available on connection accept!");
+                            log_debug_cat(LOG_CAT_MESSAGING, "Data already available on connection accept!");
                             ProcessIncomingTCPData(gListenNoCopyRDS, remote_ip, remote_port);
                             gListenNoCopyRdsPendingReturn = true;
 
@@ -569,7 +569,7 @@ void ProcessTCPStateMachine(GiveTimePtr giveTime)
                 if (rcvErr == noErr && (gListenNoCopyRDS[0].length > 0 || gListenNoCopyRDS[0].ptr != NULL)) {
                     NetworkTCPInfo tcpInfo;
                     if (gNetworkOps->TCPStatus(gTCPListenStream, &tcpInfo) == noErr) {
-                        log_debug("Periodic check found data available");
+                        log_debug_cat(LOG_CAT_MESSAGING, "Periodic check found data available");
                         ProcessIncomingTCPData(gListenNoCopyRDS, tcpInfo.remoteHost, tcpInfo.remotePort);
                         gListenNoCopyRdsPendingReturn = true;
 
@@ -604,7 +604,7 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
     ASR_Event_Info currentEvent = gListenAsrEvent;
     gListenAsrEvent.eventPending = false;
 
-    log_debug("Listen ASR Event: Code %u, Reason %u (State: %d)",
+    log_debug_cat(LOG_CAT_MESSAGING, "Listen ASR Event: Code %u, Reason %u (State: %d)",
               currentEvent.eventCode, currentEvent.termReason, gTCPListenState);
 
     switch (currentEvent.eventCode) {
@@ -618,7 +618,7 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
 
             NetworkTCPInfo tcpInfo;
             if (gNetworkOps->TCPStatus(gTCPListenStream, &tcpInfo) != noErr) {
-                log_debug("Listen ASR: TCPDataArrival, but GetStatus failed.");
+                log_error_cat(LOG_CAT_MESSAGING, "Listen ASR: TCPDataArrival, but GetStatus failed.");
                 gNetworkOps->TCPAbort(gTCPListenStream);
                 gTCPListenState = TCP_STATE_IDLE;
                 gListenStreamNeedsReset = true;
@@ -632,7 +632,7 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
                            &urgentFlag, &markFlag, giveTime);
 
             if (rcvErr == noErr) {
-                log_debug("Listen TCPNoCopyRcv successful. Processing data.");
+                log_debug_cat(LOG_CAT_MESSAGING, "Listen TCPNoCopyRcv successful. Processing data.");
                 if (gListenNoCopyRDS[0].length > 0 || gListenNoCopyRDS[0].ptr != NULL) {
                     ProcessIncomingTCPData(gListenNoCopyRDS, tcpInfo.remoteHost, tcpInfo.remotePort);
                     gListenNoCopyRdsPendingReturn = true;
@@ -696,12 +696,12 @@ static void HandleSendASREvents(GiveTimePtr giveTime)
     ASR_Event_Info currentEvent = gSendAsrEvent;
     gSendAsrEvent.eventPending = false;
 
-    log_debug("Send ASR Event: Code %u, Reason %u (State: %d)",
+    log_debug_cat(LOG_CAT_MESSAGING, "Send ASR Event: Code %u, Reason %u (State: %d)",
               currentEvent.eventCode, currentEvent.termReason, gTCPSendState);
 
     switch (currentEvent.eventCode) {
     case TCPTerminate:
-        log_debug("Send ASR: TCPTerminate. Reason: %u.", currentEvent.termReason);
+        log_debug_cat(LOG_CAT_MESSAGING, "Send ASR: TCPTerminate. Reason: %u.", currentEvent.termReason);
         /* Only set to IDLE if we were expecting the termination */
         if (gTCPSendState == TCP_STATE_CLOSING_GRACEFUL || 
             gTCPSendState == TCP_STATE_IDLE) {
@@ -732,12 +732,12 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
                 gSendConnectHandle = NULL;
                 
                 if (err == noErr && operationResult == noErr) {
-                    log_debug("Connected to %s", gCurrentSendPeerIP);
+                    log_info_cat(LOG_CAT_MESSAGING, "Connected to %s", gCurrentSendPeerIP);
                     gTCPSendState = TCP_STATE_CONNECTED_OUT;
                     
                     /* Start async send */
                     int msgLen = strlen(gCurrentSendMessage);
-                    log_debug("Sending %d bytes...", msgLen);
+                    log_debug_cat(LOG_CAT_MESSAGING, "Sending %d bytes...", msgLen);
                     gTCPSendState = TCP_STATE_SENDING;
                     
                     err = gNetworkOps->TCPSendAsync(gTCPSendStream, (Ptr)gCurrentSendMessage, 
@@ -765,19 +765,19 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
                 gSendDataHandle = NULL;
                 
                 if (err == noErr && operationResult == noErr) {
-                    log_debug("Message sent successfully");
+                    log_debug_cat(LOG_CAT_MESSAGING, "Message sent successfully");
                     
                     /* Close connection */
                     if (strcmp(gCurrentSendMsgType, MSG_QUIT) == 0) {
-                        log_debug("Sending QUIT - using abort for immediate close");
+                        log_debug_cat(LOG_CAT_MESSAGING, "Sending QUIT - using abort for immediate close");
                         gNetworkOps->TCPAbort(gTCPSendStream);
                         gTCPSendState = TCP_STATE_IDLE;
                     } else {
-                        log_debug("Attempting graceful close...");
+                        log_debug_cat(LOG_CAT_MESSAGING, "Attempting graceful close...");
                         gTCPSendState = TCP_STATE_CLOSING_GRACEFUL;
                         err = gNetworkOps->TCPClose(gTCPSendStream, TCP_CLOSE_ULP_TIMEOUT_S, giveTime);
                         if (err != noErr) {
-                            log_debug("Graceful close failed (%d), using abort", err);
+                            log_warning_cat(LOG_CAT_MESSAGING, "Graceful close failed (%d), using abort", err);
                             gNetworkOps->TCPAbort(gTCPSendStream);
                             gTCPSendState = TCP_STATE_IDLE;
                         }
@@ -827,16 +827,16 @@ static void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status
         strcpy(remoteIPStrConnected, "unknown_ip");
     }
 
-    log_debug("ProcessIncomingTCPData from %s:%u", remoteIPStrConnected, remote_port_from_status);
+    log_debug_cat(LOG_CAT_MESSAGING, "ProcessIncomingTCPData from %s:%u", remoteIPStrConnected, remote_port_from_status);
 
     for (int i = 0; rds[i].length > 0 || rds[i].ptr != NULL; ++i) {
         if (rds[i].length == 0 || rds[i].ptr == NULL) break;
 
-        log_debug("Processing RDS entry %d: Ptr 0x%lX, Len %u", i, (unsigned long)rds[i].ptr, rds[i].length);
+        log_debug_cat(LOG_CAT_MESSAGING, "Processing RDS entry %d: Ptr 0x%lX, Len %u", i, (unsigned long)rds[i].ptr, rds[i].length);
 
         if (parse_message((const char *)rds[i].ptr, rds[i].length,
                           senderIPStrFromPayload, senderUsername, msgType, content) == 0) {
-            log_debug("Parsed TCP message: Type '%s', FromUser '%s', FromIP(payload) '%s', Content(len %d) '%.30s...'",
+            log_debug_cat(LOG_CAT_MESSAGING, "Parsed TCP message: Type '%s', FromUser '%s', FromIP(payload) '%s', Content(len %d) '%.30s...'",
                       msgType, senderUsername, senderIPStrFromPayload, (int)strlen(content), content);
 
             handle_received_tcp_message(remoteIPStrConnected,
@@ -850,7 +850,7 @@ static void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status
                 log_app_event("QUIT message processed from %s.", remoteIPStrConnected);
             }
         } else {
-            log_debug("Failed to parse TCP message chunk from %s (length %u).",
+            log_error_cat(LOG_CAT_MESSAGING, "Failed to parse TCP message chunk from %s (length %u).",
                       remoteIPStrConnected, rds[i].length);
         }
     }
@@ -876,7 +876,7 @@ static OSErr StartAsyncSend(const char *peerIPStr, const char *message_content, 
 
     if (!gNetworkOps) return notOpenErr;
 
-    log_debug("StartAsyncSend: Request to send '%s' to %s", msg_type, peerIPStr);
+    log_debug_cat(LOG_CAT_MESSAGING, "StartAsyncSend: Request to send '%s' to %s", msg_type, peerIPStr);
 
     /* Validate parameters */
     if (gMacTCPRefNum == 0) return notOpenErr;
@@ -885,7 +885,7 @@ static OSErr StartAsyncSend(const char *peerIPStr, const char *message_content, 
 
     /* Must be in IDLE state */
     if (gTCPSendState != TCP_STATE_IDLE) {
-        log_debug("StartAsyncSend: Send stream not idle (state %d)", gTCPSendState);
+        log_debug_cat(LOG_CAT_MESSAGING, "StartAsyncSend: Send stream not idle (state %d)", gTCPSendState);
         return connectionExists;
     }
 
@@ -915,7 +915,7 @@ static OSErr StartAsyncSend(const char *peerIPStr, const char *message_content, 
     gCurrentSendTargetIP = targetIP;
 
     /* Start async connect */
-    log_debug("Starting async connection to %s:%u...", peerIPStr, PORT_TCP);
+    log_debug_cat(LOG_CAT_MESSAGING, "Starting async connection to %s:%u...", peerIPStr, PORT_TCP);
     gTCPSendState = TCP_STATE_CONNECTING_OUT;
 
     err = gNetworkOps->TCPConnectAsync(gTCPSendStream, targetIP, PORT_TCP, &gSendConnectHandle);
@@ -925,7 +925,7 @@ static OSErr StartAsyncSend(const char *peerIPStr, const char *message_content, 
         return err;
     }
 
-    log_debug("Async connect initiated");
+    log_debug_cat(LOG_CAT_MESSAGING, "Async connect initiated");
     return noErr;
 }
 

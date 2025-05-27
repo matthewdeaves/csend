@@ -160,7 +160,7 @@ static void machine_display_app_message(void *context, const char *format, va_li
     /* In machine mode, app messages are logged only */
     char buffer[1024];
     vsnprintf(buffer, sizeof(buffer), format, args);
-    log_debug("App message: %s", buffer);
+    log_debug_cat(LOG_CAT_UI, "App message: %s", buffer);
 }
 
 static void machine_display_error(void *context, const char *format, va_list args)
@@ -198,7 +198,7 @@ static void machine_display_peer_list(void *context, app_state_t *state)
     for (int i = 0; i < MAX_PEERS; i++) {
         if (state->peer_manager.peers[i].active) {
             if (difftime(now, state->peer_manager.peers[i].last_seen) > PEER_TIMEOUT) {
-                log_debug("Peer %s@%s timed out",
+                log_info_cat(LOG_CAT_PEER_MGMT, "Peer %s@%s timed out",
                           state->peer_manager.peers[i].username,
                           state->peer_manager.peers[i].ip);
                 state->peer_manager.peers[i].active = 0;

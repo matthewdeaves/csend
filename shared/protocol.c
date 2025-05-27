@@ -55,8 +55,8 @@ int format_message(char *buffer, int buffer_size, const char *msg_type,
 
     /* Validate minimum buffer requirements */
     if (buffer == NULL || buffer_size < MIN_PROTOCOL_SIZE) {
-        log_debug("Error: format_message buffer too small (%d bytes, need at least %d) or NULL.",
-                  buffer_size, MIN_PROTOCOL_SIZE);
+        log_error_cat(LOG_CAT_PROTOCOL, "Error: format_message buffer too small (%d bytes, need at least %d) or NULL.",
+                      buffer_size, MIN_PROTOCOL_SIZE);
         return 0;
     }
 
@@ -69,14 +69,14 @@ int format_message(char *buffer, int buffer_size, const char *msg_type,
     if (local_ip_str != NULL && local_ip_str[0] != '\0') {
         ip_to_use = local_ip_str;
     } else {
-        log_debug("Warning: format_message received NULL or empty local_ip_str. Using 'unknown'.");
+        log_warning_cat(LOG_CAT_PROTOCOL, "Warning: format_message received NULL or empty local_ip_str. Using 'unknown'.");
         ip_to_use = "unknown";
     }
 
     /* Format sender@ip with bounds checking */
     sender_len = snprintf(sender_with_ip, sizeof(sender_with_ip), "%s@%s", safe_sender, ip_to_use);
     if (sender_len < 0 || sender_len >= (int)sizeof(sender_with_ip)) {
-        log_debug("Error: format_message failed formatting sender@ip or buffer too small.");
+        log_error_cat(LOG_CAT_PROTOCOL, "Error: format_message failed formatting sender@ip or buffer too small.");
         return 0;
     }
 
@@ -93,13 +93,13 @@ int format_message(char *buffer, int buffer_size, const char *msg_type,
 
     /* Check for truncation or error */
     if (text_part_len < 0) {
-        log_debug("Error: format_message failed formatting final text part (snprintf encoding error).");
+        log_error_cat(LOG_CAT_PROTOCOL, "Error: format_message failed formatting final text part (snprintf encoding error).");
         return 0;
     }
 
     if (text_part_len >= remaining_buffer_size) {
-        log_debug("Warning: format_message text part truncated (buffer size %d, needed %d for text + NUL).",
-                  remaining_buffer_size, text_part_len + 1);
+        log_warning_cat(LOG_CAT_PROTOCOL, "Warning: format_message text part truncated (buffer size %d, needed %d for text + NUL).",
+                        remaining_buffer_size, text_part_len + 1);
         return 0;
     }
 
@@ -108,8 +108,8 @@ int format_message(char *buffer, int buffer_size, const char *msg_type,
 
     /* Sanity check (should never happen with correct logic above) */
     if (total_len > buffer_size) {
-        log_debug("Error: format_message internal logic error - calculated total_len %d > buffer_size %d.",
-                  total_len, buffer_size);
+        log_error_cat(LOG_CAT_PROTOCOL, "Error: format_message internal logic error - calculated total_len %d > buffer_size %d.",
+                      total_len, buffer_size);
         return 0;
     }
 
@@ -137,8 +137,8 @@ int parse_message(const char *buffer, int buffer_len, char *sender_ip, char *sen
 
     /* Validate minimum buffer requirements */
     if (buffer == NULL || buffer_len < MIN_PROTOCOL_SIZE) {
-        log_debug("Parse error: Buffer NULL or too short (%d bytes, need at least %d).",
-                  buffer_len, MIN_PROTOCOL_SIZE);
+        log_error_cat(LOG_CAT_PROTOCOL, "Parse error: Buffer NULL or too short (%d bytes, need at least %d).",
+                      buffer_len, MIN_PROTOCOL_SIZE);
         return -1;
     }
 
@@ -146,8 +146,8 @@ int parse_message(const char *buffer, int buffer_len, char *sender_ip, char *sen
     memcpy(&received_magic_net_order, buffer, sizeof(csend_uint32_t));
     received_magic_host_order = ntohl(received_magic_net_order);
     if (received_magic_host_order != MSG_MAGIC_NUMBER) {
-        log_debug("Parse error: Invalid magic number. Expected %08lX, got %08lX.",
-                  (unsigned long)MSG_MAGIC_NUMBER, (unsigned long)received_magic_host_order);
+        log_error_cat(LOG_CAT_PROTOCOL, "Parse error: Invalid magic number. Expected %08lX, got %08lX.",
+                      (unsigned long)MSG_MAGIC_NUMBER, (unsigned long)received_magic_host_order);
         return -1;
     }
 
@@ -157,7 +157,7 @@ int parse_message(const char *buffer, int buffer_len, char *sender_ip, char *sen
 
     /* Ensure we have at least some text to parse */
     if (text_part_len <= 0) {
-        log_debug("Parse error: No text part after magic number.");
+        log_error_cat(LOG_CAT_PROTOCOL, "Parse error: No text part after magic number.");
         return -1;
     }
 
@@ -165,7 +165,7 @@ int parse_message(const char *buffer, int buffer_len, char *sender_ip, char *sen
     /* Add 1 for null terminator */
     temp_buffer = (char *)malloc(text_part_len + 1);
     if (temp_buffer == NULL) {
-        log_debug("Parse error: Failed to allocate temporary buffer (%d bytes).", text_part_len + 1);
+        log_error_cat(LOG_CAT_PROTOCOL, "Parse error: Failed to allocate temporary buffer (%d bytes).", text_part_len + 1);
         return -1;
     }
 
@@ -176,7 +176,7 @@ int parse_message(const char *buffer, int buffer_len, char *sender_ip, char *sen
     /* Parse message type */
     token = strtok_r(temp_buffer, "|", &rest);
     if (token == NULL) {
-        log_debug("Parse error: Could not find message type token.");
+        log_error_cat(LOG_CAT_PROTOCOL, "Parse error: Could not find message type token.");
         goto cleanup;
     }
     if (msg_type) {
@@ -186,7 +186,7 @@ int parse_message(const char *buffer, int buffer_len, char *sender_ip, char *sen
     /* Parse sender@ip */
     token = strtok_r(NULL, "|", &rest);
     if (token == NULL) {
-        log_debug("Parse error: Could not find sender@ip token.");
+        log_error_cat(LOG_CAT_PROTOCOL, "Parse error: Could not find sender@ip token.");
         goto cleanup;
     }
     safe_strncpy(sender_with_ip, token, sizeof(sender_with_ip));
@@ -211,7 +211,7 @@ int parse_message(const char *buffer, int buffer_len, char *sender_ip, char *sen
             safe_strncpy(sender_ip, at_sign + 1, INET_ADDRSTRLEN);
         }
     } else {
-        log_debug("Parse warning: '@' not found in sender token '%s'. Treating as username.", sender_with_ip);
+        log_warning_cat(LOG_CAT_PROTOCOL, "Parse warning: '@' not found in sender token '%s'. Treating as username.", sender_with_ip);
         if (sender_username) {
             safe_strncpy(sender_username, sender_with_ip, MAX_USERNAME_LEN + 1);
         }
@@ -231,8 +231,8 @@ int parse_message(const char *buffer, int buffer_len, char *sender_ip, char *sen
             int content_len = (int)strlen(token);
             if (content_len >= BUFFER_SIZE) {
                 content_len = BUFFER_SIZE - 1;
-                log_debug("Parse warning: Content truncated from %d to %d bytes.",
-                          (int)strlen(token), content_len);
+                log_warning_cat(LOG_CAT_PROTOCOL, "Parse warning: Content truncated from %d to %d bytes.",
+                                (int)strlen(token), content_len);
             }
             memcpy(content, token, content_len);
             content[content_len] = '\0';

@@ -80,7 +80,7 @@ static void interactive_display_peer_list(void *context, app_state_t *state)
     for (int i = 0; i < MAX_PEERS; i++) {
         if (state->peer_manager.peers[i].active) {
             if (difftime(now, state->peer_manager.peers[i].last_seen) > PEER_TIMEOUT) {
-                log_debug("Peer %s@%s timed out (detected in print_peers).",
+                log_info_cat(LOG_CAT_PEER_MGMT, "Peer %s@%s timed out (detected in print_peers).",
                           state->peer_manager.peers[i].username,
                           state->peer_manager.peers[i].ip);
                 state->peer_manager.peers[i].active = 0;

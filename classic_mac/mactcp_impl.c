@@ -163,7 +163,7 @@ static NetworkAsyncHandle AllocateAsyncHandle(void)
         }
     }
 
-    log_debug("AllocateAsyncHandle: No free async operation slots");
+    log_debug_cat(LOG_CAT_NETWORKING, "AllocateAsyncHandle: No free async operation slots");
     return NULL;
 }
 
@@ -197,7 +197,7 @@ static NetworkAsyncHandle AllocateTCPAsyncHandle(void)
         }
     }
 
-    log_debug("AllocateTCPAsyncHandle: No free TCP async operation slots");
+    log_debug_cat(LOG_CAT_NETWORKING, "AllocateTCPAsyncHandle: No free TCP async operation slots");
     return NULL;
 }
 
@@ -219,7 +219,7 @@ static MacTCPUDPEndpoint *AllocateUDPEndpoint(void)
 {
     MacTCPUDPEndpoint *endpoint = (MacTCPUDPEndpoint *)NewPtrClear(sizeof(MacTCPUDPEndpoint));
     if (endpoint == NULL) {
-        log_debug("AllocateUDPEndpoint: Failed to allocate memory");
+        log_debug_cat(LOG_CAT_NETWORKING, "AllocateUDPEndpoint: Failed to allocate memory");
     }
     return endpoint;
 }
@@ -242,7 +242,7 @@ static OSErr MacTCPImpl_Initialize(short *refNum, ip_addr *localIP, char *localI
     ParamBlockRec pbOpen;
     CntrlParam cntrlPB;
 
-    log_debug("MacTCPImpl_Initialize: Opening MacTCP driver");
+    log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_Initialize: Opening MacTCP driver");
 
     /* Open MacTCP driver */
     memset(&pbOpen, 0, sizeof(ParamBlockRec));
@@ -256,7 +256,7 @@ static OSErr MacTCPImpl_Initialize(short *refNum, ip_addr *localIP, char *localI
     }
 
     *refNum = pbOpen.ioParam.ioRefNum;
-    log_debug("MacTCPImpl_Initialize: MacTCP driver opened, refNum: %d", *refNum);
+    log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_Initialize: MacTCP driver opened, refNum: %d", *refNum);
 
     /* Get local IP address */
     memset(&cntrlPB, 0, sizeof(CntrlParam));
@@ -281,7 +281,7 @@ static OSErr MacTCPImpl_Initialize(short *refNum, ip_addr *localIP, char *localI
     /* Convert IP to string */
     err = AddrToStr(*localIP, localIPStr);
     if (err != noErr) {
-        log_debug("MacTCPImpl_Initialize: AddrToStr failed: %d", err);
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_Initialize: AddrToStr failed: %d", err);
         /* Fallback formatting */
         sprintf(localIPStr, "%lu.%lu.%lu.%lu",
                 (*localIP >> 24) & 0xFF,
@@ -300,11 +300,11 @@ static OSErr MacTCPImpl_Initialize(short *refNum, ip_addr *localIP, char *localI
 
 static void MacTCPImpl_Shutdown(short refNum)
 {
-    log_debug("MacTCPImpl_Shutdown: Closing resolver");
+    log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_Shutdown: Closing resolver");
     CloseResolver();
 
     /* Note: We don't close the MacTCP driver as other apps may be using it */
-    log_debug("MacTCPImpl_Shutdown: Complete (driver remains open for system)");
+    log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_Shutdown: Complete (driver remains open for system)");
 }
 
 static OSErr MacTCPImpl_TCPCreate(short refNum, NetworkStreamRef *streamRef,
@@ -324,10 +324,10 @@ static OSErr MacTCPImpl_TCPCreate(short refNum, NetworkStreamRef *streamRef,
     err = PBControlSync((ParmBlkPtr)&pb);
     if (err == noErr) {
         *streamRef = (NetworkStreamRef)pb.tcpStream;
-        log_debug("MacTCPImpl_TCPCreate: Created stream 0x%lX", (unsigned long)*streamRef);
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPCreate: Created stream 0x%lX", (unsigned long)*streamRef);
     } else {
         *streamRef = NULL;
-        log_debug("MacTCPImpl_TCPCreate: Failed: %d", err);
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPCreate: Failed: %d", err);
     }
 
     return err;
@@ -421,11 +421,11 @@ static OSErr MacTCPImpl_TCPListenAsync(NetworkStreamRef streamRef, tcp_port loca
     if (err != noErr) {
         FreeTCPAsyncHandle(*asyncHandle);
         *asyncHandle = NULL;
-        log_debug("MacTCPImpl_TCPListenAsync: PBControlAsync failed: %d", err);
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPListenAsync: PBControlAsync failed: %d", err);
         return err;
     }
 
-    log_debug("MacTCPImpl_TCPListenAsync: Started async listen on port %u", localPort);
+    log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPListenAsync: Started async listen on port %u", localPort);
     return noErr;
 }
 
@@ -498,11 +498,11 @@ static OSErr MacTCPImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remo
     if (err != noErr) {
         FreeTCPAsyncHandle(*asyncHandle);
         *asyncHandle = NULL;
-        log_debug("MacTCPImpl_TCPConnectAsync: PBControlAsync failed: %d", err);
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPConnectAsync: PBControlAsync failed: %d", err);
         return err;
     }
 
-    log_debug("MacTCPImpl_TCPConnectAsync: Started async connect to %lu:%u",
+    log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPConnectAsync: Started async connect to %lu:%u",
               remoteHost, remotePort);
     return noErr;
 }
@@ -600,11 +600,11 @@ static OSErr MacTCPImpl_TCPSendAsync(NetworkStreamRef streamRef, Ptr data, unsig
         DisposePtr((Ptr)wds);
         FreeTCPAsyncHandle(*asyncHandle);
         *asyncHandle = NULL;
-        log_debug("MacTCPImpl_TCPSendAsync: PBControlAsync failed: %d", err);
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPSendAsync: PBControlAsync failed: %d", err);
         return err;
     }
 
-    log_debug("MacTCPImpl_TCPSendAsync: Started async send of %u bytes", length);
+    log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPSendAsync: Started async send of %u bytes", length);
     return noErr;
 }
 
@@ -679,11 +679,11 @@ static OSErr MacTCPImpl_TCPReceiveAsync(NetworkStreamRef streamRef, Ptr rdsPtr,
     if (err != noErr) {
         FreeTCPAsyncHandle(*asyncHandle);
         *asyncHandle = NULL;
-        log_debug("MacTCPImpl_TCPReceiveAsync: PBControlAsync failed: %d", err);
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPReceiveAsync: PBControlAsync failed: %d", err);
         return err;
     }
 
-    log_debug("MacTCPImpl_TCPReceiveAsync: Started async receive");
+    log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPReceiveAsync: Started async receive");
     return noErr;
 }
 
@@ -823,7 +823,7 @@ static OSErr MacTCPImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
 
     err = PBControlSync((ParmBlkPtr)&pb);
     if (err != noErr) {
-        log_debug("MacTCPImpl_UDPCreate: Failed: %d", err);
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_UDPCreate: Failed: %d", err);
         FreeUDPEndpoint(endpoint);
         return err;
     }
@@ -833,7 +833,7 @@ static OSErr MacTCPImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
     endpoint->isCreated = true;
     *endpointRef = (NetworkEndpointRef)endpoint;
 
-    log_debug("MacTCPImpl_UDPCreate: Success. Stream: 0x%lX (endpoint: 0x%lX), Port: %u",
+    log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_UDPCreate: Success. Stream: 0x%lX (endpoint: 0x%lX), Port: %u",
               (unsigned long)endpoint->stream, (unsigned long)endpoint, pb.csParam.create.localPort);
 
     return noErr;
@@ -1019,9 +1019,9 @@ static OSErr MacTCPImpl_UDPSendAsync(NetworkEndpointRef endpointRef, ip_addr rem
         DisposePtr((Ptr)wds);
         FreeAsyncHandle(*asyncHandle);
         *asyncHandle = NULL;
-        log_debug("MacTCPImpl_UDPSendAsync: PBControlAsync failed: %d", err);
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_UDPSendAsync: PBControlAsync failed: %d", err);
     } else {
-        log_debug("MacTCPImpl_UDPSendAsync: Started async send of %u bytes to %lu:%u", 
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_UDPSendAsync: Started async send of %u bytes to %lu:%u", 
                   length, remoteHost, remotePort);
     }
 
@@ -1083,9 +1083,9 @@ static OSErr MacTCPImpl_UDPReceiveAsync(NetworkEndpointRef endpointRef,
     if (err != noErr) {
         FreeAsyncHandle(*asyncHandle);
         *asyncHandle = NULL;
-        log_debug("MacTCPImpl_UDPReceiveAsync: PBControlAsync failed: %d", err);
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_UDPReceiveAsync: PBControlAsync failed: %d", err);
     } else {
-        log_debug("MacTCPImpl_UDPReceiveAsync: Started async read");
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_UDPReceiveAsync: Started async read");
     }
 
     return err;
@@ -1155,9 +1155,9 @@ static OSErr MacTCPImpl_UDPReturnBufferAsync(NetworkEndpointRef endpointRef,
     if (err != noErr) {
         FreeAsyncHandle(*asyncHandle);
         *asyncHandle = NULL;
-        log_debug("MacTCPImpl_UDPReturnBufferAsync: PBControlAsync failed: %d", err);
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_UDPReturnBufferAsync: PBControlAsync failed: %d", err);
     } else {
-        log_debug("MacTCPImpl_UDPReturnBufferAsync: Started async buffer return");
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_UDPReturnBufferAsync: Started async buffer return");
     }
 
     return err;
@@ -1190,7 +1190,7 @@ static void MacTCPImpl_UDPCancelAsync(NetworkAsyncHandle asyncHandle)
     if (op && op->inUse) {
         /* Note: MacTCP doesn't provide a way to cancel async operations */
         /* We just mark it as free and let it complete in the background */
-        log_debug("MacTCPImpl_UDPCancelAsync: Marking handle as free (can't cancel MacTCP async)");
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_UDPCancelAsync: Marking handle as free (can't cancel MacTCP async)");
         FreeAsyncHandle(asyncHandle);
     }
 }
@@ -1300,7 +1300,7 @@ static void MacTCPImpl_TCPCancelAsync(NetworkAsyncHandle asyncHandle)
     if (op && op->inUse) {
         /* Note: MacTCP doesn't provide a way to cancel async operations */
         /* We just mark it as free and let it complete in the background */
-        log_debug("MacTCPImpl_TCPCancelAsync: Marking handle as free (can't cancel MacTCP async)");
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPCancelAsync: Marking handle as free (can't cancel MacTCP async)");
         
         /* Clean up any allocated resources */
         if (op->opType == TCP_ASYNC_SEND && op->rdsArray) {

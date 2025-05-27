@@ -4,7 +4,7 @@
 
 #include "discovery.h"
 #include "network_abstraction.h"
-#include "logging.h"
+#include "../shared/logging.h"
 #include "../shared/logging.h"
 #include "protocol.h"
 #include "../shared/discovery.h"
@@ -46,9 +46,9 @@ static void mac_send_discovery_response(uint32_t dest_ip_addr_host_order, uint16
     /* Note: Responses are sent directly without queuing since they're small and infrequent */
     OSErr sendErr = SendDiscoveryResponseSync(gMacTCPRefNum, gMyUsername, gMyLocalIPStr, dest_ip_net, dest_port_mac);
     if (sendErr != noErr && sendErr != 1) {
-        log_debug("Error sending discovery response: %d to IP 0x%lX:%u", sendErr, (unsigned long)dest_ip_net, dest_port_mac);
+        log_error_cat(LOG_CAT_DISCOVERY, "Error sending discovery response: %d to IP 0x%lX:%u", sendErr, (unsigned long)dest_ip_net, dest_port_mac);
     } else if (sendErr == 1) {
-        log_debug("Discovery response skipped - send already pending");
+        log_debug_cat(LOG_CAT_DISCOVERY, "Discovery response skipped - send already pending");
     } else {
         char tempIPStr[INET_ADDRSTRLEN];
         if (gNetworkOps && gNetworkOps->AddressToString) {
@@ -58,7 +58,7 @@ static void mac_send_discovery_response(uint32_t dest_ip_addr_host_order, uint16
                     (dest_ip_net >> 24) & 0xFF, (dest_ip_net >> 16) & 0xFF,
                     (dest_ip_net >> 8) & 0xFF, dest_ip_net & 0xFF);
         }
-        log_debug("Sent DISCOVERY_RESPONSE to %s:%u", tempIPStr, dest_port_mac);
+        log_debug_cat(LOG_CAT_DISCOVERY, "Sent DISCOVERY_RESPONSE to %s:%u", tempIPStr, dest_port_mac);
     }
 }
 
@@ -80,7 +80,7 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum)
 {
     OSErr err;
 
-    log_debug("Initializing UDP Discovery Endpoint using network abstraction...");
+    log_info_cat(LOG_CAT_DISCOVERY, "Initializing UDP Discovery Endpoint using network abstraction...");
 
     if (!gNetworkOps) {
         log_app_event("Error: Network abstraction not initialized");
@@ -88,7 +88,7 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum)
     }
 
     if (macTCPRefNum == 0) {
-        log_debug("Error (InitUDP): macTCPRefNum is 0.");
+        log_error_cat(LOG_CAT_DISCOVERY, "Error (InitUDP): macTCPRefNum is 0.");
         return paramErr;
     }
 
@@ -106,7 +106,7 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum)
         log_app_event("Fatal Error: Could not allocate UDP receive buffer (%ld bytes).", (long)kMinUDPBufSize);
         return memFullErr;
     }
-    log_debug("Allocated %ld bytes for UDP receive buffer at 0x%lX.", (long)kMinUDPBufSize, (unsigned long)gUDPRecvBuffer);
+    log_debug_cat(LOG_CAT_DISCOVERY, "Allocated %ld bytes for UDP receive buffer at 0x%lX.", (long)kMinUDPBufSize, (unsigned long)gUDPRecvBuffer);
 
     /* Create UDP endpoint using abstraction */
     err = gNetworkOps->UDPCreate(macTCPRefNum, &gUDPEndpoint, PORT_UDP, gUDPRecvBuffer, kMinUDPBufSize);
@@ -117,7 +117,7 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum)
         return err;
     }
 
-    log_debug("UDP Endpoint created successfully using network abstraction on port %u.", PORT_UDP);
+    log_info_cat(LOG_CAT_DISCOVERY, "UDP Endpoint created successfully using network abstraction on port %u.", PORT_UDP);
 
     /* Start initial async read */
     err = StartAsyncUDPRead();
@@ -127,7 +127,7 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum)
         return err;
     }
 
-    log_debug("Initial asynchronous UDP read started.");
+    log_debug_cat(LOG_CAT_DISCOVERY, "Initial asynchronous UDP read started.");
     return noErr;
 }
 
@@ -135,46 +135,46 @@ void CleanupUDPDiscoveryEndpoint(short macTCPRefNum)
 {
     OSErr err;
 
-    log_debug("Cleaning up UDP Discovery Endpoint...");
+    log_debug_cat(LOG_CAT_DISCOVERY, "Cleaning up UDP Discovery Endpoint...");
 
     /* Cancel any pending async operations */
     if (gUDPReadHandle != NULL && gNetworkOps && gNetworkOps->UDPCancelAsync) {
-        log_debug("Cancelling pending UDP read operation...");
+        log_debug_cat(LOG_CAT_DISCOVERY, "Cancelling pending UDP read operation...");
         gNetworkOps->UDPCancelAsync(gUDPReadHandle);
         gUDPReadHandle = NULL;
     }
 
     if (gUDPReturnHandle != NULL && gNetworkOps && gNetworkOps->UDPCancelAsync) {
-        log_debug("Cancelling pending UDP buffer return operation...");
+        log_debug_cat(LOG_CAT_DISCOVERY, "Cancelling pending UDP buffer return operation...");
         gNetworkOps->UDPCancelAsync(gUDPReturnHandle);
         gUDPReturnHandle = NULL;
     }
 
     if (gUDPSendHandle != NULL && gNetworkOps && gNetworkOps->UDPCancelAsync) {
-        log_debug("Cancelling pending UDP send operation...");
+        log_debug_cat(LOG_CAT_DISCOVERY, "Cancelling pending UDP send operation...");
         gNetworkOps->UDPCancelAsync(gUDPSendHandle);
         gUDPSendHandle = NULL;
     }
 
     /* Release UDP endpoint */
     if (gUDPEndpoint != NULL && gNetworkOps && gNetworkOps->UDPRelease) {
-        log_debug("Releasing UDP endpoint...");
+        log_debug_cat(LOG_CAT_DISCOVERY, "Releasing UDP endpoint...");
         err = gNetworkOps->UDPRelease(macTCPRefNum, gUDPEndpoint);
         if (err != noErr) {
-            log_debug("Warning: UDPRelease failed during cleanup (Error: %d).", err);
+            log_warning_cat(LOG_CAT_DISCOVERY, "UDPRelease failed during cleanup (Error: %d).", err);
         }
         gUDPEndpoint = NULL;
     }
 
     /* Dispose receive buffer */
     if (gUDPRecvBuffer != NULL) {
-        log_debug("Disposing UDP receive buffer at 0x%lX.", (unsigned long)gUDPRecvBuffer);
+        log_debug_cat(LOG_CAT_DISCOVERY, "Disposing UDP receive buffer at 0x%lX.", (unsigned long)gUDPRecvBuffer);
         DisposePtr(gUDPRecvBuffer);
         gUDPRecvBuffer = NULL;
     }
 
     gLastBroadcastTimeTicks = 0;
-    log_debug("UDP Discovery Endpoint cleanup finished.");
+    log_debug_cat(LOG_CAT_DISCOVERY, "UDP Discovery Endpoint cleanup finished.");
 }
 
 OSErr SendDiscoveryBroadcastSync(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr)
@@ -189,23 +189,23 @@ OSErr SendDiscoveryBroadcastSync(short macTCPRefNum, const char *myUsername, con
 
     /* Check if a send is already pending */
     if (gUDPSendHandle != NULL) {
-        log_debug("SendDiscoveryBroadcastSync: Send already pending, skipping");
+        log_debug_cat(LOG_CAT_DISCOVERY, "SendDiscoveryBroadcastSync: Send already pending, skipping");
         return 1;  /* Indicate busy */
     }
 
-    log_debug("Sending Discovery Broadcast...");
+    log_debug_cat(LOG_CAT_DISCOVERY, "Sending Discovery Broadcast...");
 
     /* Format the message */
     formatted_len = format_message(gBroadcastBuffer, BUFFER_SIZE, MSG_DISCOVERY,
                                    myUsername, myLocalIPStr, "");
     if (formatted_len <= 0) {
-        log_debug("Error: format_message failed for DISCOVERY");
+        log_error_cat(LOG_CAT_DISCOVERY, "Error: format_message failed for DISCOVERY");
         return paramErr;
     }
 
     /* Send using async abstraction layer */
     if (!gNetworkOps->UDPSendAsync) {
-        log_debug("Error: Async UDP send not available");
+        log_error_cat(LOG_CAT_DISCOVERY, "Error: Async UDP send not available");
         return notOpenErr;
     }
     
@@ -213,10 +213,10 @@ OSErr SendDiscoveryBroadcastSync(short macTCPRefNum, const char *myUsername, con
                                     (Ptr)gBroadcastBuffer, formatted_len - 1,
                                     &gUDPSendHandle);
     if (err != noErr) {
-        log_debug("Error starting async broadcast: %d", err);
+        log_error_cat(LOG_CAT_DISCOVERY, "Error starting async broadcast: %d", err);
         gUDPSendHandle = NULL;
     } else {
-        log_debug("Broadcast send initiated asynchronously");
+        log_debug_cat(LOG_CAT_DISCOVERY, "Broadcast send initiated asynchronously");
     }
 
     return err;
@@ -235,23 +235,23 @@ OSErr SendDiscoveryResponseSync(short macTCPRefNum, const char *myUsername, cons
 
     /* Check if a send is already pending */
     if (gUDPSendHandle != NULL) {
-        log_debug("SendDiscoveryResponseSync: Send already pending, skipping response");
+        log_debug_cat(LOG_CAT_DISCOVERY, "SendDiscoveryResponseSync: Send already pending, skipping response");
         return 1;  /* Indicate busy */
     }
 
-    log_debug("Sending Discovery Response to IP 0x%lX:%u...", (unsigned long)destIP, destPort);
+    log_debug_cat(LOG_CAT_DISCOVERY, "Sending Discovery Response to IP 0x%lX:%u...", (unsigned long)destIP, destPort);
 
     /* Format the message */
     formatted_len = format_message(gResponseBuffer, BUFFER_SIZE, MSG_DISCOVERY_RESPONSE,
                                    myUsername, myLocalIPStr, "");
     if (formatted_len <= 0) {
-        log_debug("Error: format_message failed for DISCOVERY_RESPONSE");
+        log_error_cat(LOG_CAT_DISCOVERY, "Error: format_message failed for DISCOVERY_RESPONSE");
         return paramErr;
     }
 
     /* Send using async abstraction layer */
     if (!gNetworkOps->UDPSendAsync) {
-        log_debug("Error: Async UDP send not available");
+        log_error_cat(LOG_CAT_DISCOVERY, "Error: Async UDP send not available");
         return notOpenErr;
     }
     
@@ -259,10 +259,10 @@ OSErr SendDiscoveryResponseSync(short macTCPRefNum, const char *myUsername, cons
                                     (Ptr)gResponseBuffer, formatted_len - 1,
                                     &gUDPSendHandle);
     if (err != noErr) {
-        log_debug("Error starting async response: %d", err);
+        log_error_cat(LOG_CAT_DISCOVERY, "Error starting async response: %d", err);
         gUDPSendHandle = NULL;
     } else {
-        log_debug("Response send initiated asynchronously");
+        log_debug_cat(LOG_CAT_DISCOVERY, "Response send initiated asynchronously");
     }
 
     return err;
@@ -276,29 +276,29 @@ static OSErr StartAsyncUDPRead(void)
     if (gUDPEndpoint == NULL) return invalidStreamPtr;
 
     if (gUDPReadHandle != NULL) {
-        log_debug("StartAsyncUDPRead: UDP read already pending. Ignoring request.");
+        log_debug_cat(LOG_CAT_DISCOVERY, "StartAsyncUDPRead: UDP read already pending. Ignoring request.");
         return 1;
     }
 
     if (gUDPReturnHandle != NULL) {
-        log_debug("StartAsyncUDPRead: Cannot start new read, buffer return is pending. Try later.");
+        log_debug_cat(LOG_CAT_DISCOVERY, "StartAsyncUDPRead: Cannot start new read, buffer return is pending. Try later.");
         return 1;
     }
 
     if (gUDPRecvBuffer == NULL) {
-        log_debug("Error (StartAsyncUDPRead): gUDPRecvBuffer is NULL.");
+        log_error_cat(LOG_CAT_DISCOVERY, "Error (StartAsyncUDPRead): gUDPRecvBuffer is NULL.");
         return invalidBufPtr;
     }
 
     /* Start async receive using abstraction */
     err = gNetworkOps->UDPReceiveAsync(gUDPEndpoint, &gUDPReadHandle);
     if (err != noErr) {
-        log_debug("Error (StartAsyncUDPRead): UDPReceiveAsync failed. Error: %d", err);
+        log_error_cat(LOG_CAT_DISCOVERY, "Error (StartAsyncUDPRead): UDPReceiveAsync failed. Error: %d", err);
         gUDPReadHandle = NULL;
         return err;
     }
 
-    log_debug("StartAsyncUDPRead: Async UDP read initiated.");
+    log_debug_cat(LOG_CAT_DISCOVERY, "StartAsyncUDPRead: Async UDP read initiated.");
     return noErr;
 }
 
@@ -309,24 +309,24 @@ static OSErr ReturnUDPBufferAsync(Ptr dataPtr, unsigned short bufferSize)
     if (!gNetworkOps || !gNetworkOps->UDPReturnBufferAsync || gUDPEndpoint == NULL) return invalidStreamPtr;
 
     if (gUDPReturnHandle != NULL) {
-        log_debug("ReturnUDPBufferAsync: Buffer return already pending. Ignoring request.");
+        log_debug_cat(LOG_CAT_DISCOVERY, "ReturnUDPBufferAsync: Buffer return already pending. Ignoring request.");
         return 1;
     }
 
     if (dataPtr == NULL) {
-        log_debug("Error (ReturnUDPBufferAsync): dataPtr is NULL. Cannot return.");
+        log_error_cat(LOG_CAT_DISCOVERY, "Error (ReturnUDPBufferAsync): dataPtr is NULL. Cannot return.");
         return invalidBufPtr;
     }
 
     /* Return buffer using abstraction */
     err = gNetworkOps->UDPReturnBufferAsync(gUDPEndpoint, dataPtr, bufferSize, &gUDPReturnHandle);
     if (err != noErr) {
-        log_debug("CRITICAL Error (ReturnUDPBufferAsync): UDPReturnBufferAsync failed. Error: %d.", err);
+        log_error_cat(LOG_CAT_DISCOVERY, "CRITICAL Error (ReturnUDPBufferAsync): UDPReturnBufferAsync failed. Error: %d.", err);
         gUDPReturnHandle = NULL;
         return err;
     }
 
-    log_debug("ReturnUDPBufferAsync: Async buffer return initiated for buffer 0x%lX.", (unsigned long)dataPtr);
+    log_debug_cat(LOG_CAT_DISCOVERY, "ReturnUDPBufferAsync: Async buffer return initiated for buffer 0x%lX.", (unsigned long)dataPtr);
     return noErr;
 }
 
@@ -342,12 +342,12 @@ void CheckSendBroadcast(short macTCPRefNum, const char *myUsername, const char *
     }
 
     if (gLastBroadcastTimeTicks == 0 || (currentTimeTicks - gLastBroadcastTimeTicks) >= intervalTicks) {
-        log_debug("CheckSendBroadcast: Interval elapsed. Sending broadcast.");
+        log_debug_cat(LOG_CAT_DISCOVERY, "CheckSendBroadcast: Interval elapsed. Sending broadcast.");
         OSErr sendErr = SendDiscoveryBroadcastSync(macTCPRefNum, myUsername, myLocalIPStr);
         if (sendErr == noErr) {
             gLastBroadcastTimeTicks = currentTimeTicks;
         } else {
-            log_debug("Sync broadcast initiation FAILED (Error: %d). Will retry next interval.", sendErr);
+            log_error_cat(LOG_CAT_DISCOVERY, "Sync broadcast initiation FAILED (Error: %d). Will retry next interval.", sendErr);
         }
     }
 }
@@ -410,24 +410,24 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
                                 (remoteHost >> 24) & 0xFF, (remoteHost >> 16) & 0xFF,
                                 (remoteHost >> 8) & 0xFF, remoteHost & 0xFF);
                     }
-                    log_debug("PollUDPListener: Ignored UDP packet from self (%s).", selfIPStr);
+                    log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Ignored UDP packet from self (%s).", selfIPStr);
                 }
 
                 /* Return the buffer asynchronously */
                 OSErr returnErr = ReturnUDPBufferAsync(dataPtr, kMinUDPBufSize);
                 if (returnErr != noErr && returnErr != 1) {
-                    log_debug("CRITICAL Error: Failed to initiate async buffer return. Error: %d", returnErr);
+                    log_error_cat(LOG_CAT_DISCOVERY, "CRITICAL Error: Failed to initiate async buffer return. Error: %d", returnErr);
                 } else {
-                    log_debug("PollUDPListener: Initiated return for buffer 0x%lX.", (unsigned long)dataPtr);
+                    log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Initiated return for buffer 0x%lX.", (unsigned long)dataPtr);
                 }
             } else {
-                log_debug("DEBUG: Async UDP read returned noErr but 0 bytes. Returning buffer.");
+                log_debug_cat(LOG_CAT_DISCOVERY, "DEBUG: Async UDP read returned noErr but 0 bytes. Returning buffer.");
                 (void)ReturnUDPBufferAsync(dataPtr, kMinUDPBufSize);
             }
         } else {
             /* Error occurred */
             gUDPReadHandle = NULL;
-            log_debug("Error (PollUDPListener): Async UDP read completed with error: %d", status);
+            log_error_cat(LOG_CAT_DISCOVERY, "Error (PollUDPListener): Async UDP read completed with error: %d", status);
 
             /* Try to return buffer if possible */
             if (dataPtr != NULL) {
@@ -445,7 +445,7 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
         } else if (status == noErr) {
             /* Return completed successfully */
             gUDPReturnHandle = NULL;
-            log_debug("PollUDPListener: Async buffer return completed successfully.");
+            log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Async buffer return completed successfully.");
 
             /* Start a new read if none pending */
             if (gUDPReadHandle == NULL && gUDPEndpoint != NULL) {
@@ -454,7 +454,7 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
         } else {
             /* Error occurred */
             gUDPReturnHandle = NULL;
-            log_debug("CRITICAL Error: Async buffer return completed with error: %d.", status);
+            log_error_cat(LOG_CAT_DISCOVERY, "CRITICAL Error: Async buffer return completed with error: %d.", status);
         }
     }
 
@@ -467,11 +467,11 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
         } else if (status == noErr) {
             /* Send completed successfully */
             gUDPSendHandle = NULL;
-            log_debug("PollUDPListener: UDP send completed successfully");
+            log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: UDP send completed successfully");
         } else {
             /* Error occurred */
             gUDPSendHandle = NULL;
-            log_debug("PollUDPListener: UDP send completed with error: %d", status);
+            log_error_cat(LOG_CAT_DISCOVERY, "PollUDPListener: UDP send completed with error: %d", status);
         }
     }
 
@@ -479,7 +479,7 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
     if (gUDPReadHandle == NULL && gUDPReturnHandle == NULL && gUDPEndpoint != NULL) {
         OSErr startErr = StartAsyncUDPRead();
         if (startErr != noErr && startErr != 1) {
-            log_debug("PollUDPListener: Failed to start new UDP read in idle fallback. Error: %d", startErr);
+            log_error_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Failed to start new UDP read in idle fallback. Error: %d", startErr);
         }
     }
 }

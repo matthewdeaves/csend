@@ -73,15 +73,15 @@ int main(int argc, char *argv[])
         log_app_event("Fatal: Failed to create one or more threads. Exiting.");
         state.running = 0;
         if (input_err == 0 && input_tid != 0) {
-            log_debug("Cancelling input thread due to other thread creation failure.");
+            log_error_cat(LOG_CAT_SYSTEM, "Cancelling input thread due to other thread creation failure.");
             pthread_cancel(input_tid);
         }
         if (discovery_err == 0 && discovery_tid != 0) {
-            log_debug("Cancelling discovery thread due to other thread creation failure.");
+            log_error_cat(LOG_CAT_SYSTEM, "Cancelling discovery thread due to other thread creation failure.");
             pthread_cancel(discovery_tid);
         }
         if (listener_err == 0 && listener_tid != 0) {
-            log_debug("Cancelling listener thread due to other thread creation failure.");
+            log_error_cat(LOG_CAT_SYSTEM, "Cancelling listener thread due to other thread creation failure.");
             pthread_cancel(listener_tid);
         }
         if (input_err == 0 && input_tid != 0) pthread_join(input_tid, NULL);
@@ -91,19 +91,19 @@ int main(int argc, char *argv[])
         log_shutdown();
         return EXIT_FAILURE;
     }
-    log_debug("All application threads created successfully.");
+    log_info_cat(LOG_CAT_SYSTEM, "All application threads created successfully.");
     pthread_join(input_tid, NULL);
-    log_debug("User input thread finished. Main thread initiating shutdown...");
+    log_info_cat(LOG_CAT_SYSTEM, "User input thread finished. Main thread initiating shutdown...");
     if (state.running) {
-        log_debug("Main thread explicitly setting running=0.");
+        log_debug_cat(LOG_CAT_SYSTEM, "Main thread explicitly setting running=0.");
         state.running = 0;
     }
-    log_debug("Main thread: Waiting for listener thread to join...");
+    log_debug_cat(LOG_CAT_SYSTEM, "Main thread: Waiting for listener thread to join...");
     if (listener_tid != 0) pthread_join(listener_tid, NULL);
-    log_debug("Main thread: Listener thread joined.");
-    log_debug("Main thread: Waiting for discovery thread to join...");
+    log_debug_cat(LOG_CAT_SYSTEM, "Main thread: Listener thread joined.");
+    log_debug_cat(LOG_CAT_SYSTEM, "Main thread: Waiting for discovery thread to join...");
     if (discovery_tid != 0) pthread_join(discovery_tid, NULL);
-    log_debug("Main thread: Discovery thread joined.");
+    log_debug_cat(LOG_CAT_SYSTEM, "Main thread: Discovery thread joined.");
     cleanup_app_state(&state);
     
     /* Notify UI of shutdown */

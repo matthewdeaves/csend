@@ -4,7 +4,7 @@
 
 #include "network_init.h"
 #include "network_abstraction.h"
-#include "logging.h"
+#include "../shared/logging.h"
 #include "../shared/logging.h"
 #include "discovery.h"
 #include "messaging.h"
@@ -40,7 +40,7 @@ OSErr InitializeNetworking(void)
     OSErr err;
     unsigned long tcpStreamBufferSize;
 
-    log_debug("InitializeNetworking: Starting network initialization");
+    log_info_cat(LOG_CAT_NETWORKING, "InitializeNetworking: Starting network initialization");
 
     /* Initialize the network abstraction layer */
     err = InitNetworkAbstraction();
@@ -49,7 +49,7 @@ OSErr InitializeNetworking(void)
         return err;
     }
 
-    log_debug("InitializeNetworking: Network abstraction initialized with %s",
+    log_info_cat(LOG_CAT_NETWORKING, "InitializeNetworking: Network abstraction initialized with %s",
               GetNetworkImplementationName());
 
     /* Initialize the underlying network implementation */
@@ -80,7 +80,7 @@ OSErr InitializeNetworking(void)
         gMacTCPRefNum = 0;
         return err;
     }
-    log_debug("UDP Discovery Endpoint Initialized.");
+    log_info_cat(LOG_CAT_DISCOVERY, "UDP Discovery Endpoint Initialized.");
 
     /* Initialize TCP Messaging with dual streams */
     tcpStreamBufferSize = PREFERRED_TCP_STREAM_RCV_BUFFER_SIZE;
@@ -88,7 +88,7 @@ OSErr InitializeNetworking(void)
         tcpStreamBufferSize = MINIMUM_TCP_STREAM_RCV_BUFFER_SIZE;
     }
 
-    log_debug("Initializing TCP with stream receive buffer size: %lu bytes.", tcpStreamBufferSize);
+    log_debug_cat(LOG_CAT_NETWORKING, "Initializing TCP with stream receive buffer size: %lu bytes.", tcpStreamBufferSize);
 
     /* Create separate UPPs for listen and send streams */
     if (gTCPListenASR_UPP == NULL) {
@@ -103,7 +103,7 @@ OSErr InitializeNetworking(void)
             gMacTCPRefNum = 0;
             return memFullErr;
         }
-        log_debug("TCP Listen ASR UPP created at 0x%lX.", (unsigned long)gTCPListenASR_UPP);
+        log_debug_cat(LOG_CAT_NETWORKING, "TCP Listen ASR UPP created at 0x%lX.", (unsigned long)gTCPListenASR_UPP);
     }
 
     if (gTCPSendASR_UPP == NULL) {
@@ -120,7 +120,7 @@ OSErr InitializeNetworking(void)
             gMacTCPRefNum = 0;
             return memFullErr;
         }
-        log_debug("TCP Send ASR UPP created at 0x%lX.", (unsigned long)gTCPSendASR_UPP);
+        log_debug_cat(LOG_CAT_NETWORKING, "TCP Send ASR UPP created at 0x%lX.", (unsigned long)gTCPSendASR_UPP);
     }
 
     err = InitTCP(gMacTCPRefNum, tcpStreamBufferSize, gTCPListenASR_UPP, gTCPSendASR_UPP);
@@ -143,7 +143,7 @@ OSErr InitializeNetworking(void)
         return err;
     }
 
-    log_debug("TCP Messaging Initialized with dual streams.");
+    log_info_cat(LOG_CAT_MESSAGING, "TCP Messaging Initialized with dual streams.");
     log_app_event("Networking initialization complete. Local IP: %s using %s",
                   gMyLocalIPStr, GetNetworkImplementationName());
 
@@ -156,21 +156,21 @@ void CleanupNetworking(void)
 
     /* Clean up TCP Messaging */
     CleanupTCP(gMacTCPRefNum);
-    log_debug("TCP Messaging Cleaned up.");
+    log_debug_cat(LOG_CAT_MESSAGING, "TCP Messaging Cleaned up.");
 
     /* Clean up UDP Discovery */
     CleanupUDPDiscoveryEndpoint(gMacTCPRefNum);
-    log_debug("UDP Discovery Cleaned up.");
+    log_debug_cat(LOG_CAT_DISCOVERY, "UDP Discovery Cleaned up.");
 
     /* Dispose of TCP ASR UPPs */
     if (gTCPListenASR_UPP != NULL) {
-        log_debug("Disposing TCP Listen ASR UPP at 0x%lX.", (unsigned long)gTCPListenASR_UPP);
+        log_debug_cat(LOG_CAT_NETWORKING, "Disposing TCP Listen ASR UPP at 0x%lX.", (unsigned long)gTCPListenASR_UPP);
         DisposeRoutineDescriptor(gTCPListenASR_UPP);
         gTCPListenASR_UPP = NULL;
     }
 
     if (gTCPSendASR_UPP != NULL) {
-        log_debug("Disposing TCP Send ASR UPP at 0x%lX.", (unsigned long)gTCPSendASR_UPP);
+        log_debug_cat(LOG_CAT_NETWORKING, "Disposing TCP Send ASR UPP at 0x%lX.", (unsigned long)gTCPSendASR_UPP);
         DisposeRoutineDescriptor(gTCPSendASR_UPP);
         gTCPSendASR_UPP = NULL;
     }
@@ -217,7 +217,7 @@ OSErr ParseIPv4(const char *ip_str, ip_addr *out_addr)
         parts[i] = strtoul(token, &endptr, 10);
 
         if (*endptr != '\0' || parts[i] > 255) {
-            log_debug("ParseIPv4: Invalid part '%s' in IP string '%s'", token, ip_str);
+            log_error_cat(LOG_CAT_NETWORKING, "ParseIPv4: Invalid part '%s' in IP string '%s'", token, ip_str);
             *out_addr = 0;
             return paramErr;
         }
@@ -225,7 +225,7 @@ OSErr ParseIPv4(const char *ip_str, ip_addr *out_addr)
     }
 
     if (i != 4) {
-        log_debug("ParseIPv4: Incorrect number of parts (%d) in IP string '%s'", i, ip_str);
+        log_error_cat(LOG_CAT_NETWORKING, "ParseIPv4: Incorrect number of parts (%d) in IP string '%s'", i, ip_str);
         *out_addr = 0;
         return paramErr;
     }

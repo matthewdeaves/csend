@@ -59,8 +59,8 @@ int peer_shared_add_or_update(peer_manager_t *manager, const char *ip, const cha
     int existing_index = peer_shared_find_by_ip(manager, ip);
     if (existing_index != -1) {
         peer_shared_update_entry(&manager->peers[existing_index], username);
-        log_debug("Updated existing peer %s@%s (total active peers: %d)", 
-                  username ? username : "??", ip, active_count);
+        log_debug_cat(LOG_CAT_PEER_MGMT, "Updated existing peer %s@%s (total active peers: %d)", 
+                      username ? username : "??", ip, active_count);
         return 0;
     }
     int empty_slot = peer_shared_find_empty_slot(manager);
@@ -71,12 +71,12 @@ int peer_shared_add_or_update(peer_manager_t *manager, const char *ip, const cha
         new_peer->active = 1;
         new_peer->username[0] = '\0';
         peer_shared_update_entry(new_peer, username);
-        log_debug("Added new peer %s@%s at slot %d (total active peers: %d)", 
-                  username ? username : "??", ip, empty_slot, active_count + 1);
+        log_info_cat(LOG_CAT_PEER_MGMT, "Added new peer %s@%s at slot %d (total active peers: %d)", 
+                     username ? username : "??", ip, empty_slot, active_count + 1);
         return 1;
     }
-    log_debug("Peer list is full. Cannot add peer %s@%s. (max peers: %d)", 
-              username ? username : "??", ip, MAX_PEERS);
+    log_warning_cat(LOG_CAT_PEER_MGMT, "Peer list is full. Cannot add peer %s@%s. (max peers: %d)", 
+                    username ? username : "??", ip, MAX_PEERS);
     return -1;
 }
 int peer_shared_prune_timed_out(peer_manager_t *manager)
@@ -106,7 +106,7 @@ int peer_shared_prune_timed_out(peer_manager_t *manager)
 #endif
             }
             if (time_diff > timeout_duration) {
-                log_debug("Peer %s@%s timed out.", manager->peers[i].username, manager->peers[i].ip);
+                log_info_cat(LOG_CAT_PEER_MGMT, "Peer %s@%s timed out.", manager->peers[i].username, manager->peers[i].ip);
                 manager->peers[i].active = 0;
                 pruned_count++;
             }
