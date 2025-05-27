@@ -74,3 +74,6 @@ logs
 csend_venv/
 __pycache__/
 *.pyc
+
+# Static Code Analysis Outputs
+reports

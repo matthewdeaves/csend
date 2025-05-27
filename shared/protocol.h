@@ -67,48 +67,7 @@ int format_message(char *buffer, int buffer_size, const char *msg_type,
 int parse_message(const char *buffer, int buffer_len, char *sender_ip, char *sender_username,
                   char *msg_type, char *content);
 
-/* Protocol validation macros (no dependencies) */
-
-/**
- * IS_VALID_MSG_DISCOVERY - Check if string matches DISCOVERY message type
- */
-#define IS_VALID_MSG_DISCOVERY(msg) \
-    ((msg) != NULL && (msg)[0] == 'D' && (msg)[1] == 'I' && (msg)[2] == 'S' && \
-     (msg)[3] == 'C' && (msg)[4] == 'O' && (msg)[5] == 'V' && (msg)[6] == 'E' && \
-     (msg)[7] == 'R' && (msg)[8] == 'Y' && (msg)[9] == '\0')
-
-/**
- * IS_VALID_MSG_DISCOVERY_RESPONSE - Check if string matches DISCOVERY_RESPONSE
- */
-#define IS_VALID_MSG_DISCOVERY_RESPONSE(msg) \
-    ((msg) != NULL && (msg)[0] == 'D' && (msg)[1] == 'I' && (msg)[2] == 'S' && \
-     (msg)[3] == 'C' && (msg)[4] == 'O' && (msg)[5] == 'V' && (msg)[6] == 'E' && \
-     (msg)[7] == 'R' && (msg)[8] == 'Y' && (msg)[9] == '_' && (msg)[10] == 'R' && \
-     (msg)[11] == 'E' && (msg)[12] == 'S' && (msg)[13] == 'P' && (msg)[14] == 'O' && \
-     (msg)[15] == 'N' && (msg)[16] == 'S' && (msg)[17] == 'E' && (msg)[18] == '\0')
-
-/**
- * IS_VALID_MSG_TEXT - Check if string matches TEXT message type
- */
-#define IS_VALID_MSG_TEXT(msg) \
-    ((msg) != NULL && (msg)[0] == 'T' && (msg)[1] == 'E' && \
-     (msg)[2] == 'X' && (msg)[3] == 'T' && (msg)[4] == '\0')
-
-/**
- * IS_VALID_MSG_QUIT - Check if string matches QUIT message type
- */
-#define IS_VALID_MSG_QUIT(msg) \
-    ((msg) != NULL && (msg)[0] == 'Q' && (msg)[1] == 'U' && \
-     (msg)[2] == 'I' && (msg)[3] == 'T' && (msg)[4] == '\0')
-
-/**
- * IS_VALID_MESSAGE_TYPE - Check if a string is any valid message type
- */
-#define IS_VALID_MESSAGE_TYPE(msg) \
-    (IS_VALID_MSG_DISCOVERY(msg) || \
-     IS_VALID_MSG_DISCOVERY_RESPONSE(msg) || \
-     IS_VALID_MSG_TEXT(msg) || \
-     IS_VALID_MSG_QUIT(msg))
+/* Protocol validation: Use strcmp() for message type comparison */
 
 /**
  * PROTOCOL_OVERHEAD - Get the protocol overhead in bytes

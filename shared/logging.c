@@ -5,7 +5,6 @@
 #define MAX_LOG_LINE_LENGTH 1024
 #define USER_MESSAGE_BUFFER_SIZE (MAX_LOG_LINE_LENGTH - 60)
 #define TIMESTAMP_BUFFER_SIZE 30
-#define CATEGORY_NAME_SIZE 12
 
 static FILE *g_log_file = NULL;
 static platform_logging_callbacks_t g_platform_callbacks;

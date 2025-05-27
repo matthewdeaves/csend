@@ -1,0 +1,71 @@
+#!/bin/bash
+
+# Pre-commit hook for dead code detection
+# This hook runs a quick dead code check before allowing commits
+
+# Colors for output
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
+
+echo -e "${YELLOW}Running pre-commit dead code detection...${NC}"
+
+# Check if deadcode_check.sh exists
+if [ ! -f "./deadcode_check.sh" ]; then
+    echo -e "${YELLOW}Warning: deadcode_check.sh not found, skipping dead code check${NC}"
+    exit 0
+fi
+
+# Run only the warnings check (fastest option) for changed files
+# Get list of staged C files
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.c$' | grep -v DNR.c || true)
+
+if [ -z "$STAGED_FILES" ]; then
+    echo -e "${GREEN}No C files staged, skipping dead code check${NC}"
+    exit 0
+fi
+
+# Determine which platforms are affected
+PLATFORM="all"
+if echo "$STAGED_FILES" | grep -q "^posix/" && ! echo "$STAGED_FILES" | grep -q "^classic_mac/"; then
+    PLATFORM="posix"
+elif echo "$STAGED_FILES" | grep -q "^classic_mac/" && ! echo "$STAGED_FILES" | grep -q "^posix/"; then
+    PLATFORM="classic"
+fi
+
+echo "Checking platform: $PLATFORM"
+echo "Staged files: $(echo $STAGED_FILES | wc -w) C files"
+
+# Create temporary directory for analysis
+TEMP_DIR=$(mktemp -d)
+trap "rm -rf $TEMP_DIR" EXIT
+
+# Run dead code check on warnings only (fast)
+if ./deadcode_check.sh --platform "$PLATFORM" warnings > "$TEMP_DIR/deadcode_output.txt" 2>&1; then
+    # Check for any warnings about unused code
+    if grep -q "unused" "$TEMP_DIR/deadcode_output.txt"; then
+        echo -e "${YELLOW}Dead code warnings found:${NC}"
+        grep "unused" "$TEMP_DIR/deadcode_output.txt" | head -10
+        echo ""
+        echo -e "${YELLOW}Consider fixing these issues before committing.${NC}"
+        echo -e "${YELLOW}To bypass this check, use: git commit --no-verify${NC}"
+        
+        # Ask user if they want to continue
+        read -p "Continue with commit anyway? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo -e "${RED}Commit aborted.${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}No dead code warnings found!${NC}"
+    fi
+else
+    echo -e "${YELLOW}Warning: Dead code check failed to run properly${NC}"
+    echo "Error output:"
+    cat "$TEMP_DIR/deadcode_output.txt" | tail -5
+fi
+
+echo -e "${GREEN}Pre-commit dead code check complete${NC}"
+exit 0
