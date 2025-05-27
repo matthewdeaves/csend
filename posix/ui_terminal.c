@@ -1,4 +1,5 @@
 #include "ui_terminal.h"
+#include "ui_terminal_commands.h"
 #include "ui_interface.h"
 #include "network.h"
 #include "logging.h"
@@ -14,6 +15,7 @@
 #include <sys/select.h>
 #include <unistd.h>
 #include <errno.h>
+#include <ctype.h>
 
 /* Legacy function for compatibility - redirects to UI interface */
 void print_help_message(void)
@@ -38,6 +40,70 @@ void print_peers(app_state_t *state)
     }
 }
 
+/* Command table for dispatching */
+static const command_entry_t command_table[] = {
+    {"/list",      handle_list_command,      "List all active peers"},
+    {"/help",      handle_help_command,      "Show help message"},
+    {"/debug",     handle_debug_command,     "Toggle debug output"},
+    {"/send",      handle_send_command,      "Send message to a peer"},
+    {"/broadcast", handle_broadcast_command, "Send message to all peers"},
+    {"/quit",      handle_quit_command,      "Quit the application"},
+    {"/status",    handle_status_command,    "Show status information"},
+    {"/stats",     handle_stats_command,     "Show statistics"},
+    {"/history",   handle_history_command,   "Show message history"},
+    {"/version",   handle_version_command,   "Show version information"},
+    {"/peers",     handle_peers_command,     "List or filter peers"},
+    {NULL, NULL, NULL} /* Sentinel */
+};
+
+/* Find command handler by name */
+static const command_entry_t* find_command(const char *cmd_name)
+{
+    for (const command_entry_t *cmd = command_table; cmd->name != NULL; cmd++) {
+        if (strcmp(cmd_name, cmd->name) == 0) {
+            return cmd;
+        }
+    }
+    return NULL;
+}
+
+/* Extract command name and arguments from input */
+static int extract_command_and_args(const char *input, char *cmd_name, size_t cmd_size, 
+                                   char *args, size_t args_size)
+{
+    if (!input || !cmd_name || !args) return 0;
+    
+    /* Initialize outputs */
+    cmd_name[0] = '\0';
+    args[0] = '\0';
+    
+    /* Skip leading whitespace */
+    while (*input && isspace(*input)) input++;
+    
+    /* Check if it's a command */
+    if (*input != '/') return 0;
+    
+    /* Find the end of command name */
+    const char *space = strchr(input, ' ');
+    size_t cmd_len;
+    
+    if (space) {
+        cmd_len = space - input;
+        /* Copy arguments */
+        strncpy(args, space + 1, args_size - 1);
+        args[args_size - 1] = '\0';
+    } else {
+        cmd_len = strlen(input);
+    }
+    
+    /* Copy command name */
+    if (cmd_len >= cmd_size) cmd_len = cmd_size - 1;
+    strncpy(cmd_name, input, cmd_len);
+    cmd_name[cmd_len] = '\0';
+    
+    return 1;
+}
+
 /* Handle command - returns 1 if quit command, 0 otherwise */
 int handle_command(app_state_t *state, const char *input)
 {
@@ -60,155 +126,23 @@ int handle_command(app_state_t *state, const char *input)
         *id_pos = '\0';  /* Truncate at --id parameter */
     }
     
-    if (strcmp(clean_input, "/list") == 0) {
-        if (state->ui) {
-            UI_CALL(state->ui, display_peer_list, state);
-        }
-    } else if (strcmp(clean_input, "/help") == 0) {
-        if (state->ui) {
-            UI_CALL(state->ui, display_help);
-        }
-    } else if (strcmp(clean_input, "/debug") == 0) {
-        Boolean current_debug_state = is_debug_output_enabled();
-        set_debug_output_enabled(!current_debug_state);
-        log_app_event("Debug output %s.", is_debug_output_enabled() ? "ENABLED" : "DISABLED");
-        if (state->ui) {
-            UI_CALL(state->ui, notify_debug_toggle, is_debug_output_enabled());
-        }
-    } else if (strncmp(clean_input, "/send ", 6) == 0) {
-        int peer_num_input;
-        char *msg_start;
-        char input_copy[BUFFER_SIZE];
-        strncpy(input_copy, clean_input, BUFFER_SIZE - 1);
-        input_copy[BUFFER_SIZE - 1] = '\0';
-        msg_start = strchr(input_copy + 6, ' ');
-        if (msg_start == NULL) {
-            log_app_event("Usage: /send <peer_number> <message>");
-            if (state->ui) {
-                UI_CALL(state->ui, notify_send_result, 0, -1, NULL);
-            }
-            goto command_complete;
-        }
-        *msg_start = '\0';
-        peer_num_input = atoi(input_copy + 6);
-        msg_start++;
-        if (peer_num_input <= 0) {
-            log_app_event("Invalid peer number. Use /list to see active peers.");
-            if (state->ui) {
-                UI_CALL(state->ui, notify_send_result, 0, -1, NULL);
-            }
-            goto command_complete;
-        }
-        
-        pthread_mutex_lock(&state->peers_mutex);
-        int current_peer_index = 0;
-        int found = 0;
-        char target_ip[INET_ADDRSTRLEN];
-        for (int i = 0; i < MAX_PEERS; i++) {
-            if (state->peer_manager.peers[i].active &&
-                    (difftime(time(NULL), state->peer_manager.peers[i].last_seen) <= PEER_TIMEOUT)) {
-                current_peer_index++;
-                if (current_peer_index == peer_num_input) {
-                    strncpy(target_ip, state->peer_manager.peers[i].ip, INET_ADDRSTRLEN - 1);
-                    target_ip[INET_ADDRSTRLEN - 1] = '\0';
-                    found = 1;
-                    break;
-                }
-            }
-        }
-        pthread_mutex_unlock(&state->peers_mutex);
-        
-        if (found) {
-            if (send_message(target_ip, msg_start, MSG_TEXT, state->username) < 0) {
-                log_error_cat(LOG_CAT_MESSAGING, "Failed to send message to %s", target_ip);
-                if (state->ui) {
-                    UI_CALL(state->ui, notify_send_result, 0, peer_num_input, target_ip);
-                }
-            } else {
-                log_app_event("Message sent to peer %d (%s)", peer_num_input, target_ip);
-                if (state->ui) {
-                    UI_CALL(state->ui, notify_send_result, 1, peer_num_input, target_ip);
-                }
-            }
-        } else {
-            log_app_event("Invalid peer number '%d'. Use /list to see active peers.", peer_num_input);
-            if (state->ui) {
-                UI_CALL(state->ui, notify_send_result, 0, -1, NULL);
-            }
-        }
-    } else if (strncmp(clean_input, "/broadcast ", 11) == 0) {
-        const char *message_content = clean_input + 11;
-        log_app_event("Broadcasting message: %s", message_content);
-        
-        pthread_mutex_lock(&state->peers_mutex);
-        int sent_count = 0;
-        for (int i = 0; i < MAX_PEERS; i++) {
-            if (state->peer_manager.peers[i].active &&
-                    (difftime(time(NULL), state->peer_manager.peers[i].last_seen) <= PEER_TIMEOUT)) {
-                if (send_message(state->peer_manager.peers[i].ip, message_content, MSG_TEXT, state->username) < 0) {
-                    log_error_cat(LOG_CAT_MESSAGING, "Failed to send broadcast message to %s", state->peer_manager.peers[i].ip);
-                } else {
-                    sent_count++;
-                }
-            }
-        }
-        pthread_mutex_unlock(&state->peers_mutex);
-        
-        log_app_event("Broadcast message sent to %d active peer(s).", sent_count);
-        if (state->ui) {
-            UI_CALL(state->ui, notify_broadcast_result, sent_count);
-        }
-    } else if (strcmp(clean_input, "/quit") == 0) {
-        log_info_cat(LOG_CAT_SYSTEM, "Initiating quit sequence...");
-        pthread_mutex_lock(&state->peers_mutex);
-        log_info_cat(LOG_CAT_MESSAGING, "Sending QUIT notifications to peers...");
-        int notify_count = 0;
-        for (int i = 0; i < MAX_PEERS; i++) {
-            if (state->peer_manager.peers[i].active) {
-                if (send_message(state->peer_manager.peers[i].ip, "", MSG_QUIT, state->username) < 0) {
-                    log_error_cat(LOG_CAT_MESSAGING, "Failed to send quit notification to %s", state->peer_manager.peers[i].ip);
-                } else {
-                    notify_count++;
-                }
-            }
-        }
-        pthread_mutex_unlock(&state->peers_mutex);
-        log_info_cat(LOG_CAT_MESSAGING, "Quit notifications sent to %d peer(s).", notify_count);
-        if (g_state) {
-            g_state->running = 0;
-        } else {
-            state->running = 0;
-        }
-        log_info_cat(LOG_CAT_SYSTEM, "Exiting application via /quit command...");
-        result = 1;  /* Signal quit */
-    } else if (strcmp(clean_input, "/status") == 0) {
-        if (state->ui && state->ui->ops->notify_status) {
-            UI_CALL(state->ui, notify_status, state);
-        }
-    } else if (strcmp(clean_input, "/stats") == 0) {
-        if (state->ui && state->ui->ops->notify_stats) {
-            UI_CALL(state->ui, notify_stats, state);
-        }
-    } else if (strncmp(clean_input, "/history", 8) == 0) {
-        int count = 10;  /* Default to 10 messages */
-        if (strlen(clean_input) > 9) {
-            count = atoi(clean_input + 9);
-            if (count <= 0) count = 10;
-            if (count > 100) count = 100;  /* Cap at 100 */
-        }
-        if (state->ui && state->ui->ops->notify_history) {
-            UI_CALL(state->ui, notify_history, count);
-        }
-    } else if (strcmp(clean_input, "/version") == 0) {
-        if (state->ui && state->ui->ops->notify_version) {
-            UI_CALL(state->ui, notify_version);
-        }
-    } else if (strncmp(clean_input, "/peers --filter ", 16) == 0) {
-        /* TODO: Implement peer filtering */
-        log_app_event("Peer filtering not yet implemented.");
+    /* Extract command and arguments */
+    char cmd_name[64];
+    char args[BUFFER_SIZE];
+    
+    if (!extract_command_and_args(clean_input, cmd_name, sizeof(cmd_name), 
+                                  args, sizeof(args))) {
+        log_app_event("Invalid command format: '%s'", input);
         if (state->ui) {
             UI_CALL(state->ui, notify_command_unknown, input);
         }
+        goto command_complete;
+    }
+    
+    /* Find and execute command */
+    const command_entry_t *cmd = find_command(cmd_name);
+    if (cmd) {
+        result = cmd->handler(state, args);
     } else {
         log_app_event("Unknown command: '%s'. Type /help for available commands.", input);
         if (state->ui) {

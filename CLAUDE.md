@@ -118,6 +118,7 @@ make -f Makefile.retro68
 3. **Message Queue (Classic Mac)**: Broadcast messages queued when send stream busy
 4. **Timeout Handling**: Peers pruned after `PEER_TIMEOUT` (30 seconds) of inactivity
 5. **Protocol Endianness**: Magic number uses network byte order (`htonl`/`ntohl`)
+6. **Logging System**: Uses categorized logging (see LOGGING.md) with levels ERROR, WARNING, INFO, DEBUG
 
 ## Key Files to Understand
 
@@ -126,20 +127,29 @@ make -f Makefile.retro68
 - **POSIX Main Loop**: `posix/main.c` - Thread management and initialization
 - **Classic Mac Event Loop**: `classic_mac/main.c` - WaitNextEvent handling
 - **Network Abstraction**: `classic_mac/network_abstraction.h` - Network interface design
+- **Machine Mode UI**: `posix/ui_terminal_machine.c` - JSON-based interface implementation
+- **Logging**: `shared/logging.c` - Centralized logging with categories and levels
 
-## Code Quality & CI/CD
+## Code Quality Commands
 
-### Git Hooks Setup
+**IMPORTANT**: When making code changes, run these commands to ensure code quality:
+
 ```bash
-# Enable pre-commit hooks
-git config core.hooksPath .githooks
+# Format code (required before commits)
+./format_code.sh
 
-# Hooks include:
-# - Dead code detection on commit
-# - Platform-specific analysis based on changed files
+# Check for code duplication
+./cpd_check.sh
+
+# Check complexity warnings
+./complexity_check.sh warnings
+
+# Check for dead code
+./deadcode_check.sh warnings
 ```
 
-### Continuous Integration
+## CI/CD Integration
+
 For CI/CD pipelines, add these checks:
 ```bash
 # Code quality checks
