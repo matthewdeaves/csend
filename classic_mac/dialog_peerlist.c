@@ -29,7 +29,7 @@ Boolean InitPeerListControl(DialogPtr dialog)
                   destRectList.top, destRectList.left, destRectList.bottom, destRectList.right);
         GrafPtr oldPort;
         GetPort(&oldPort);
-        SetPort(GetWindowPort(dialog));
+        SetPort((GrafPtr)GetWindowPort(dialog));
         GetFontInfo(&fontInfo);
         SetPort(oldPort);
         cellSize.v = fontInfo.ascent + fontInfo.descent + fontInfo.leading;
@@ -79,7 +79,7 @@ Boolean HandlePeerListClick(DialogPtr dialog, EventRecord *theEvent)
         Point localClick = theEvent->where;
         GrafPtr oldPort;
         GetPort(&oldPort);
-        SetPort(GetWindowPort(dialog));
+        SetPort((GrafPtr)GetWindowPort(dialog));
         GlobalToLocal(&localClick);
         SetPort(oldPort);
         SignedByte listState = HGetState((Handle)gPeerListHandle);
@@ -105,7 +105,7 @@ Boolean HandlePeerListClick(DialogPtr dialog, EventRecord *theEvent)
                     ControlHandle broadcastCheckboxHandle;
                     GrafPtr clickOldPort;
                     GetPort(&clickOldPort);
-                    SetPort(GetWindowPort(gMainWindow));
+                    SetPort((GrafPtr)GetWindowPort(gMainWindow));
                     GetDialogItem(gMainWindow, kBroadcastCheckbox, &itemType, &itemHandle, &itemRect);
                     if (itemHandle != NULL && itemType == (ctrlItem + chkCtrl)) {
                         broadcastCheckboxHandle = (ControlHandle)itemHandle;
@@ -198,7 +198,7 @@ void UpdatePeerDisplayList(Boolean forceRedraw)
     }
     HSetState((Handle)gPeerListHandle, listState);
     if (forceRedraw || activePeerCount != currentListLengthInRows || oldSelectionStillValidAndFound || (hadOldSelectionData && !oldSelectionStillValidAndFound)) {
-        GrafPtr windowPort = GetWindowPort(gMainWindow);
+        GrafPtr windowPort = (GrafPtr)GetWindowPort(gMainWindow);
         if (windowPort != NULL) {
             GrafPtr oldPortForDrawing;
             GetPort(&oldPortForDrawing);
@@ -221,7 +221,7 @@ void UpdatePeerDisplayList(Boolean forceRedraw)
 void HandlePeerListUpdate(DialogPtr dialog)
 {
     if (gPeerListHandle != NULL) {
-        GrafPtr windowPort = GetWindowPort(dialog);
+        GrafPtr windowPort = (GrafPtr)GetWindowPort(dialog);
         if (windowPort != NULL) {
             GrafPtr oldPort;
             GetPort(&oldPort);
@@ -265,7 +265,7 @@ void DialogPeerList_DeselectAll(void)
     if (gPeerListHandle != NULL && gLastSelectedCell.v >= 0) {
         GrafPtr oldPortForList;
         GetPort(&oldPortForList);
-        SetPort(GetWindowPort(gMainWindow));
+        SetPort((GrafPtr)GetWindowPort(gMainWindow));
         LSetSelect(false, gLastSelectedCell, gPeerListHandle);
         SetPt(&gLastSelectedCell, 0, -1);
         SignedByte listState = HGetState((Handle)gPeerListHandle);

@@ -4,7 +4,6 @@
 #include <TextEdit.h>
 #include <Dialogs.h>
 #include <Events.h>
-extern DialogPtr gMainWindow;
 extern TEHandle gInputTE;
 Boolean InitInputTE(DialogPtr dialog);
 void CleanupInputTE(void);

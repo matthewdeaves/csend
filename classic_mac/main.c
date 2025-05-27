@@ -40,7 +40,6 @@ const unsigned long kPeerListUpdateIntervalTicks = 5 * 60;
 const unsigned long kQuitMessageDelayTicks = 30;
 #define kAppleMenuID 1
 #define kFileMenuID 128
-#define kEditMenuID 129
 #define kAboutItem 1
 #define kQuitItem 1
 static AEEventHandlerUPP gAEQuitAppUPP = NULL;
@@ -73,7 +72,9 @@ int main(void)
         sprintf((char *)pErrorMsg + 1, "Network Init Failed: %d. See log.", (int)networkErr);
         pErrorMsg[0] = strlen((char *)pErrorMsg + 1);
         StopAlert(128, nil);
-        if (gAEQuitAppUPP) DisposeAEEventHandlerUPP(gAEQuitAppUPP);
+        if (gAEQuitAppUPP) {
+            DisposeAEEventHandlerUPP(gAEQuitAppUPP);
+        }
         log_shutdown();
         return 1;
     }
@@ -84,7 +85,9 @@ int main(void)
     if (!dialogOk) {
         log_app_event("Fatal: Dialog initialization failed. Exiting.");
         CleanupNetworking();
-        if (gAEQuitAppUPP) DisposeAEEventHandlerUPP(gAEQuitAppUPP);
+        if (gAEQuitAppUPP) {
+            DisposeAEEventHandlerUPP(gAEQuitAppUPP);
+        }
         log_shutdown();
         return 1;
     }
@@ -217,7 +220,9 @@ void InstallAppleEventHandlers(void)
 }
 pascal OSErr MyAEQuitApplication(const AppleEvent *theAppleEvent, AppleEvent *reply, long handlerRefCon)
 {
-#pragma unused(theAppleEvent, reply, handlerRefCon)
+    (void)theAppleEvent; /* Unused parameter */
+    (void)reply; /* Unused parameter */
+    (void)handlerRefCon; /* Unused parameter */
     log_app_event("MyAEQuitApplication: Received kAEQuitApplication Apple Event. Setting gDone=true.");
     gDone = true;
     return noErr;
@@ -282,7 +287,7 @@ void MainEventLoop(void)
                     short foundControlPart;
                     GrafPtr oldPort;
                     GetPort(&oldPort);
-                    SetPort(GetWindowPort(gMainWindow));
+                    SetPort((GrafPtr)GetWindowPort(gMainWindow));
                     GlobalToLocal(&localPt);
                     foundControlPart = FindControl(localPt, whichWindow, &foundControl);
                     if (foundControl == gMessagesScrollBar && foundControlPart != 0 &&
@@ -325,7 +330,6 @@ void MainEventLoop(void)
                         DialogItemType itemType;
                         Handle itemHandle;
                         Rect itemRect;
-                        GrafPtr oldPortForDrawing;
                         short currentValue;
                         switch (itemHit) {
                         case kSendButton:

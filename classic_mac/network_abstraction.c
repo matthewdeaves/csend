@@ -25,8 +25,6 @@ static Boolean IsOpenTransportAvailable(void)
 /* Initialize the network abstraction layer */
 OSErr InitNetworkAbstraction(void)
 {
-    OSErr err = noErr;
-
     log_info_cat(LOG_CAT_NETWORKING, "InitNetworkAbstraction: Starting network abstraction initialization");
 
     /* Check if already initialized */
@@ -60,6 +58,10 @@ OSErr InitNetworkAbstraction(void)
         /* TODO: gNetworkOps = GetOpenTransportOperations(); */
         log_app_event("Fatal: OpenTransport not yet implemented");
         return unimpErr;
+
+    case NETWORK_IMPL_NONE:
+        log_app_event("Fatal: Network implementation not selected");
+        return paramErr;
 
     default:
         log_app_event("Fatal: Unknown network implementation type: %d",
@@ -111,8 +113,10 @@ const char *GetNetworkImplementationName(void)
         return "MacTCP";
     case NETWORK_IMPL_OPENTRANSPORT:
         return "OpenTransport";
-    default:
+    case NETWORK_IMPL_NONE:
         return "None";
+    default:
+        return "Unknown";
     }
 }
 

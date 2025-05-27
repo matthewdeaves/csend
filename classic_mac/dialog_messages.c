@@ -20,12 +20,6 @@
 #ifndef inPageDown
 #define inPageDown 23
 #endif
-#ifndef inThumb
-#define inThumb 129
-#endif
-#ifndef scrollBarProc
-#define scrollBarProc 16
-#endif
 TEHandle gMessagesTE = NULL;
 ControlHandle gMessagesScrollBar = NULL;
 pascal void MyScrollAction(ControlHandle theControl, short partCode)
@@ -114,7 +108,7 @@ void AppendToMessagesTE(const char *text)
     }
     GetPort(&oldPort);
     if (gMainWindow != NULL) {
-        SetPort(GetWindowPort(gMainWindow));
+        SetPort((GrafPtr)GetWindowPort(gMainWindow));
     } else {
         log_debug_cat(LOG_CAT_UI, "AppendToMessagesTE Warning: gMainWindow is NULL! Port not set.");
     }
@@ -285,7 +279,7 @@ void HandleMessagesTEUpdate(DialogPtr dialog)
         Handle itemHandleIgnored;
         GrafPtr oldPort;
         GetPort(&oldPort);
-        SetPort(GetWindowPort(dialog));
+        SetPort((GrafPtr)GetWindowPort(dialog));
         GetDialogItem(dialog, kMessagesTextEdit, &itemTypeIgnored, &itemHandleIgnored, &itemRect);
         SignedByte teState = HGetState((Handle)gMessagesTE);
         HLock((Handle)gMessagesTE);
@@ -320,7 +314,7 @@ void ScrollMessagesTE(short deltaPixels)
         GrafPtr oldPort;
         GetPort(&oldPort);
         if (gMainWindow != NULL) {
-            SetPort(GetWindowPort(gMainWindow));
+            SetPort((GrafPtr)GetWindowPort(gMainWindow));
         } else {
             log_debug_cat(LOG_CAT_UI, "ScrollMessagesTE Warning: gMainWindow is NULL! Port not set.");
         }

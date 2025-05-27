@@ -61,7 +61,7 @@ void HandleInputTEClick(DialogPtr dialog, EventRecord *theEvent)
         GrafPtr oldPort;
         Rect teViewRect = (**gInputTE).viewRect;
         GetPort(&oldPort);
-        SetPort(GetWindowPort(dialog));
+        SetPort((GrafPtr)GetWindowPort(dialog));
         GlobalToLocal(&localPt);
         if (PtInRect(localPt, &teViewRect)) {
             TEClick(localPt, (theEvent->modifiers & shiftKey) != 0, gInputTE);
@@ -78,7 +78,7 @@ void HandleInputTEUpdate(DialogPtr dialog)
         GrafPtr oldPort;
         Rect teActualViewRect;
         GetPort(&oldPort);
-        SetPort(GetWindowPort(dialog));
+        SetPort((GrafPtr)GetWindowPort(dialog));
         GetDialogItem(dialog, kInputTextEdit, &itemTypeIgnored, &itemHandleIgnored, &userItemRect);
         log_debug_cat(LOG_CAT_UI, "HandleInputTEUpdate: UserItemRect for kInputTextEdit is (%d,%d,%d,%d)",
                   userItemRect.top, userItemRect.left, userItemRect.bottom, userItemRect.right);

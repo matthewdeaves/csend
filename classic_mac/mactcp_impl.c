@@ -12,6 +12,9 @@
 #include <string.h>
 #include <stdio.h>
 
+/* Forward declarations */
+struct hostInfo;
+
 /* DNR function declarations */
 extern OSErr OpenResolver(char *fileName);
 extern OSErr CloseResolver(void);
@@ -300,11 +303,27 @@ static OSErr MacTCPImpl_Initialize(short *refNum, ip_addr *localIP, char *localI
 
 static void MacTCPImpl_Shutdown(short refNum)
 {
+    (void)refNum; /* Unused parameter */
+    
     log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_Shutdown: Closing resolver");
     CloseResolver();
 
     /* Note: We don't close the MacTCP driver as other apps may be using it */
     log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_Shutdown: Complete (driver remains open for system)");
+}
+
+/* Global storage for the notify proc wrapper */
+static NetworkNotifyProcPtr gStoredNotifyProc = NULL;
+
+/* Pascal wrapper that calls the C notify proc */
+static pascal void MacTCPNotifyWrapper(StreamPtr tcpStream, unsigned short eventCode,
+                                      Ptr userDataPtr, unsigned short terminReason,
+                                      ICMPReport *icmpMsg)
+{
+    if (gStoredNotifyProc) {
+        gStoredNotifyProc((void *)tcpStream, eventCode, userDataPtr, terminReason,
+                         (struct ICMPReport *)icmpMsg);
+    }
 }
 
 static OSErr MacTCPImpl_TCPCreate(short refNum, NetworkStreamRef *streamRef,
@@ -314,12 +333,15 @@ static OSErr MacTCPImpl_TCPCreate(short refNum, NetworkStreamRef *streamRef,
     TCPiopb pb;
     OSErr err;
 
+    /* Store the C notify proc for the wrapper to call */
+    gStoredNotifyProc = notifyProc;
+
     memset(&pb, 0, sizeof(TCPiopb));
     pb.ioCRefNum = refNum;
     pb.csCode = TCPCreate;
     pb.csParam.create.rcvBuff = rcvBuffer;
     pb.csParam.create.rcvBuffLen = rcvBufferSize;
-    pb.csParam.create.notifyProc = (TCPNotifyProcPtr)notifyProc;
+    pb.csParam.create.notifyProc = MacTCPNotifyWrapper;
 
     err = PBControlSync((ParmBlkPtr)&pb);
     if (err == noErr) {
@@ -434,6 +456,7 @@ static OSErr MacTCPImpl_TCPConnect(NetworkStreamRef streamRef, ip_addr remoteHos
                                    NetworkGiveTimeProcPtr giveTime)
 {
     TCPiopb pb;
+    (void)giveTime; /* Unused parameter */
 
     if (streamRef == NULL) {
         return paramErr;
@@ -512,6 +535,7 @@ static OSErr MacTCPImpl_TCPSend(NetworkStreamRef streamRef, Ptr data, unsigned s
 {
     TCPiopb pb;
     wdsEntry wds[2];
+    (void)giveTime; /* Unused parameter */
 
     if (streamRef == NULL || data == NULL) {
         return paramErr;
@@ -615,6 +639,7 @@ static OSErr MacTCPImpl_TCPReceiveNoCopy(NetworkStreamRef streamRef, Ptr rdsPtr,
 {
     TCPiopb pb;
     OSErr err;
+    (void)giveTime; /* Unused parameter */
 
     if (streamRef == NULL || rdsPtr == NULL) {
         return paramErr;
@@ -691,6 +716,7 @@ static OSErr MacTCPImpl_TCPReturnBuffer(NetworkStreamRef streamRef, Ptr rdsPtr,
                                         NetworkGiveTimeProcPtr giveTime)
 {
     TCPiopb pb;
+    (void)giveTime; /* Unused parameter */
 
     if (streamRef == NULL || rdsPtr == NULL) {
         return paramErr;
@@ -711,6 +737,7 @@ static OSErr MacTCPImpl_TCPClose(NetworkStreamRef streamRef, Byte timeout,
                                  NetworkGiveTimeProcPtr giveTime)
 {
     TCPiopb pb;
+    (void)giveTime; /* Unused parameter */
 
     if (streamRef == NULL) {
         return paramErr;
@@ -1271,6 +1298,16 @@ static OSErr MacTCPImpl_TCPCheckAsyncStatus(NetworkAsyncHandle asyncHandle,
             /* For receive, resultData should point to a structure with urgent/mark flags */
             /* Caller should interpret based on context */
             *resultData = (void *)&op->pb.csParam.receive;
+            break;
+
+        case TCP_ASYNC_CLOSE:
+            /* For close, no additional data */
+            *resultData = NULL;
+            break;
+
+        case TCP_ASYNC_LISTEN:
+            /* For listen, no additional data */
+            *resultData = NULL;
             break;
             
         default:

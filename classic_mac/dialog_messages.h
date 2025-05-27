@@ -4,7 +4,6 @@
 #include <TextEdit.h>
 #include <Controls.h>
 #include <Dialogs.h>
-extern DialogPtr gMainWindow;
 extern TEHandle gMessagesTE;
 extern ControlHandle gMessagesScrollBar;
 Boolean InitMessagesTEAndScrollbar(DialogPtr dialog);

@@ -41,7 +41,7 @@ Boolean InitDialog(void)
     }
     log_info_cat(LOG_CAT_UI, "Dialog loaded successfully (gMainWindow: 0x%lX).", (unsigned long)gMainWindow);
     GetPort(&oldPort);
-    SetPort(GetWindowPort(gMainWindow));
+    SetPort((GrafPtr)GetWindowPort(gMainWindow));
     messagesOk = InitMessagesTEAndScrollbar(gMainWindow);
     inputOk = InitInputTE(gMainWindow);
     listOk = InitPeerListControl(gMainWindow);
@@ -265,7 +265,7 @@ void ActivateDialogTE(Boolean activating)
 void UpdateDialogControls(void)
 {
     GrafPtr oldPort;
-    GrafPtr windowPort = GetWindowPort(gMainWindow);
+    GrafPtr windowPort = (GrafPtr)GetWindowPort(gMainWindow);
     if (windowPort == NULL) {
         log_error_cat(LOG_CAT_UI, "UpdateDialogControls Error: Window port is NULL for gMainWindow!");
         return;

@@ -40,7 +40,6 @@ static TCPStreamState gTCPSendState = TCP_STATE_UNINITIALIZED;
 /* Async send operation tracking */
 static NetworkAsyncHandle gSendConnectHandle = NULL;
 static NetworkAsyncHandle gSendDataHandle = NULL;
-static NetworkAsyncHandle gSendCloseHandle = NULL;
 static char gCurrentSendPeerIP[INET_ADDRSTRLEN];
 static char gCurrentSendMessage[BUFFER_SIZE];
 static char gCurrentSendMsgType[32];
@@ -68,11 +67,7 @@ static int gQueueHead = 0;
 static int gQueueTail = 0;
 
 /* Timeout constants */
-#define TCP_ULP_TIMEOUT_DEFAULT_S 20
-#define TCP_CONNECT_ULP_TIMEOUT_S 10
-#define TCP_SEND_ULP_TIMEOUT_S 10
 #define TCP_CLOSE_ULP_TIMEOUT_S 5
-#define TCP_PASSIVE_OPEN_CMD_TIMEOUT_S 0
 #define TCP_RECEIVE_CMD_TIMEOUT_S 1
 #define TCP_STREAM_RESET_DELAY_TICKS 60  /* 1 second delay after connection close */
 
@@ -170,6 +165,7 @@ static Boolean DequeueMessage(QueuedMessage *msg)
 static void ProcessMessageQueue(GiveTimePtr giveTime)
 {
     QueuedMessage msg;
+    (void)giveTime; /* Unused parameter */
 
     if (gTCPSendState == TCP_STATE_IDLE) {
         if (DequeueMessage(&msg)) {
@@ -216,7 +212,7 @@ OSErr MacTCP_QueueMessage(const char *peerIPStr, const char *message_content, co
 
 pascal void TCP_Listen_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr, unsigned short terminReason, struct ICMPReport *icmpMsg)
 {
-#pragma unused(userDataPtr)
+    (void)userDataPtr; /* Unused parameter */
 
     if (gTCPListenStream == NULL || tcpStream != (StreamPtr)gTCPListenStream) {
         return;
@@ -229,16 +225,16 @@ pascal void TCP_Listen_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode
     gListenAsrEvent.eventCode = (TCPEventCode)eventCode;
     gListenAsrEvent.termReason = terminReason;
     if (eventCode == TCPICMPReceived && icmpMsg != NULL) {
-        BlockMoveData(icmpMsg, &gListenAsrEvent.icmpReport, sizeof(ICMPReport));
+        BlockMoveData(icmpMsg, (void *)&gListenAsrEvent.icmpReport, sizeof(ICMPReport));
     } else {
-        memset(&gListenAsrEvent.icmpReport, 0, sizeof(ICMPReport));
+        memset((void *)&gListenAsrEvent.icmpReport, 0, sizeof(ICMPReport));
     }
     gListenAsrEvent.eventPending = true;
 }
 
 pascal void TCP_Send_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr, unsigned short terminReason, struct ICMPReport *icmpMsg)
 {
-#pragma unused(userDataPtr)
+    (void)userDataPtr; /* Unused parameter */
 
     if (gTCPSendStream == NULL || tcpStream != (StreamPtr)gTCPSendStream) {
         return;
@@ -251,11 +247,28 @@ pascal void TCP_Send_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, 
     gSendAsrEvent.eventCode = (TCPEventCode)eventCode;
     gSendAsrEvent.termReason = terminReason;
     if (eventCode == TCPICMPReceived && icmpMsg != NULL) {
-        BlockMoveData(icmpMsg, &gSendAsrEvent.icmpReport, sizeof(ICMPReport));
+        BlockMoveData(icmpMsg, (void *)&gSendAsrEvent.icmpReport, sizeof(ICMPReport));
     } else {
-        memset(&gSendAsrEvent.icmpReport, 0, sizeof(ICMPReport));
+        memset((void *)&gSendAsrEvent.icmpReport, 0, sizeof(ICMPReport));
     }
     gSendAsrEvent.eventPending = true;
+}
+
+/* Wrapper functions to bridge Pascal calling convention to C calling convention */
+static void ListenNotifyWrapper(void *stream, unsigned short eventCode,
+                               Ptr userDataPtr, unsigned short terminReason,
+                               struct ICMPReport *icmpMsg)
+{
+    /* Call the actual Pascal UPP with proper casting */
+    TCP_Listen_ASR_Handler((StreamPtr)stream, eventCode, userDataPtr, terminReason, icmpMsg);
+}
+
+static void SendNotifyWrapper(void *stream, unsigned short eventCode,
+                             Ptr userDataPtr, unsigned short terminReason,
+                             struct ICMPReport *icmpMsg)
+{
+    /* Call the actual Pascal UPP with proper casting */
+    TCP_Send_ASR_Handler((StreamPtr)stream, eventCode, userDataPtr, terminReason, icmpMsg);
 }
 
 OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNotifyUPP listenAsrUPP, TCPNotifyUPP sendAsrUPP)
@@ -304,7 +317,7 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
 
     /* Create listen stream */
     err = gNetworkOps->TCPCreate(macTCPRefNum, &gTCPListenStream, gTCPStreamRcvBufferSize,
-                                 gTCPListenRcvBuffer, (NetworkNotifyProcPtr)listenAsrUPP);
+                                 gTCPListenRcvBuffer, ListenNotifyWrapper);
     if (err != noErr || gTCPListenStream == NULL) {
         log_app_event("Error: Failed to create TCP Listen Stream: %d", err);
         DisposePtr(gTCPListenRcvBuffer);
@@ -316,7 +329,7 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
 
     /* Create send stream */
     err = gNetworkOps->TCPCreate(macTCPRefNum, &gTCPSendStream, gTCPStreamRcvBufferSize,
-                                 gTCPSendRcvBuffer, (NetworkNotifyProcPtr)sendAsrUPP);
+                                 gTCPSendRcvBuffer, SendNotifyWrapper);
     if (err != noErr || gTCPSendStream == NULL) {
         log_app_event("Error: Failed to create TCP Send Stream: %d", err);
         gNetworkOps->TCPRelease(macTCPRefNum, gTCPListenStream);
@@ -589,6 +602,18 @@ void ProcessTCPStateMachine(GiveTimePtr giveTime)
         }
         break;
 
+    case TCP_STATE_UNINITIALIZED:
+    case TCP_STATE_CONNECTING_OUT:
+    case TCP_STATE_CONNECTED_OUT:
+    case TCP_STATE_SENDING:
+    case TCP_STATE_CLOSING_GRACEFUL:
+    case TCP_STATE_ABORTING:
+    case TCP_STATE_RELEASING:
+    case TCP_STATE_ERROR:
+        /* These states are not expected for listen stream */
+        log_warning_cat(LOG_CAT_MESSAGING, "Listen stream in unexpected state: %d", gTCPListenState);
+        break;
+
     default:
         break;
     }
@@ -690,6 +715,8 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
 
 static void HandleSendASREvents(GiveTimePtr giveTime)
 {
+    (void)giveTime; /* Unused parameter */
+    
     if (!gNetworkOps) return;
     if (!gSendAsrEvent.eventPending) return;
 
@@ -798,6 +825,18 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
         /* For now, assume close completes quickly and set to IDLE */
         /* In a full implementation, we'd check async close status */
         gTCPSendState = TCP_STATE_IDLE;
+        break;
+
+    case TCP_STATE_UNINITIALIZED:
+    case TCP_STATE_IDLE:
+    case TCP_STATE_LISTENING:
+    case TCP_STATE_CONNECTED_IN:
+    case TCP_STATE_CONNECTED_OUT:
+    case TCP_STATE_ABORTING:
+    case TCP_STATE_RELEASING:
+    case TCP_STATE_ERROR:
+        /* These states are not expected for send stream operations */
+        log_warning_cat(LOG_CAT_MESSAGING, "Send stream in unexpected state: %d", gTCPSendState);
         break;
         
     default:

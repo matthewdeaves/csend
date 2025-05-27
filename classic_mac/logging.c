@@ -12,6 +12,7 @@
 static Boolean g_classic_mac_logging_to_te_in_progress = false;
 void classic_mac_platform_get_timestamp(char *buffer, size_t buffer_size)
 {
+    (void)buffer_size; /* Unused parameter */
 #ifdef __MACOS__
     DateTimeRec dt_rec;
     GetTime(&dt_rec);
