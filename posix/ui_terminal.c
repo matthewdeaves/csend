@@ -57,7 +57,7 @@ static const command_entry_t command_table[] = {
 };
 
 /* Find command handler by name */
-static const command_entry_t* find_command(const char *cmd_name)
+static const command_entry_t *find_command(const char *cmd_name)
 {
     for (const command_entry_t *cmd = command_table; cmd->name != NULL; cmd++) {
         if (strcmp(cmd_name, cmd->name) == 0) {
@@ -68,25 +68,25 @@ static const command_entry_t* find_command(const char *cmd_name)
 }
 
 /* Extract command name and arguments from input */
-static int extract_command_and_args(const char *input, char *cmd_name, size_t cmd_size, 
-                                   char *args, size_t args_size)
+static int extract_command_and_args(const char *input, char *cmd_name, size_t cmd_size,
+                                    char *args, size_t args_size)
 {
     if (!input || !cmd_name || !args) return 0;
-    
+
     /* Initialize outputs */
     cmd_name[0] = '\0';
     args[0] = '\0';
-    
+
     /* Skip leading whitespace */
     while (*input && isspace(*input)) input++;
-    
+
     /* Check if it's a command */
     if (*input != '/') return 0;
-    
+
     /* Find the end of command name */
     const char *space = strchr(input, ' ');
     size_t cmd_len;
-    
+
     if (space) {
         cmd_len = space - input;
         /* Copy arguments */
@@ -95,12 +95,12 @@ static int extract_command_and_args(const char *input, char *cmd_name, size_t cm
     } else {
         cmd_len = strlen(input);
     }
-    
+
     /* Copy command name */
     if (cmd_len >= cmd_size) cmd_len = cmd_size - 1;
     strncpy(cmd_name, input, cmd_len);
     cmd_name[cmd_len] = '\0';
-    
+
     return 1;
 }
 
@@ -108,29 +108,29 @@ static int extract_command_and_args(const char *input, char *cmd_name, size_t cm
 int handle_command(app_state_t *state, const char *input)
 {
     if (!state || !input) return 0;
-    
+
     /* Notify UI of command start */
     if (state->ui) {
         UI_CALL(state->ui, handle_command_start, input);
     }
-    
+
     int result = 0;
-    
+
     /* Strip --id parameter for command processing */
     char clean_input[BUFFER_SIZE];
     strncpy(clean_input, input, BUFFER_SIZE - 1);
     clean_input[BUFFER_SIZE - 1] = '\0';
-    
+
     char *id_pos = strstr(clean_input, " --id=");
     if (id_pos) {
         *id_pos = '\0';  /* Truncate at --id parameter */
     }
-    
+
     /* Extract command and arguments */
     char cmd_name[64];
     char args[BUFFER_SIZE];
-    
-    if (!extract_command_and_args(clean_input, cmd_name, sizeof(cmd_name), 
+
+    if (!extract_command_and_args(clean_input, cmd_name, sizeof(cmd_name),
                                   args, sizeof(args))) {
         log_app_event("Invalid command format: '%s'", input);
         if (state->ui) {
@@ -138,7 +138,7 @@ int handle_command(app_state_t *state, const char *input)
         }
         goto command_complete;
     }
-    
+
     /* Find and execute command */
     const command_entry_t *cmd = find_command(cmd_name);
     if (cmd) {
@@ -149,13 +149,13 @@ int handle_command(app_state_t *state, const char *input)
             UI_CALL(state->ui, notify_command_unknown, input);
         }
     }
-    
+
 command_complete:
     /* Notify UI of command completion */
     if (state->ui) {
         UI_CALL(state->ui, handle_command_complete);
     }
-    
+
     return result;
 }
 
@@ -166,13 +166,13 @@ void *user_input_thread(void *arg)
     char input[BUFFER_SIZE];
     fd_set readfds;
     struct timeval timeout;
-    
+
     /* Notify UI we're ready */
     if (state->ui) {
         UI_CALL(state->ui, notify_ready);
         UI_CALL(state->ui, show_prompt);
     }
-    
+
     while (state->running) {
         FD_ZERO(&readfds);
         FD_SET(STDIN_FILENO, &readfds);
@@ -222,11 +222,11 @@ void *user_input_thread(void *arg)
             }
             continue;
         }
-        
+
         if (handle_command(state, input) == 1) {
             break;
         }
-        
+
         if (state->ui) {
             UI_CALL(state->ui, show_prompt);
         }
@@ -240,7 +240,7 @@ void terminal_display_app_message(const char *format, ...)
 {
     va_list args;
     va_start(args, format);
-    
+
     /* If we have a global state with UI, use it */
     if (g_state && g_state->ui) {
         UI_CALL_VA(g_state->ui, display_app_message, format, args);
@@ -259,6 +259,6 @@ void terminal_display_app_message(const char *format, ...)
         printf("\n");
         fflush(stdout);
     }
-    
+
     va_end(args);
 }

@@ -102,8 +102,8 @@ static OSErr MacTCPImpl_TCPSendAsync(NetworkStreamRef streamRef, Ptr data, unsig
                                      Boolean push, NetworkAsyncHandle *asyncHandle);
 static OSErr MacTCPImpl_TCPReceiveAsync(NetworkStreamRef streamRef, Ptr rdsPtr,
                                         short maxEntries, NetworkAsyncHandle *asyncHandle);
-static OSErr MacTCPImpl_TCPCheckAsyncStatus(NetworkAsyncHandle asyncHandle, 
-                                            OSErr *operationResult, void **resultData);
+static OSErr MacTCPImpl_TCPCheckAsyncStatus(NetworkAsyncHandle asyncHandle,
+        OSErr *operationResult, void **resultData);
 static void MacTCPImpl_TCPCancelAsync(NetworkAsyncHandle asyncHandle);
 
 static OSErr MacTCPImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
@@ -304,7 +304,7 @@ static OSErr MacTCPImpl_Initialize(short *refNum, ip_addr *localIP, char *localI
 static void MacTCPImpl_Shutdown(short refNum)
 {
     (void)refNum; /* Unused parameter */
-    
+
     log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_Shutdown: Closing resolver");
     CloseResolver();
 
@@ -317,12 +317,12 @@ static NetworkNotifyProcPtr gStoredNotifyProc = NULL;
 
 /* Pascal wrapper that calls the C notify proc */
 static pascal void MacTCPNotifyWrapper(StreamPtr tcpStream, unsigned short eventCode,
-                                      Ptr userDataPtr, unsigned short terminReason,
-                                      ICMPReport *icmpMsg)
+                                       Ptr userDataPtr, unsigned short terminReason,
+                                       ICMPReport *icmpMsg)
 {
     if (gStoredNotifyProc) {
         gStoredNotifyProc((void *)tcpStream, eventCode, userDataPtr, terminReason,
-                         (struct ICMPReport *)icmpMsg);
+                          (struct ICMPReport *)icmpMsg);
     }
 }
 
@@ -526,7 +526,7 @@ static OSErr MacTCPImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remo
     }
 
     log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPConnectAsync: Started async connect to %lu:%u",
-              remoteHost, remotePort);
+                  remoteHost, remotePort);
     return noErr;
 }
 
@@ -791,7 +791,7 @@ static OSErr MacTCPImpl_TCPStatus(NetworkStreamRef streamRef, NetworkTCPInfo *in
 
     /* Use synchronous call */
     err = PBControlSync((ParmBlkPtr)&pb);
-    
+
     if (err == noErr) {
         info->localHost = pb.csParam.status.localHost;
         info->localPort = pb.csParam.status.localPort;
@@ -861,7 +861,7 @@ static OSErr MacTCPImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
     *endpointRef = (NetworkEndpointRef)endpoint;
 
     log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_UDPCreate: Success. Stream: 0x%lX (endpoint: 0x%lX), Port: %u",
-              (unsigned long)endpoint->stream, (unsigned long)endpoint, pb.csParam.create.localPort);
+                  (unsigned long)endpoint->stream, (unsigned long)endpoint, pb.csParam.create.localPort);
 
     return noErr;
 }
@@ -1048,8 +1048,8 @@ static OSErr MacTCPImpl_UDPSendAsync(NetworkEndpointRef endpointRef, ip_addr rem
         *asyncHandle = NULL;
         log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_UDPSendAsync: PBControlAsync failed: %d", err);
     } else {
-        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_UDPSendAsync: Started async send of %u bytes to %lu:%u", 
-                  length, remoteHost, remotePort);
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_UDPSendAsync: Started async send of %u bytes to %lu:%u",
+                      length, remoteHost, remotePort);
     }
 
     return err;
@@ -1263,8 +1263,8 @@ static Boolean MacTCPImpl_IsAvailable(void)
 }
 
 /* TCP Async Status Checking */
-static OSErr MacTCPImpl_TCPCheckAsyncStatus(NetworkAsyncHandle asyncHandle, 
-                                            OSErr *operationResult, void **resultData)
+static OSErr MacTCPImpl_TCPCheckAsyncStatus(NetworkAsyncHandle asyncHandle,
+        OSErr *operationResult, void **resultData)
 {
     TCPAsyncOp *op = (TCPAsyncOp *)asyncHandle;
     OSErr ioResult;
@@ -1288,12 +1288,12 @@ static OSErr MacTCPImpl_TCPCheckAsyncStatus(NetworkAsyncHandle asyncHandle,
             /* For connect, no additional data */
             *resultData = NULL;
             break;
-            
+
         case TCP_ASYNC_SEND:
             /* For send, return bytes sent (in csParam.send.sendLength) */
             *resultData = (void *)(unsigned long)op->pb.csParam.send.sendLength;
             break;
-            
+
         case TCP_ASYNC_RECEIVE:
             /* For receive, resultData should point to a structure with urgent/mark flags */
             /* Caller should interpret based on context */
@@ -1309,7 +1309,7 @@ static OSErr MacTCPImpl_TCPCheckAsyncStatus(NetworkAsyncHandle asyncHandle,
             /* For listen, no additional data */
             *resultData = NULL;
             break;
-            
+
         default:
             *resultData = NULL;
             break;
@@ -1338,13 +1338,13 @@ static void MacTCPImpl_TCPCancelAsync(NetworkAsyncHandle asyncHandle)
         /* Note: MacTCP doesn't provide a way to cancel async operations */
         /* We just mark it as free and let it complete in the background */
         log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPCancelAsync: Marking handle as free (can't cancel MacTCP async)");
-        
+
         /* Clean up any allocated resources */
         if (op->opType == TCP_ASYNC_SEND && op->rdsArray) {
             /* Don't free WDS until operation completes */
             /* This is a memory leak risk, but safer than crashing */
         }
-        
+
         /* Mark as not in use but don't clear the pb - let it complete */
         op->inUse = false;
     }

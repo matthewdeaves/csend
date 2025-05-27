@@ -52,11 +52,11 @@ int handle_send_command(app_state_t *state, const char *args)
         }
         return 0;
     }
-    
+
     /* Parse peer number and message */
     int peer_num;
     const char *msg_start = strchr(args, ' ');
-    
+
     if (!msg_start) {
         log_app_event("Usage: /send <peer_number> <message>");
         if (state->ui) {
@@ -64,7 +64,7 @@ int handle_send_command(app_state_t *state, const char *args)
         }
         return 0;
     }
-    
+
     /* Extract peer number */
     char peer_str[32];
     size_t peer_len = msg_start - args;
@@ -75,10 +75,10 @@ int handle_send_command(app_state_t *state, const char *args)
         }
         return 0;
     }
-    
+
     strncpy(peer_str, args, peer_len);
     peer_str[peer_len] = '\0';
-    
+
     if (!parse_peer_number(peer_str, &peer_num)) {
         log_app_event("Invalid peer number. Use /list to see active peers.");
         if (state->ui) {
@@ -86,10 +86,10 @@ int handle_send_command(app_state_t *state, const char *args)
         }
         return 0;
     }
-    
+
     /* Skip the space to get to the message */
     msg_start++;
-    
+
     /* Find the peer and send message */
     char target_ip[INET_ADDRSTRLEN];
     if (find_peer_by_number(state, peer_num, target_ip, sizeof(target_ip))) {
@@ -100,7 +100,7 @@ int handle_send_command(app_state_t *state, const char *args)
             UI_CALL(state->ui, notify_send_result, 0, -1, NULL);
         }
     }
-    
+
     return 0;
 }
 
@@ -113,31 +113,31 @@ int handle_broadcast_command(app_state_t *state, const char *args)
         }
         return 0;
     }
-    
+
     log_app_event("Broadcasting message: %s", args);
     int sent_count = broadcast_to_all_peers(state, args);
-    
+
     log_app_event("Broadcast message sent to %d active peer(s).", sent_count);
     if (state->ui) {
         UI_CALL(state->ui, notify_broadcast_result, sent_count);
     }
-    
+
     return 0;
 }
 
 int handle_quit_command(app_state_t *state, const char *args)
 {
     (void)args; /* Unused */
-    
+
     log_info_cat(LOG_CAT_SYSTEM, "Initiating quit sequence...");
     notify_peers_on_quit(state);
-    
+
     if (g_state) {
         g_state->running = 0;
     } else {
         state->running = 0;
     }
-    
+
     log_info_cat(LOG_CAT_SYSTEM, "Exiting application via /quit command...");
     return 1; /* Signal quit */
 }
@@ -163,13 +163,13 @@ int handle_stats_command(app_state_t *state, const char *args)
 int handle_history_command(app_state_t *state, const char *args)
 {
     int count = 10; /* Default to 10 messages */
-    
+
     if (args && strlen(args) > 0) {
         count = atoi(args);
         if (count <= 0) count = 10;
         if (count > 100) count = 100; /* Cap at 100 */
     }
-    
+
     if (state->ui && state->ui->ops->notify_history) {
         UI_CALL(state->ui, notify_history, count);
     }
@@ -206,7 +206,7 @@ int handle_peers_command(app_state_t *state, const char *args)
 int parse_peer_number(const char *input, int *peer_num)
 {
     if (!input || !peer_num) return 0;
-    
+
     *peer_num = atoi(input);
     return (*peer_num > 0);
 }
@@ -214,15 +214,15 @@ int parse_peer_number(const char *input, int *peer_num)
 int find_peer_by_number(app_state_t *state, int peer_num, char *target_ip, size_t ip_size)
 {
     if (!state || !target_ip || ip_size < INET_ADDRSTRLEN) return 0;
-    
+
     pthread_mutex_lock(&state->peers_mutex);
-    
+
     int current_peer_index = 0;
     int found = 0;
-    
+
     for (int i = 0; i < MAX_PEERS; i++) {
         if (state->peer_manager.peers[i].active &&
-            (difftime(time(NULL), state->peer_manager.peers[i].last_seen) <= PEER_TIMEOUT)) {
+                (difftime(time(NULL), state->peer_manager.peers[i].last_seen) <= PEER_TIMEOUT)) {
             current_peer_index++;
             if (current_peer_index == peer_num) {
                 strncpy(target_ip, state->peer_manager.peers[i].ip, ip_size - 1);
@@ -232,7 +232,7 @@ int find_peer_by_number(app_state_t *state, int peer_num, char *target_ip, size_
             }
         }
     }
-    
+
     pthread_mutex_unlock(&state->peers_mutex);
     return found;
 }
@@ -246,7 +246,7 @@ int send_to_peer(app_state_t *state, const char *target_ip, const char *message,
         }
         return 0;
     }
-    
+
     log_app_event("Message sent to peer %d (%s)", peer_num, target_ip);
     if (state->ui) {
         UI_CALL(state->ui, notify_send_result, 1, peer_num, target_ip);
@@ -257,20 +257,20 @@ int send_to_peer(app_state_t *state, const char *target_ip, const char *message,
 int broadcast_to_all_peers(app_state_t *state, const char *message)
 {
     pthread_mutex_lock(&state->peers_mutex);
-    
+
     int sent_count = 0;
     for (int i = 0; i < MAX_PEERS; i++) {
         if (state->peer_manager.peers[i].active &&
-            (difftime(time(NULL), state->peer_manager.peers[i].last_seen) <= PEER_TIMEOUT)) {
+                (difftime(time(NULL), state->peer_manager.peers[i].last_seen) <= PEER_TIMEOUT)) {
             if (send_message(state->peer_manager.peers[i].ip, message, MSG_TEXT, state->username) >= 0) {
                 sent_count++;
             } else {
-                log_error_cat(LOG_CAT_MESSAGING, "Failed to send broadcast message to %s", 
-                             state->peer_manager.peers[i].ip);
+                log_error_cat(LOG_CAT_MESSAGING, "Failed to send broadcast message to %s",
+                              state->peer_manager.peers[i].ip);
             }
         }
     }
-    
+
     pthread_mutex_unlock(&state->peers_mutex);
     return sent_count;
 }
@@ -278,21 +278,21 @@ int broadcast_to_all_peers(app_state_t *state, const char *message)
 void notify_peers_on_quit(app_state_t *state)
 {
     pthread_mutex_lock(&state->peers_mutex);
-    
+
     log_info_cat(LOG_CAT_MESSAGING, "Sending QUIT notifications to peers...");
     int notify_count = 0;
-    
+
     for (int i = 0; i < MAX_PEERS; i++) {
         if (state->peer_manager.peers[i].active) {
             if (send_message(state->peer_manager.peers[i].ip, "", MSG_QUIT, state->username) >= 0) {
                 notify_count++;
             } else {
-                log_error_cat(LOG_CAT_MESSAGING, "Failed to send quit notification to %s", 
-                             state->peer_manager.peers[i].ip);
+                log_error_cat(LOG_CAT_MESSAGING, "Failed to send quit notification to %s",
+                              state->peer_manager.peers[i].ip);
             }
         }
     }
-    
+
     pthread_mutex_unlock(&state->peers_mutex);
     log_info_cat(LOG_CAT_MESSAGING, "Quit notifications sent to %d peer(s).", notify_count);
 }

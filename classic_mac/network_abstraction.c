@@ -30,7 +30,7 @@ OSErr InitNetworkAbstraction(void)
     /* Check if already initialized */
     if (gNetworkOps != NULL) {
         log_debug_cat(LOG_CAT_NETWORKING, "InitNetworkAbstraction: Already initialized with %s",
-                  GetNetworkImplementationName());
+                      GetNetworkImplementationName());
         return noErr;
     }
 

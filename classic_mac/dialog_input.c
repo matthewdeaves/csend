@@ -23,7 +23,7 @@ Boolean InitInputTE(DialogPtr dialog)
         InsetRect(&teDestRect, 1, 1);
         if (teViewRect.bottom <= teViewRect.top || teViewRect.right <= teViewRect.left) {
             log_debug_cat(LOG_CAT_UI, "ERROR: Input TE itemRect too small after insetting for border. Original: (%d,%d,%d,%d)",
-                      itemRect.top, itemRect.left, itemRect.bottom, itemRect.right);
+                          itemRect.top, itemRect.left, itemRect.bottom, itemRect.right);
             gInputTE = NULL;
             return false;
         }
@@ -33,7 +33,7 @@ Boolean InitInputTE(DialogPtr dialog)
             return false;
         } else {
             log_debug_cat(LOG_CAT_UI, "TENew succeeded for Input TE. Handle: 0x%lX. ViewRect for TE: (%d,%d,%d,%d)",
-                      (unsigned long)gInputTE, teViewRect.top, teViewRect.left, teViewRect.bottom, teViewRect.right);
+                          (unsigned long)gInputTE, teViewRect.top, teViewRect.left, teViewRect.bottom, teViewRect.right);
             TESetText((Ptr)"", 0, gInputTE);
             TECalText(gInputTE);
             TESetSelect(0, 0, gInputTE);
@@ -81,7 +81,7 @@ void HandleInputTEUpdate(DialogPtr dialog)
         SetPort((GrafPtr)GetWindowPort(dialog));
         GetDialogItem(dialog, kInputTextEdit, &itemTypeIgnored, &itemHandleIgnored, &userItemRect);
         log_debug_cat(LOG_CAT_UI, "HandleInputTEUpdate: UserItemRect for kInputTextEdit is (%d,%d,%d,%d)",
-                  userItemRect.top, userItemRect.left, userItemRect.bottom, userItemRect.right);
+                      userItemRect.top, userItemRect.left, userItemRect.bottom, userItemRect.right);
         FrameRect(&userItemRect);
         log_debug_cat(LOG_CAT_UI, "HandleInputTEUpdate: FrameRect called.");
         SignedByte teState = HGetState((Handle)gInputTE);
@@ -90,7 +90,7 @@ void HandleInputTEUpdate(DialogPtr dialog)
             teActualViewRect = (**gInputTE).viewRect;
             EraseRect(&teActualViewRect);
             log_debug_cat(LOG_CAT_UI, "HandleInputTEUpdate: EraseRect called for TE's viewRect (%d,%d,%d,%d)",
-                      teActualViewRect.top, teActualViewRect.left, teActualViewRect.bottom, teActualViewRect.right);
+                          teActualViewRect.top, teActualViewRect.left, teActualViewRect.bottom, teActualViewRect.right);
             TEUpdate(&teActualViewRect, gInputTE);
             log_debug_cat(LOG_CAT_UI, "HandleInputTEUpdate: TEUpdate called.");
         } else {

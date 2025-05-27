@@ -49,17 +49,17 @@ void peer_shared_update_entry(peer_t *peer, const char *username)
 int peer_shared_add_or_update(peer_manager_t *manager, const char *ip, const char *username)
 {
     if (!manager || !ip) return -1;
-    
+
     /* Count current active peers for logging */
     int active_count = 0;
     for (int i = 0; i < MAX_PEERS; i++) {
         if (manager->peers[i].active) active_count++;
     }
-    
+
     int existing_index = peer_shared_find_by_ip(manager, ip);
     if (existing_index != -1) {
         peer_shared_update_entry(&manager->peers[existing_index], username);
-        log_debug_cat(LOG_CAT_PEER_MGMT, "Updated existing peer %s@%s (total active peers: %d)", 
+        log_debug_cat(LOG_CAT_PEER_MGMT, "Updated existing peer %s@%s (total active peers: %d)",
                       username ? username : "??", ip, active_count);
         return 0;
     }
@@ -71,11 +71,11 @@ int peer_shared_add_or_update(peer_manager_t *manager, const char *ip, const cha
         new_peer->active = 1;
         new_peer->username[0] = '\0';
         peer_shared_update_entry(new_peer, username);
-        log_info_cat(LOG_CAT_PEER_MGMT, "Added new peer %s@%s at slot %d (total active peers: %d)", 
+        log_info_cat(LOG_CAT_PEER_MGMT, "Added new peer %s@%s at slot %d (total active peers: %d)",
                      username ? username : "??", ip, empty_slot, active_count + 1);
         return 1;
     }
-    log_warning_cat(LOG_CAT_PEER_MGMT, "Peer list is full. Cannot add peer %s@%s. (max peers: %d)", 
+    log_warning_cat(LOG_CAT_PEER_MGMT, "Peer list is full. Cannot add peer %s@%s. (max peers: %d)",
                     username ? username : "??", ip, MAX_PEERS);
     return -1;
 }

@@ -50,7 +50,7 @@ OSErr InitializeNetworking(void)
     }
 
     log_info_cat(LOG_CAT_NETWORKING, "InitializeNetworking: Network abstraction initialized with %s",
-              GetNetworkImplementationName());
+                 GetNetworkImplementationName());
 
     /* Initialize the underlying network implementation */
     if (gNetworkOps == NULL || gNetworkOps->Initialize == NULL) {

@@ -9,33 +9,33 @@ typedef struct ui_operations {
     /* Lifecycle */
     void (*init)(void *context);
     void (*cleanup)(void *context);
-    
+
     /* Output operations */
-    void (*display_message)(void *context, const char *from_username, const char *from_ip, 
-                           const char *content);
+    void (*display_message)(void *context, const char *from_username, const char *from_ip,
+                            const char *content);
     void (*display_app_message)(void *context, const char *format, va_list args);
     void (*display_error)(void *context, const char *format, va_list args);
     void (*display_peer_list)(void *context, app_state_t *state);
     void (*display_help)(void *context);
-    
+
     /* Command result notifications */
     void (*notify_send_result)(void *context, int success, int peer_num, const char *peer_ip);
     void (*notify_broadcast_result)(void *context, int sent_count);
     void (*notify_command_unknown)(void *context, const char *command);
     void (*notify_peer_update)(void *context);
     void (*notify_debug_toggle)(void *context, int enabled);
-    
+
     /* Extended command notifications */
     void (*notify_status)(void *context, app_state_t *state);
     void (*notify_stats)(void *context, app_state_t *state);
     void (*notify_history)(void *context, int count);
     void (*notify_version)(void *context);
-    
+
     /* Input operations */
     void (*show_prompt)(void *context);
     void (*handle_command_start)(void *context, const char *command);
     void (*handle_command_complete)(void *context);
-    
+
     /* Status notifications */
     void (*notify_startup)(void *context, const char *username);
     void (*notify_shutdown)(void *context);

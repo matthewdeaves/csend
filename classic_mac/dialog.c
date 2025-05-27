@@ -195,11 +195,11 @@ void HandleSendButtonClick(void)
                 if (sendErr == noErr) {
                     sent_count++;
                     log_debug_cat(LOG_CAT_MESSAGING, "Broadcast queued for %s@%s",
-                              gPeerManager.peers[i].username, gPeerManager.peers[i].ip);
+                                  gPeerManager.peers[i].username, gPeerManager.peers[i].ip);
                 } else {
                     failed_count++;
                     log_error_cat(LOG_CAT_MESSAGING, "Broadcast queue failed for %s@%s: %d",
-                              gPeerManager.peers[i].username, gPeerManager.peers[i].ip, sendErr);
+                                  gPeerManager.peers[i].username, gPeerManager.peers[i].ip, sendErr);
                 }
             }
         }
@@ -216,7 +216,7 @@ void HandleSendButtonClick(void)
         AppendToMessagesTE("\r");
 
         log_info_cat(LOG_CAT_MESSAGING, "Broadcast of '%s' completed. Queued for %d/%d peers, %d failed.",
-                  inputCStr, sent_count, total_active_peers, failed_count);
+                     inputCStr, sent_count, total_active_peers, failed_count);
 
         if (sent_count > 0) {
             ClearInputText();
@@ -225,11 +225,11 @@ void HandleSendButtonClick(void)
         peer_t targetPeer;
         if (DialogPeerList_GetSelectedPeer(&targetPeer)) {
             log_debug_cat(LOG_CAT_MESSAGING, "Attempting to send to selected peer %s@%s: '%s'",
-                      targetPeer.username, targetPeer.ip, inputCStr);
+                          targetPeer.username, targetPeer.ip, inputCStr);
 
             sendErr = MacTCP_QueueMessage(targetPeer.ip,
-                                         inputCStr,
-                                         MSG_TEXT);
+                                          inputCStr,
+                                          MSG_TEXT);
 
             if (sendErr == noErr) {
                 sprintf(displayMsg, "You (to %s): %s", targetPeer.username, inputCStr);

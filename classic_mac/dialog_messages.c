@@ -29,11 +29,11 @@ pascal void MyScrollAction(ControlHandle theControl, short partCode)
             HandleMessagesScrollClick(theControl, partCode);
         } else if (partCode == kControlIndicatorPart) {
             log_debug_cat(LOG_CAT_UI, "MyScrollAction: WARNING - Called with inThumb (part %d) for control 0x%lX. Main.c should handle this.",
-                      partCode, (unsigned long)theControl);
+                          partCode, (unsigned long)theControl);
         }
     } else {
         log_debug_cat(LOG_CAT_UI, "MyScrollAction: Called for unexpected control 0x%lX, part %d",
-                  (unsigned long)theControl, partCode);
+                      (unsigned long)theControl, partCode);
     }
 }
 Boolean InitMessagesTEAndScrollbar(DialogPtr dialog)

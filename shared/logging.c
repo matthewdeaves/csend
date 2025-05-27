@@ -14,7 +14,7 @@ static char g_log_file_name[256];
 static log_level_t g_current_log_level = LOG_LEVEL_DEBUG;
 
 /* Category names for output */
-static const char* g_category_names[LOG_CAT_COUNT] = {
+static const char *g_category_names[LOG_CAT_COUNT] = {
     "GENERAL",
     "NETWORKING",
     "DISCOVERY",
@@ -26,7 +26,7 @@ static const char* g_category_names[LOG_CAT_COUNT] = {
 };
 
 /* Level names for output */
-static const char* g_level_names[] = {
+static const char *g_level_names[] = {
     "ERROR",
     "WARNING",
     "INFO",
@@ -101,43 +101,43 @@ static void log_message_internal(log_level_t level, log_category_t category, con
     char timestamp_str[TIMESTAMP_BUFFER_SIZE];
     char full_log_message[MAX_LOG_LINE_LENGTH];
     char timestamp_and_prefix_for_ui[TIMESTAMP_BUFFER_SIZE + 30];
-    
+
     /* Check if we should log this message based on level */
     if (level > g_current_log_level) {
         return;
     }
-    
+
 #ifdef __MACOS__
     vsprintf(message_body, format, args);
 #else
     vsnprintf(message_body, USER_MESSAGE_BUFFER_SIZE, format, args);
 #endif
     message_body[USER_MESSAGE_BUFFER_SIZE - 1] = '\0';
-    
+
     if (g_callbacks_initialized && g_platform_callbacks.get_timestamp) {
         g_platform_callbacks.get_timestamp(timestamp_str, sizeof(timestamp_str));
     } else {
         fallback_get_timestamp(timestamp_str, sizeof(timestamp_str));
     }
-    
+
     if (g_log_file != NULL) {
 #ifdef __MACOS__
-        sprintf(full_log_message, "%s [%s][%s] %s", 
+        sprintf(full_log_message, "%s [%s][%s] %s",
                 timestamp_str, g_level_names[level], g_category_names[category], message_body);
 #else
-        snprintf(full_log_message, MAX_LOG_LINE_LENGTH, "%s [%s][%s] %s", 
+        snprintf(full_log_message, MAX_LOG_LINE_LENGTH, "%s [%s][%s] %s",
                  timestamp_str, g_level_names[level], g_category_names[category], message_body);
 #endif
         fprintf(g_log_file, "%s\n", full_log_message);
         fflush(g_log_file);
     }
-    
+
     if (g_show_debug_output && g_callbacks_initialized && g_platform_callbacks.display_debug_log != NULL) {
 #ifdef __MACOS__
-        sprintf(timestamp_and_prefix_for_ui, "%s [%s][%s] ", 
+        sprintf(timestamp_and_prefix_for_ui, "%s [%s][%s] ",
                 timestamp_str, g_level_names[level], g_category_names[category]);
 #else
-        snprintf(timestamp_and_prefix_for_ui, sizeof(timestamp_and_prefix_for_ui), "%s [%s][%s] ", 
+        snprintf(timestamp_and_prefix_for_ui, sizeof(timestamp_and_prefix_for_ui), "%s [%s][%s] ",
                  timestamp_str, g_level_names[level], g_category_names[category]);
 #endif
         g_platform_callbacks.display_debug_log(timestamp_and_prefix_for_ui, message_body);

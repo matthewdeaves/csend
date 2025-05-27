@@ -19,7 +19,7 @@ int main(int argc, char *argv[])
     pthread_t listener_tid = 0, discovery_tid = 0, input_tid = 0;
     char username[32] = "anonymous";
     int machine_mode = 0;
-    
+
     /* Parse command line arguments */
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--machine-mode") == 0) {
@@ -36,19 +36,19 @@ int main(int argc, char *argv[])
     };
     log_init("csend_posix.log", &posix_log_callbacks);
     init_app_state(&state, username);
-    
+
     /* Set up signal handlers */
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
     signal(SIGPIPE, SIG_IGN);  /* Ignore SIGPIPE to prevent crashes on broken pipes */
-    
+
     /* Create UI based on mode */
     state.ui = ui_factory_create(machine_mode ? UI_MODE_MACHINE : UI_MODE_INTERACTIVE);
     if (!state.ui) {
         fprintf(stderr, "Fatal: Failed to create UI interface\n");
         return EXIT_FAILURE;
     }
-    
+
     /* Notify UI of startup */
     UI_CALL(state.ui, notify_startup, state.username);
     log_app_event("Starting P2P messaging application as '%s'", state.username);
@@ -105,13 +105,13 @@ int main(int argc, char *argv[])
     if (discovery_tid != 0) pthread_join(discovery_tid, NULL);
     log_debug_cat(LOG_CAT_SYSTEM, "Main thread: Discovery thread joined.");
     cleanup_app_state(&state);
-    
+
     /* Notify UI of shutdown */
     if (state.ui) {
         UI_CALL(state.ui, notify_shutdown);
         ui_factory_destroy(state.ui);
     }
-    
+
     log_app_event("Application terminated gracefully.");
     log_shutdown();
     return EXIT_SUCCESS;

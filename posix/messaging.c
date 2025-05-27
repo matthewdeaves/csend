@@ -29,7 +29,7 @@ static void posix_tcp_display_text_message(const char *username, const char *ip,
 {
     app_state_t *state = (app_state_t *)platform_context;
     log_app_event("%s@%s: %s", username, ip, message_content);
-    
+
     if (state && state->ui) {
         UI_CALL(state->ui, display_message, username, ip, message_content);
     } else {

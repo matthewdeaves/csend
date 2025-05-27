@@ -96,7 +96,7 @@ typedef struct {
                          Boolean push, NetworkAsyncHandle *asyncHandle);
     OSErr(*TCPReceiveAsync)(NetworkStreamRef streamRef, Ptr rdsPtr,
                             short maxEntries, NetworkAsyncHandle *asyncHandle);
-    OSErr(*TCPCheckAsyncStatus)(NetworkAsyncHandle asyncHandle, 
+    OSErr(*TCPCheckAsyncStatus)(NetworkAsyncHandle asyncHandle,
                                 OSErr *operationResult, void **resultData);
     void (*TCPCancelAsync)(NetworkAsyncHandle asyncHandle);
 

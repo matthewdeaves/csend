@@ -3,6 +3,7 @@
 //====================================
 
 #include "messaging.h"
+#include "tcp_state_handlers.h"
 #include "network_abstraction.h"
 #include "../shared/logging.h"
 #include "../shared/logging.h"
@@ -25,7 +26,7 @@
 #include <MixedMode.h>
 
 /* Separate streams for listening and sending */
-static NetworkStreamRef gTCPListenStream = NULL;
+NetworkStreamRef gTCPListenStream = NULL;
 static NetworkStreamRef gTCPSendStream = NULL;
 
 /* Separate buffers for each stream */
@@ -34,7 +35,7 @@ static Ptr gTCPSendRcvBuffer = NULL;
 static unsigned long gTCPStreamRcvBufferSize = 0;
 
 /* Separate state tracking */
-static TCPStreamState gTCPListenState = TCP_STATE_UNINITIALIZED;
+TCPStreamState gTCPListenState = TCP_STATE_UNINITIALIZED;
 static TCPStreamState gTCPSendState = TCP_STATE_UNINITIALIZED;
 
 /* Async send operation tracking */
@@ -50,16 +51,16 @@ static volatile ASR_Event_Info gListenAsrEvent;
 static volatile ASR_Event_Info gSendAsrEvent;
 
 /* Receive data structures */
-static wdsEntry gListenNoCopyRDS[MAX_RDS_ENTRIES + 1];
-static Boolean gListenNoCopyRdsPendingReturn = false;
+wdsEntry gListenNoCopyRDS[MAX_RDS_ENTRIES + 1];
+Boolean gListenNoCopyRdsPendingReturn = false;
 
 /* For async operations we need handles */
-static NetworkAsyncHandle gListenAsyncHandle = NULL;
-static Boolean gListenAsyncOperationInProgress = false;
+NetworkAsyncHandle gListenAsyncHandle = NULL;
+Boolean gListenAsyncOperationInProgress = false;
 
 /* Connection cleanup tracking */
-static Boolean gListenStreamNeedsReset = false;
-static unsigned long gListenStreamResetTime = 0;
+Boolean gListenStreamNeedsReset = false;
+unsigned long gListenStreamResetTime = 0;
 
 /* Message queue support */
 static QueuedMessage gMessageQueue[MAX_QUEUED_MESSAGES];
@@ -69,13 +70,12 @@ static int gQueueTail = 0;
 /* Timeout constants */
 #define TCP_CLOSE_ULP_TIMEOUT_S 5
 #define TCP_RECEIVE_CMD_TIMEOUT_S 1
-#define TCP_STREAM_RESET_DELAY_TICKS 60  /* 1 second delay after connection close */
 
 /* Forward declarations */
-static void StartPassiveListen(void);
+void StartPassiveListen(void);
 static void HandleListenASREvents(GiveTimePtr giveTime);
 static void HandleSendASREvents(GiveTimePtr giveTime);
-static void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status, tcp_port remote_port_from_status);
+void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status, tcp_port remote_port_from_status);
 static Boolean EnqueueMessage(const char *peerIP, const char *msgType, const char *content);
 static Boolean DequeueMessage(QueuedMessage *msg);
 static void ProcessMessageQueue(GiveTimePtr giveTime);
@@ -256,16 +256,16 @@ pascal void TCP_Send_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, 
 
 /* Wrapper functions to bridge Pascal calling convention to C calling convention */
 static void ListenNotifyWrapper(void *stream, unsigned short eventCode,
-                               Ptr userDataPtr, unsigned short terminReason,
-                               struct ICMPReport *icmpMsg)
+                                Ptr userDataPtr, unsigned short terminReason,
+                                struct ICMPReport *icmpMsg)
 {
     /* Call the actual Pascal UPP with proper casting */
     TCP_Listen_ASR_Handler((StreamPtr)stream, eventCode, userDataPtr, terminReason, icmpMsg);
 }
 
 static void SendNotifyWrapper(void *stream, unsigned short eventCode,
-                             Ptr userDataPtr, unsigned short terminReason,
-                             struct ICMPReport *icmpMsg)
+                              Ptr userDataPtr, unsigned short terminReason,
+                              struct ICMPReport *icmpMsg)
 {
     /* Call the actual Pascal UPP with proper casting */
     TCP_Send_ASR_Handler((StreamPtr)stream, eventCode, userDataPtr, terminReason, icmpMsg);
@@ -427,7 +427,7 @@ void CleanupTCP(short macTCPRefNum)
     log_debug_cat(LOG_CAT_MESSAGING, "TCP Messaging Subsystem cleanup finished.");
 }
 
-static void StartPassiveListen(void)
+void StartPassiveListen(void)
 {
     OSErr err;
 
@@ -465,8 +465,6 @@ static void StartPassiveListen(void)
 
 void ProcessTCPStateMachine(GiveTimePtr giveTime)
 {
-    OSErr err;
-
     if (!gNetworkOps) return;
 
     /* Handle ASR events for both streams */
@@ -475,148 +473,12 @@ void ProcessTCPStateMachine(GiveTimePtr giveTime)
 
     /* Process send state machine */
     ProcessSendStateMachine(giveTime);
-    
+
     /* Process message queue when send stream is available */
     ProcessMessageQueue(giveTime);
 
-    /* Process listen stream state */
-    switch (gTCPListenState) {
-    case TCP_STATE_IDLE:
-        /* Check if we need to wait before restarting listen */
-        if (gListenStreamNeedsReset) {
-            unsigned long currentTime = TickCount();
-            if ((currentTime - gListenStreamResetTime) < TCP_STREAM_RESET_DELAY_TICKS) {
-                /* Still waiting for stream to reset */
-                break;
-            }
-            /* Enough time has passed, clear the reset flag */
-            gListenStreamNeedsReset = false;
-        }
-        StartPassiveListen();
-        break;
-
-    case TCP_STATE_LISTENING:
-        if (gListenAsyncOperationInProgress && gListenAsyncHandle != NULL) {
-            OSErr operationResult;
-            void *resultData;
-            
-            err = gNetworkOps->TCPCheckAsyncStatus(gListenAsyncHandle, &operationResult, &resultData);
-            
-            if (err != 1) { /* Not pending anymore */
-                gListenAsyncOperationInProgress = false;
-                gListenAsyncHandle = NULL;
-                
-                if (err == noErr && operationResult == noErr) {
-                    /* Get connection info from TCP status */
-                    NetworkTCPInfo tcpInfo;
-                    if (gNetworkOps->TCPStatus(gTCPListenStream, &tcpInfo) == noErr) {
-                        ip_addr remote_ip = tcpInfo.remoteHost;
-                        tcp_port remote_port = tcpInfo.remotePort;
-                        char ipStr[INET_ADDRSTRLEN];
-
-                        if (gNetworkOps->AddressToString) {
-                            gNetworkOps->AddressToString(remote_ip, ipStr);
-                        } else {
-                            sprintf(ipStr, "%lu.%lu.%lu.%lu",
-                                    (remote_ip >> 24) & 0xFF, (remote_ip >> 16) & 0xFF,
-                                    (remote_ip >> 8) & 0xFF, remote_ip & 0xFF);
-                        }
-
-                        log_app_event("Incoming TCP connection established from %s:%u.", ipStr, remote_port);
-                        gTCPListenState = TCP_STATE_CONNECTED_IN;
-
-                        /* Issue a non-blocking receive to check for data */
-                        Boolean urgentFlag, markFlag;
-                        memset(gListenNoCopyRDS, 0, sizeof(gListenNoCopyRDS));
-
-                        OSErr rcvErr = gNetworkOps->TCPReceiveNoCopy(gTCPListenStream, (Ptr)gListenNoCopyRDS,
-                                       MAX_RDS_ENTRIES, 0, /* 0 timeout = non-blocking */
-                                       &urgentFlag, &markFlag, giveTime);
-
-                        log_debug_cat(LOG_CAT_MESSAGING, "Initial receive probe after accept: err=%d", rcvErr);
-
-                        if (rcvErr == noErr && (gListenNoCopyRDS[0].length > 0 || gListenNoCopyRDS[0].ptr != NULL)) {
-                            /* Data already available! */
-                            log_debug_cat(LOG_CAT_MESSAGING, "Data already available on connection accept!");
-                            ProcessIncomingTCPData(gListenNoCopyRDS, remote_ip, remote_port);
-                            gListenNoCopyRdsPendingReturn = true;
-
-                            /* Return the buffers */
-                            OSErr bfrReturnErr = gNetworkOps->TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, giveTime);
-                            if (bfrReturnErr == noErr) {
-                                gListenNoCopyRdsPendingReturn = false;
-                            }
-                        }
-                    } else {
-                        log_app_event("TCPStatus failed after listen accept");
-                        gTCPListenState = TCP_STATE_IDLE;
-                    }
-                } else {
-                    log_app_event("TCPListenAsync failed: %d.", operationResult);
-                    gTCPListenState = TCP_STATE_IDLE;
-                    /* Mark that we need to wait before trying again */
-                    gListenStreamNeedsReset = true;
-                    gListenStreamResetTime = TickCount();
-                }
-            }
-        }
-        break;
-
-    case TCP_STATE_CONNECTED_IN:
-        /* Also periodically check for data in case we missed the ASR */
-        if (!gListenNoCopyRdsPendingReturn && !gListenAsyncOperationInProgress) {
-            static unsigned long lastCheckTime = 0;
-            unsigned long currentTime = TickCount();
-
-            /* Check every 30 ticks (0.5 seconds) */
-            if (currentTime - lastCheckTime > 30) {
-                lastCheckTime = currentTime;
-
-                Boolean urgentFlag, markFlag;
-                memset(gListenNoCopyRDS, 0, sizeof(gListenNoCopyRDS));
-
-                OSErr rcvErr = gNetworkOps->TCPReceiveNoCopy(gTCPListenStream, (Ptr)gListenNoCopyRDS,
-                               MAX_RDS_ENTRIES, 0, /* non-blocking */
-                               &urgentFlag, &markFlag, giveTime);
-
-                if (rcvErr == noErr && (gListenNoCopyRDS[0].length > 0 || gListenNoCopyRDS[0].ptr != NULL)) {
-                    NetworkTCPInfo tcpInfo;
-                    if (gNetworkOps->TCPStatus(gTCPListenStream, &tcpInfo) == noErr) {
-                        log_debug_cat(LOG_CAT_MESSAGING, "Periodic check found data available");
-                        ProcessIncomingTCPData(gListenNoCopyRDS, tcpInfo.remoteHost, tcpInfo.remotePort);
-                        gListenNoCopyRdsPendingReturn = true;
-
-                        OSErr bfrReturnErr = gNetworkOps->TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, giveTime);
-                        if (bfrReturnErr == noErr) {
-                            gListenNoCopyRdsPendingReturn = false;
-                        }
-                    }
-                } else if (rcvErr == connectionClosing) {
-                    log_app_event("Listen connection closed by peer (periodic check).");
-                    gNetworkOps->TCPAbort(gTCPListenStream);
-                    gTCPListenState = TCP_STATE_IDLE;
-                    gListenStreamNeedsReset = true;
-                    gListenStreamResetTime = TickCount();
-                }
-            }
-        }
-        break;
-
-    case TCP_STATE_UNINITIALIZED:
-    case TCP_STATE_CONNECTING_OUT:
-    case TCP_STATE_CONNECTED_OUT:
-    case TCP_STATE_SENDING:
-    case TCP_STATE_CLOSING_GRACEFUL:
-    case TCP_STATE_ABORTING:
-    case TCP_STATE_RELEASING:
-    case TCP_STATE_ERROR:
-        /* These states are not expected for listen stream */
-        log_warning_cat(LOG_CAT_MESSAGING, "Listen stream in unexpected state: %d", gTCPListenState);
-        break;
-
-    default:
-        break;
-    }
+    /* Process listen stream state using the dispatcher */
+    dispatch_listen_state_handler(gTCPListenState, giveTime);
 
     if (giveTime) giveTime();
 }
@@ -630,7 +492,7 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
     gListenAsrEvent.eventPending = false;
 
     log_debug_cat(LOG_CAT_MESSAGING, "Listen ASR Event: Code %u, Reason %u (State: %d)",
-              currentEvent.eventCode, currentEvent.termReason, gTCPListenState);
+                  currentEvent.eventCode, currentEvent.termReason, gTCPListenState);
 
     switch (currentEvent.eventCode) {
     case TCPDataArrival:
@@ -716,7 +578,7 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
 static void HandleSendASREvents(GiveTimePtr giveTime)
 {
     (void)giveTime; /* Unused parameter */
-    
+
     if (!gNetworkOps) return;
     if (!gSendAsrEvent.eventPending) return;
 
@@ -724,14 +586,14 @@ static void HandleSendASREvents(GiveTimePtr giveTime)
     gSendAsrEvent.eventPending = false;
 
     log_debug_cat(LOG_CAT_MESSAGING, "Send ASR Event: Code %u, Reason %u (State: %d)",
-              currentEvent.eventCode, currentEvent.termReason, gTCPSendState);
+                  currentEvent.eventCode, currentEvent.termReason, gTCPSendState);
 
     switch (currentEvent.eventCode) {
     case TCPTerminate:
         log_debug_cat(LOG_CAT_MESSAGING, "Send ASR: TCPTerminate. Reason: %u.", currentEvent.termReason);
         /* Only set to IDLE if we were expecting the termination */
-        if (gTCPSendState == TCP_STATE_CLOSING_GRACEFUL || 
-            gTCPSendState == TCP_STATE_IDLE) {
+        if (gTCPSendState == TCP_STATE_CLOSING_GRACEFUL ||
+                gTCPSendState == TCP_STATE_IDLE) {
             gTCPSendState = TCP_STATE_IDLE;
         }
         break;
@@ -754,46 +616,46 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
     case TCP_STATE_CONNECTING_OUT:
         if (gSendConnectHandle != NULL) {
             err = gNetworkOps->TCPCheckAsyncStatus(gSendConnectHandle, &operationResult, &resultData);
-            
+
             if (err != 1) { /* Not pending anymore */
                 gSendConnectHandle = NULL;
-                
+
                 if (err == noErr && operationResult == noErr) {
                     log_info_cat(LOG_CAT_MESSAGING, "Connected to %s", gCurrentSendPeerIP);
                     gTCPSendState = TCP_STATE_CONNECTED_OUT;
-                    
+
                     /* Start async send */
                     int msgLen = strlen(gCurrentSendMessage);
                     log_debug_cat(LOG_CAT_MESSAGING, "Sending %d bytes...", msgLen);
                     gTCPSendState = TCP_STATE_SENDING;
-                    
-                    err = gNetworkOps->TCPSendAsync(gTCPSendStream, (Ptr)gCurrentSendMessage, 
+
+                    err = gNetworkOps->TCPSendAsync(gTCPSendStream, (Ptr)gCurrentSendMessage,
                                                     msgLen, true, &gSendDataHandle);
                     if (err != noErr) {
-                        log_app_event("Error: Async send to %s failed to start: %d", 
+                        log_app_event("Error: Async send to %s failed to start: %d",
                                       gCurrentSendPeerIP, err);
                         gNetworkOps->TCPAbort(gTCPSendStream);
                         gTCPSendState = TCP_STATE_IDLE;
                     }
                 } else {
-                    log_app_event("Error: Connection to %s failed: %d", 
+                    log_app_event("Error: Connection to %s failed: %d",
                                   gCurrentSendPeerIP, operationResult);
                     gTCPSendState = TCP_STATE_IDLE;
                 }
             }
         }
         break;
-        
+
     case TCP_STATE_SENDING:
         if (gSendDataHandle != NULL) {
             err = gNetworkOps->TCPCheckAsyncStatus(gSendDataHandle, &operationResult, &resultData);
-            
+
             if (err != 1) { /* Not pending anymore */
                 gSendDataHandle = NULL;
-                
+
                 if (err == noErr && operationResult == noErr) {
                     log_debug_cat(LOG_CAT_MESSAGING, "Message sent successfully");
-                    
+
                     /* Close connection */
                     if (strcmp(gCurrentSendMsgType, MSG_QUIT) == 0) {
                         log_debug_cat(LOG_CAT_MESSAGING, "Sending QUIT - using abort for immediate close");
@@ -811,7 +673,7 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
                         /* Don't set IDLE here - wait for close to complete */
                     }
                 } else {
-                    log_app_event("Error: Send to %s failed: %d", 
+                    log_app_event("Error: Send to %s failed: %d",
                                   gCurrentSendPeerIP, operationResult);
                     gNetworkOps->TCPAbort(gTCPSendStream);
                     gTCPSendState = TCP_STATE_IDLE;
@@ -819,7 +681,7 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
             }
         }
         break;
-        
+
     case TCP_STATE_CLOSING_GRACEFUL:
         /* Check if close operation completed */
         /* For now, assume close completes quickly and set to IDLE */
@@ -838,13 +700,13 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
         /* These states are not expected for send stream operations */
         log_warning_cat(LOG_CAT_MESSAGING, "Send stream in unexpected state: %d", gTCPSendState);
         break;
-        
+
     default:
         break;
     }
 }
 
-static void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status, tcp_port remote_port_from_status)
+void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status, tcp_port remote_port_from_status)
 {
     char senderIPStrFromPayload[INET_ADDRSTRLEN];
     char senderUsername[32];
@@ -876,7 +738,7 @@ static void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status
         if (parse_message((const char *)rds[i].ptr, rds[i].length,
                           senderIPStrFromPayload, senderUsername, msgType, content) == 0) {
             log_debug_cat(LOG_CAT_MESSAGING, "Parsed TCP message: Type '%s', FromUser '%s', FromIP(payload) '%s', Content(len %d) '%.30s...'",
-                      msgType, senderUsername, senderIPStrFromPayload, (int)strlen(content), content);
+                          msgType, senderUsername, senderIPStrFromPayload, (int)strlen(content), content);
 
             handle_received_tcp_message(remoteIPStrConnected,
                                         senderUsername,
@@ -890,7 +752,7 @@ static void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status
             }
         } else {
             log_error_cat(LOG_CAT_MESSAGING, "Failed to parse TCP message chunk from %s (length %u).",
-                      remoteIPStrConnected, rds[i].length);
+                          remoteIPStrConnected, rds[i].length);
         }
     }
 }
@@ -940,7 +802,7 @@ static OSErr StartAsyncSend(const char *peerIPStr, const char *message_content, 
     }
 
     /* Format message */
-    formattedLen = format_message(messageBuffer, sizeof(messageBuffer), msg_type, 
+    formattedLen = format_message(messageBuffer, sizeof(messageBuffer), msg_type,
                                   gMyUsername, gMyLocalIPStr, message_content);
     if (formattedLen < 0) {
         log_app_event("Error: format_message failed for type '%s'.", msg_type);

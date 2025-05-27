@@ -53,7 +53,7 @@ static int posix_add_or_update_peer(const char *ip, const char *username, void *
 static void posix_notify_peer_list_updated(void *platform_context)
 {
     app_state_t *state = (app_state_t *)platform_context;
-    
+
     if (state && state->ui) {
         UI_CALL(state->ui, notify_peer_update);
     } else {

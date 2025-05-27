@@ -64,38 +64,38 @@ static void json_escape(char *dest, const char *src, size_t dest_size)
     size_t i = 0, j = 0;
     while (src[i] && j < dest_size - 1) {
         switch (src[i]) {
-            case '"': 
-                if (j < dest_size - 2) {
-                    dest[j++] = '\\';
-                    dest[j++] = '"';
-                }
-                break;
-            case '\\': 
-                if (j < dest_size - 2) {
-                    dest[j++] = '\\';
-                    dest[j++] = '\\';
-                }
-                break;
-            case '\n': 
-                if (j < dest_size - 2) {
-                    dest[j++] = '\\';
-                    dest[j++] = 'n';
-                }
-                break;
-            case '\r': 
-                if (j < dest_size - 2) {
-                    dest[j++] = '\\';
-                    dest[j++] = 'r';
-                }
-                break;
-            case '\t': 
-                if (j < dest_size - 2) {
-                    dest[j++] = '\\';
-                    dest[j++] = 't';
-                }
-                break;
-            default:
-                dest[j++] = src[i];
+        case '"':
+            if (j < dest_size - 2) {
+                dest[j++] = '\\';
+                dest[j++] = '"';
+            }
+            break;
+        case '\\':
+            if (j < dest_size - 2) {
+                dest[j++] = '\\';
+                dest[j++] = '\\';
+            }
+            break;
+        case '\n':
+            if (j < dest_size - 2) {
+                dest[j++] = '\\';
+                dest[j++] = 'n';
+            }
+            break;
+        case '\r':
+            if (j < dest_size - 2) {
+                dest[j++] = '\\';
+                dest[j++] = 'r';
+            }
+            break;
+        case '\t':
+            if (j < dest_size - 2) {
+                dest[j++] = '\\';
+                dest[j++] = 't';
+            }
+            break;
+        default:
+            dest[j++] = src[i];
         }
         i++;
     }
@@ -110,7 +110,7 @@ static void machine_init(void *context)
     setvbuf(stdout, NULL, _IOLBF, 0);
     /* Set stdin to line buffered mode */
     setvbuf(stdin, NULL, _IOLBF, 0);
-    
+
     /* Initialize start time */
     start_time = time(NULL);
 }
@@ -122,17 +122,17 @@ static void machine_cleanup(void *context)
     fflush(stdout);
 }
 
-static void machine_display_message(void *context, const char *from_username, 
-                                   const char *from_ip, const char *content)
+static void machine_display_message(void *context, const char *from_username,
+                                    const char *from_ip, const char *content)
 {
     (void)context;
     char timestamp[32];
     char escaped_content[512];
     char json[1024];
-    
+
     get_timestamp(timestamp, sizeof(timestamp));
     json_escape(escaped_content, content, sizeof(escaped_content));
-    
+
     /* Add to history */
     pthread_mutex_lock(&history_mutex);
     strncpy(message_history[history_index].from_username, from_username, 31);
@@ -142,15 +142,15 @@ static void machine_display_message(void *context, const char *from_username,
     history_index = (history_index + 1) % MAX_HISTORY;
     if (history_count < MAX_HISTORY) history_count++;
     pthread_mutex_unlock(&history_mutex);
-    
+
     stats.messages_received++;
-    
+
     snprintf(json, sizeof(json),
-        "{\"type\":\"event\",\"event\":\"message\",\"timestamp\":\"%s\","
-        "\"data\":{\"from\":{\"username\":\"%s\",\"ip\":\"%s\"},"
-        "\"content\":\"%s\",\"message_id\":\"msg_%u\"}}",
-        timestamp, from_username, from_ip, escaped_content, stats.messages_received);
-    
+             "{\"type\":\"event\",\"event\":\"message\",\"timestamp\":\"%s\","
+             "\"data\":{\"from\":{\"username\":\"%s\",\"ip\":\"%s\"},"
+             "\"content\":\"%s\",\"message_id\":\"msg_%u\"}}",
+             timestamp, from_username, from_ip, escaped_content, stats.messages_received);
+
     json_output(json);
 }
 
@@ -169,15 +169,15 @@ static void machine_display_error(void *context, const char *format, va_list arg
     char timestamp[32];
     char error_msg[512];
     char json[1024];
-    
+
     get_timestamp(timestamp, sizeof(timestamp));
     vsnprintf(error_msg, sizeof(error_msg), format, args);
-    
+
     snprintf(json, sizeof(json),
-        "{\"type\":\"error\",\"timestamp\":\"%s\","
-        "\"error\":{\"code\":\"INTERNAL_ERROR\",\"message\":\"%s\"}}",
-        timestamp, error_msg);
-    
+             "{\"type\":\"error\",\"timestamp\":\"%s\","
+             "\"error\":{\"code\":\"INTERNAL_ERROR\",\"message\":\"%s\"}}",
+             timestamp, error_msg);
+
     json_output(json);
 }
 
@@ -188,53 +188,53 @@ static void machine_display_peer_list(void *context, app_state_t *state)
     char json[4096];
     char peers_json[3072] = "[";
     int first = 1;
-    
+
     get_timestamp(timestamp, sizeof(timestamp));
-    
+
     pthread_mutex_lock(&state->peers_mutex);
     time_t now = time(NULL);
     int active_count = 0;
-    
+
     for (int i = 0; i < MAX_PEERS; i++) {
         if (state->peer_manager.peers[i].active) {
             if (difftime(now, state->peer_manager.peers[i].last_seen) > PEER_TIMEOUT) {
                 log_info_cat(LOG_CAT_PEER_MGMT, "Peer %s@%s timed out",
-                          state->peer_manager.peers[i].username,
-                          state->peer_manager.peers[i].ip);
+                             state->peer_manager.peers[i].username,
+                             state->peer_manager.peers[i].ip);
                 state->peer_manager.peers[i].active = 0;
                 continue;
             }
-            
+
             char peer_timestamp[32];
             time_t last_seen_time = state->peer_manager.peers[i].last_seen;
             struct tm *tm_info = gmtime(&last_seen_time);
             strftime(peer_timestamp, sizeof(peer_timestamp), "%Y-%m-%dT%H:%M:%SZ", tm_info);
-            
+
             char peer_json[256];
             snprintf(peer_json, sizeof(peer_json),
-                "%s{\"id\":%d,\"username\":\"%s\",\"ip\":\"%s\","
-                "\"last_seen\":\"%s\",\"status\":\"active\"}",
-                first ? "" : ",",
-                ++active_count,
-                state->peer_manager.peers[i].username,
-                state->peer_manager.peers[i].ip,
-                peer_timestamp);
-            
+                     "%s{\"id\":%d,\"username\":\"%s\",\"ip\":\"%s\","
+                     "\"last_seen\":\"%s\",\"status\":\"active\"}",
+                     first ? "" : ",",
+                     ++active_count,
+                     state->peer_manager.peers[i].username,
+                     state->peer_manager.peers[i].ip,
+                     peer_timestamp);
+
             strcat(peers_json, peer_json);
             first = 0;
         }
     }
-    
+
     strcat(peers_json, "]");
-    
+
     pthread_mutex_unlock(&state->peers_mutex);
-    
+
     snprintf(json, sizeof(json),
-        "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
-        "\"command\":\"/list\",\"data\":{\"peers\":%s,\"count\":%d}}",
-        current_command_id[0] ? current_command_id : "null",
-        timestamp, peers_json, active_count);
-    
+             "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
+             "\"command\":\"/list\",\"data\":{\"peers\":%s,\"count\":%d}}",
+             current_command_id[0] ? current_command_id : "null",
+             timestamp, peers_json, active_count);
+
     json_output(json);
 }
 
@@ -243,19 +243,19 @@ static void machine_display_help(void *context)
     (void)context;
     char timestamp[32];
     char json[1024];
-    
+
     get_timestamp(timestamp, sizeof(timestamp));
-    
+
     snprintf(json, sizeof(json),
-        "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
-        "\"command\":\"/help\",\"data\":{\"commands\":["
-        "\"/list\",\"/send <id> <msg>\",\"/broadcast <msg>\","
-        "\"/status\",\"/stats\",\"/history [count]\","
-        "\"/peers --filter <pattern>\",\"/version\","
-        "\"/debug\",\"/quit\",\"/help\"]}}",
-        current_command_id[0] ? current_command_id : "null",
-        timestamp);
-    
+             "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
+             "\"command\":\"/help\",\"data\":{\"commands\":["
+             "\"/list\",\"/send <id> <msg>\",\"/broadcast <msg>\","
+             "\"/status\",\"/stats\",\"/history [count]\","
+             "\"/peers --filter <pattern>\",\"/version\","
+             "\"/debug\",\"/quit\",\"/help\"]}}",
+             current_command_id[0] ? current_command_id : "null",
+             timestamp);
+
     json_output(json);
 }
 
@@ -264,29 +264,29 @@ static void machine_notify_send_result(void *context, int success, int peer_num,
     (void)context;
     char timestamp[32];
     char json[512];
-    
+
     get_timestamp(timestamp, sizeof(timestamp));
     stats.messages_sent++;
-    
+
     if (success) {
         snprintf(json, sizeof(json),
-            "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
-            "\"command\":\"/send\",\"data\":{\"success\":true,"
-            "\"peer\":{\"id\":%d,\"ip\":\"%s\"},\"message_id\":\"msg_%u\"}}",
-            current_command_id[0] ? current_command_id : "null",
-            timestamp, peer_num, peer_ip, stats.messages_sent);
+                 "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
+                 "\"command\":\"/send\",\"data\":{\"success\":true,"
+                 "\"peer\":{\"id\":%d,\"ip\":\"%s\"},\"message_id\":\"msg_%u\"}}",
+                 current_command_id[0] ? current_command_id : "null",
+                 timestamp, peer_num, peer_ip, stats.messages_sent);
     } else {
         const char *error_code = (peer_num < 0) ? "PEER_NOT_FOUND" : "NETWORK_ERROR";
         const char *error_msg = (peer_num < 0) ? "Invalid peer number" : "Failed to send message";
-        
+
         snprintf(json, sizeof(json),
-            "{\"type\":\"error\",\"id\":\"%s\",\"timestamp\":\"%s\","
-            "\"error\":{\"code\":\"%s\",\"message\":\"%s\","
-            "\"details\":{\"peer_id\":%d}}}",
-            current_command_id[0] ? current_command_id : "null",
-            timestamp, error_code, error_msg, peer_num);
+                 "{\"type\":\"error\",\"id\":\"%s\",\"timestamp\":\"%s\","
+                 "\"error\":{\"code\":\"%s\",\"message\":\"%s\","
+                 "\"details\":{\"peer_id\":%d}}}",
+                 current_command_id[0] ? current_command_id : "null",
+                 timestamp, error_code, error_msg, peer_num);
     }
-    
+
     json_output(json);
 }
 
@@ -295,16 +295,16 @@ static void machine_notify_broadcast_result(void *context, int sent_count)
     (void)context;
     char timestamp[32];
     char json[512];
-    
+
     get_timestamp(timestamp, sizeof(timestamp));
     stats.broadcasts_sent++;
-    
+
     snprintf(json, sizeof(json),
-        "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
-        "\"command\":\"/broadcast\",\"data\":{\"sent_count\":%d}}",
-        current_command_id[0] ? current_command_id : "null",
-        timestamp, sent_count);
-    
+             "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
+             "\"command\":\"/broadcast\",\"data\":{\"sent_count\":%d}}",
+             current_command_id[0] ? current_command_id : "null",
+             timestamp, sent_count);
+
     json_output(json);
 }
 
@@ -314,18 +314,18 @@ static void machine_notify_command_unknown(void *context, const char *command)
     char timestamp[32];
     char json[512];
     char escaped_cmd[128];
-    
+
     get_timestamp(timestamp, sizeof(timestamp));
     json_escape(escaped_cmd, command, sizeof(escaped_cmd));
-    
+
     snprintf(json, sizeof(json),
-        "{\"type\":\"error\",\"id\":\"%s\",\"timestamp\":\"%s\","
-        "\"error\":{\"code\":\"UNKNOWN_COMMAND\","
-        "\"message\":\"Command not recognized\","
-        "\"details\":{\"command\":\"%s\"}}}",
-        current_command_id[0] ? current_command_id : "null",
-        timestamp, escaped_cmd);
-    
+             "{\"type\":\"error\",\"id\":\"%s\",\"timestamp\":\"%s\","
+             "\"error\":{\"code\":\"UNKNOWN_COMMAND\","
+             "\"message\":\"Command not recognized\","
+             "\"details\":{\"command\":\"%s\"}}}",
+             current_command_id[0] ? current_command_id : "null",
+             timestamp, escaped_cmd);
+
     json_output(json);
 }
 
@@ -334,15 +334,15 @@ static void machine_notify_peer_update(void *context)
     (void)context;
     char timestamp[32];
     char json[256];
-    
+
     get_timestamp(timestamp, sizeof(timestamp));
     stats.peers_seen++;
-    
+
     snprintf(json, sizeof(json),
-        "{\"type\":\"event\",\"event\":\"peer_update\","
-        "\"timestamp\":\"%s\",\"data\":{\"action\":\"changed\"}}",
-        timestamp);
-    
+             "{\"type\":\"event\",\"event\":\"peer_update\","
+             "\"timestamp\":\"%s\",\"data\":{\"action\":\"changed\"}}",
+             timestamp);
+
     json_output(json);
 }
 
@@ -351,15 +351,15 @@ static void machine_notify_debug_toggle(void *context, int enabled)
     (void)context;
     char timestamp[32];
     char json[256];
-    
+
     get_timestamp(timestamp, sizeof(timestamp));
-    
+
     snprintf(json, sizeof(json),
-        "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
-        "\"command\":\"/debug\",\"data\":{\"enabled\":%s}}",
-        current_command_id[0] ? current_command_id : "null",
-        timestamp, enabled ? "true" : "false");
-    
+             "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
+             "\"command\":\"/debug\",\"data\":{\"enabled\":%s}}",
+             current_command_id[0] ? current_command_id : "null",
+             timestamp, enabled ? "true" : "false");
+
     json_output(json);
 }
 
@@ -399,14 +399,14 @@ static void machine_notify_startup(void *context, const char *username)
     (void)context;
     char timestamp[32];
     char json[256];
-    
+
     get_timestamp(timestamp, sizeof(timestamp));
-    
+
     snprintf(json, sizeof(json),
-        "{\"type\":\"start\",\"version\":\"2.0\","
-        "\"username\":\"%s\",\"timestamp\":\"%s\"}",
-        username, timestamp);
-    
+             "{\"type\":\"start\",\"version\":\"2.0\","
+             "\"username\":\"%s\",\"timestamp\":\"%s\"}",
+             username, timestamp);
+
     json_output(json);
 }
 
@@ -415,13 +415,13 @@ static void machine_notify_shutdown(void *context)
     (void)context;
     char timestamp[32];
     char json[128];
-    
+
     get_timestamp(timestamp, sizeof(timestamp));
-    
+
     snprintf(json, sizeof(json),
-        "{\"type\":\"shutdown\",\"timestamp\":\"%s\"}",
-        timestamp);
-    
+             "{\"type\":\"shutdown\",\"timestamp\":\"%s\"}",
+             timestamp);
+
     json_output(json);
 }
 
@@ -430,13 +430,13 @@ static void machine_notify_ready(void *context)
     (void)context;
     char timestamp[32];
     char json[128];
-    
+
     get_timestamp(timestamp, sizeof(timestamp));
-    
+
     snprintf(json, sizeof(json),
-        "{\"type\":\"ready\",\"timestamp\":\"%s\"}",
-        timestamp);
-    
+             "{\"type\":\"ready\",\"timestamp\":\"%s\"}",
+             timestamp);
+
     json_output(json);
 }
 
@@ -446,35 +446,35 @@ static void machine_notify_status(void *context, app_state_t *state)
     (void)context;
     char timestamp[32];
     char json[1024];
-    
+
     get_timestamp(timestamp, sizeof(timestamp));
     time_t uptime = time(NULL) - start_time;
-    
+
     pthread_mutex_lock(&state->peers_mutex);
     int active_peers = 0;
     for (int i = 0; i < MAX_PEERS; i++) {
         if (state->peer_manager.peers[i].active &&
-            difftime(time(NULL), state->peer_manager.peers[i].last_seen) <= PEER_TIMEOUT) {
+                difftime(time(NULL), state->peer_manager.peers[i].last_seen) <= PEER_TIMEOUT) {
             active_peers++;
         }
     }
     pthread_mutex_unlock(&state->peers_mutex);
-    
+
     snprintf(json, sizeof(json),
-        "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
-        "\"command\":\"/status\",\"data\":{"
-        "\"uptime_seconds\":%ld,\"version\":\"2.0\","
-        "\"username\":\"%s\",\"network\":{"
-        "\"tcp_port\":%d,\"udp_port\":%d},"
-        "\"statistics\":{"
-        "\"messages_sent\":%u,\"messages_received\":%u,"
-        "\"broadcasts_sent\":%u,\"active_peers\":%d}}}",
-        current_command_id[0] ? current_command_id : "null",
-        timestamp, uptime, state->username,
-        PORT_TCP, PORT_UDP,
-        stats.messages_sent, stats.messages_received,
-        stats.broadcasts_sent, active_peers);
-    
+             "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
+             "\"command\":\"/status\",\"data\":{"
+             "\"uptime_seconds\":%ld,\"version\":\"2.0\","
+             "\"username\":\"%s\",\"network\":{"
+             "\"tcp_port\":%d,\"udp_port\":%d},"
+             "\"statistics\":{"
+             "\"messages_sent\":%u,\"messages_received\":%u,"
+             "\"broadcasts_sent\":%u,\"active_peers\":%d}}}",
+             current_command_id[0] ? current_command_id : "null",
+             timestamp, uptime, state->username,
+             PORT_TCP, PORT_UDP,
+             stats.messages_sent, stats.messages_received,
+             stats.broadcasts_sent, active_peers);
+
     json_output(json);
 }
 
@@ -483,9 +483,9 @@ static void machine_notify_stats(void *context, app_state_t *state)
     (void)context;
     char timestamp[32];
     char json[512];
-    
+
     get_timestamp(timestamp, sizeof(timestamp));
-    
+
     pthread_mutex_lock(&state->peers_mutex);
     int total_peers = 0;
     for (int i = 0; i < MAX_PEERS; i++) {
@@ -494,18 +494,18 @@ static void machine_notify_stats(void *context, app_state_t *state)
         }
     }
     pthread_mutex_unlock(&state->peers_mutex);
-    
+
     snprintf(json, sizeof(json),
-        "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
-        "\"command\":\"/stats\",\"data\":{"
-        "\"messages_sent\":%u,\"messages_received\":%u,"
-        "\"broadcasts_sent\":%u,\"total_peers_seen\":%u,"
-        "\"current_active_peers\":%d}}",
-        current_command_id[0] ? current_command_id : "null",
-        timestamp,
-        stats.messages_sent, stats.messages_received,
-        stats.broadcasts_sent, stats.peers_seen, total_peers);
-    
+             "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
+             "\"command\":\"/stats\",\"data\":{"
+             "\"messages_sent\":%u,\"messages_received\":%u,"
+             "\"broadcasts_sent\":%u,\"total_peers_seen\":%u,"
+             "\"current_active_peers\":%d}}",
+             current_command_id[0] ? current_command_id : "null",
+             timestamp,
+             stats.messages_sent, stats.messages_received,
+             stats.broadcasts_sent, stats.peers_seen, total_peers);
+
     json_output(json);
 }
 
@@ -517,34 +517,34 @@ static void machine_notify_history(void *context, int count)
     char history_json[6144] = "[";  /* Increased buffer size */
     int first = 1;
     size_t history_len = 1;  /* Track current length */
-    
+
     get_timestamp(timestamp, sizeof(timestamp));
-    
+
     pthread_mutex_lock(&history_mutex);
-    int start_idx = (history_count > count) ? 
-        (history_index - count + MAX_HISTORY) % MAX_HISTORY : 
-        (history_index - history_count + MAX_HISTORY) % MAX_HISTORY;
-    
+    int start_idx = (history_count > count) ?
+                    (history_index - count + MAX_HISTORY) % MAX_HISTORY :
+                    (history_index - history_count + MAX_HISTORY) % MAX_HISTORY;
+
     int items_to_show = (count > history_count) ? history_count : count;
-    
+
     for (int i = 0; i < items_to_show; i++) {
         int idx = (start_idx + i) % MAX_HISTORY;
         if (message_history[idx].timestamp > 0) {
             char msg_timestamp[32];
             struct tm *tm_info = gmtime(&message_history[idx].timestamp);
             strftime(msg_timestamp, sizeof(msg_timestamp), "%Y-%m-%dT%H:%M:%SZ", tm_info);
-            
+
             char escaped_content[512];
             json_escape(escaped_content, message_history[idx].content, sizeof(escaped_content));
-            
+
             char msg_json[1024];  /* Increased buffer size */
             int written = snprintf(msg_json, sizeof(msg_json),
-                "%s{\"timestamp\":\"%s\",\"from\":\"%s\",\"content\":\"%s\"}",
-                first ? "" : ",",
-                msg_timestamp,
-                message_history[idx].from_username,
-                escaped_content);
-            
+                                   "%s{\"timestamp\":\"%s\",\"from\":\"%s\",\"content\":\"%s\"}",
+                                   first ? "" : ",",
+                                   msg_timestamp,
+                                   message_history[idx].from_username,
+                                   escaped_content);
+
             /* Check if we have room to append */
             if (written > 0 && history_len + written < sizeof(history_json) - 2) {
                 strcat(history_json, msg_json);
@@ -554,15 +554,15 @@ static void machine_notify_history(void *context, int count)
         }
     }
     pthread_mutex_unlock(&history_mutex);
-    
+
     strcat(history_json, "]");
-    
+
     snprintf(json, sizeof(json),
-        "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
-        "\"command\":\"/history\",\"data\":{\"messages\":%s,\"count\":%d}}",
-        current_command_id[0] ? current_command_id : "null",
-        timestamp, history_json, items_to_show);
-    
+             "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
+             "\"command\":\"/history\",\"data\":{\"messages\":%s,\"count\":%d}}",
+             current_command_id[0] ? current_command_id : "null",
+             timestamp, history_json, items_to_show);
+
     json_output(json);
 }
 
@@ -571,16 +571,16 @@ static void machine_notify_version(void *context)
     (void)context;
     char timestamp[32];
     char json[256];
-    
+
     get_timestamp(timestamp, sizeof(timestamp));
-    
+
     snprintf(json, sizeof(json),
-        "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
-        "\"command\":\"/version\",\"data\":{"
-        "\"protocol_version\":\"2.0\",\"app_version\":\"1.0\"}}",
-        current_command_id[0] ? current_command_id : "null",
-        timestamp);
-    
+             "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
+             "\"command\":\"/version\",\"data\":{"
+             "\"protocol_version\":\"2.0\",\"app_version\":\"1.0\"}}",
+             current_command_id[0] ? current_command_id : "null",
+             timestamp);
+
     json_output(json);
 }
 

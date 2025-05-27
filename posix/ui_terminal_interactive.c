@@ -21,21 +21,21 @@ static void interactive_cleanup(void *context)
     /* No special cleanup needed */
 }
 
-static void interactive_display_message(void *context, const char *from_username, 
-                                       const char *from_ip, const char *content)
+static void interactive_display_message(void *context, const char *from_username,
+                                        const char *from_ip, const char *content)
 {
     (void)context;
     time_t now = time(NULL);
     char time_str[20];
     struct tm *local_time_info = localtime(&now);
-    
+
     if (local_time_info) {
         strftime(time_str, sizeof(time_str), "%H:%M:%S", local_time_info);
         printf("[%s] ", time_str);
     } else {
         printf("[--:--:--] ");
     }
-    
+
     printf("%s@%s: %s\n", from_username, from_ip, content);
     fflush(stdout);
 }
@@ -46,14 +46,14 @@ static void interactive_display_app_message(void *context, const char *format, v
     time_t now = time(NULL);
     char time_str[20];
     struct tm *local_time_info = localtime(&now);
-    
+
     if (local_time_info) {
         strftime(time_str, sizeof(time_str), "%H:%M:%S", local_time_info);
         printf("[%s] ", time_str);
     } else {
         printf("[--:--:--] ");
     }
-    
+
     vprintf(format, args);
     printf("\n");
     fflush(stdout);
@@ -74,19 +74,19 @@ static void interactive_display_peer_list(void *context, app_state_t *state)
     pthread_mutex_lock(&state->peers_mutex);
     time_t now = time(NULL);
     int active_count = 0;
-    
+
     printf("\n--- Active Peers ---\n");
-    
+
     for (int i = 0; i < MAX_PEERS; i++) {
         if (state->peer_manager.peers[i].active) {
             if (difftime(now, state->peer_manager.peers[i].last_seen) > PEER_TIMEOUT) {
                 log_info_cat(LOG_CAT_PEER_MGMT, "Peer %s@%s timed out (detected in print_peers).",
-                          state->peer_manager.peers[i].username,
-                          state->peer_manager.peers[i].ip);
+                             state->peer_manager.peers[i].username,
+                             state->peer_manager.peers[i].ip);
                 state->peer_manager.peers[i].active = 0;
                 continue;
             }
-            
+
             printf("%d. %s@%s (last seen %ld seconds ago)\n",
                    ++active_count,
                    state->peer_manager.peers[i].username,
@@ -94,12 +94,12 @@ static void interactive_display_peer_list(void *context, app_state_t *state)
                    (long)(now - state->peer_manager.peers[i].last_seen));
         }
     }
-    
+
     if (active_count == 0) {
         printf("No active peers found.\n");
     }
     printf("--------------------\n\n");
-    
+
     pthread_mutex_unlock(&state->peers_mutex);
     fflush(stdout);
 }
@@ -120,7 +120,7 @@ static void interactive_display_help(void *context)
 static void interactive_notify_send_result(void *context, int success, int peer_num, const char *peer_ip)
 {
     ui_context_t *ui = (ui_context_t *)context;
-    
+
     if (success) {
         char msg[256];
         snprintf(msg, sizeof(msg), "Message sent to peer %d (%s)", peer_num, peer_ip);

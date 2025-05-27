@@ -208,7 +208,7 @@ OSErr SendDiscoveryBroadcastSync(short macTCPRefNum, const char *myUsername, con
         log_error_cat(LOG_CAT_DISCOVERY, "Error: Async UDP send not available");
         return notOpenErr;
     }
-    
+
     err = gNetworkOps->UDPSendAsync(gUDPEndpoint, BROADCAST_IP, PORT_UDP,
                                     (Ptr)gBroadcastBuffer, formatted_len - 1,
                                     &gUDPSendHandle);
@@ -254,7 +254,7 @@ OSErr SendDiscoveryResponseSync(short macTCPRefNum, const char *myUsername, cons
         log_error_cat(LOG_CAT_DISCOVERY, "Error: Async UDP send not available");
         return notOpenErr;
     }
-    
+
     err = gNetworkOps->UDPSendAsync(gUDPEndpoint, destIP, destPort,
                                     (Ptr)gResponseBuffer, formatted_len - 1,
                                     &gUDPSendHandle);
@@ -461,7 +461,7 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
     /* Check UDP send completion */
     if (gUDPSendHandle != NULL && gNetworkOps && gNetworkOps->UDPCheckSendStatus) {
         status = gNetworkOps->UDPCheckSendStatus(gUDPSendHandle);
-        
+
         if (status == 1) {
             /* Still pending */
         } else if (status == noErr) {
