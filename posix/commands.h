@@ -1,5 +1,5 @@
-#ifndef UI_TERMINAL_COMMANDS_H
-#define UI_TERMINAL_COMMANDS_H
+#ifndef COMMANDS_H
+#define COMMANDS_H
 
 #include "../shared/common_defs.h"
 #include "peer.h"
@@ -34,4 +34,4 @@ int send_to_peer(app_state_t *state, const char *target_ip, const char *message,
 int broadcast_to_all_peers(app_state_t *state, const char *message);
 void notify_peers_on_quit(app_state_t *state);
 
-#endif /* UI_TERMINAL_COMMANDS_H */
+#endif /* COMMANDS_H */

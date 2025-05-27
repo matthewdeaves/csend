@@ -1,4 +1,4 @@
-#include "ui_terminal_commands.h"
+#include "commands.h"
 #include "ui_interface.h"
 #include "network.h"
 #include "logging.h"

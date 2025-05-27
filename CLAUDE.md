@@ -124,6 +124,7 @@ make -f Makefile.retro68
 
 - **Protocol**: `shared/protocol.c` - Message format and parsing
 - **Peer Management**: `shared/peer.c`, `posix/peer.c`, `classic_mac/peer.c`
+- **Command Handlers**: `posix/commands.c` - Application command implementations (UI-agnostic)
 - **POSIX Main Loop**: `posix/main.c` - Thread management and initialization
 - **Classic Mac Event Loop**: `classic_mac/main.c` - WaitNextEvent handling
 - **Network Abstraction**: `classic_mac/network_abstraction.h` - Network interface design
