@@ -22,6 +22,14 @@ extern OSErr AddrToStr(unsigned long addr, char *addrStr);
 extern OSErr StrToAddr(char *hostName, struct hostInfo *rtnStruct,
                        long resultProc, char *userData);
 
+/* Macro for setting up single-entry WDS */
+#define SETUP_SINGLE_WDS(wds, data, length) do { \
+    (wds)[0].length = (length); \
+    (wds)[0].ptr = (data); \
+    (wds)[1].length = 0; \
+    (wds)[1].ptr = NULL; \
+} while(0)
+
 /* UDP implementation structures */
 typedef struct {
     StreamPtr stream;
@@ -237,6 +245,42 @@ static void FreeUDPEndpoint(MacTCPUDPEndpoint *endpoint)
     }
 }
 
+/* Helper functions for TCP async operations */
+static TCPAsyncOp* setup_tcp_async_operation(NetworkAsyncHandle *handle, 
+                                             NetworkStreamRef stream, 
+                                             TCPAsyncOpType type)
+{
+    TCPAsyncOp *op;
+    
+    if (!handle) return NULL;
+    
+    *handle = AllocateTCPAsyncHandle();
+    if (*handle == NULL) {
+        return NULL;
+    }
+    
+    op = (TCPAsyncOp *)*handle;
+    op->stream = stream;
+    op->opType = type;
+    
+    return op;
+}
+
+static OSErr finalize_tcp_async_operation(TCPAsyncOp *op, OSErr err, 
+                                          NetworkAsyncHandle *handle, 
+                                          const char *operation_name)
+{
+    (void)op;  /* Currently unused, but kept for potential future use */
+    
+    if (err != noErr && handle && *handle) {
+        FreeTCPAsyncHandle(*handle);
+        *handle = NULL;
+        log_debug_cat(LOG_CAT_NETWORKING, "%s: PBControlAsync failed: %d", 
+                      operation_name, err);
+    }
+    return err;
+}
+
 /* Implementation of network operations for MacTCP */
 
 static OSErr MacTCPImpl_Initialize(short *refNum, ip_addr *localIP, char *localIPStr)
@@ -412,15 +456,11 @@ static OSErr MacTCPImpl_TCPListenAsync(NetworkStreamRef streamRef, tcp_port loca
         return paramErr;
     }
 
-    /* Allocate async handle */
-    *asyncHandle = AllocateTCPAsyncHandle();
-    if (*asyncHandle == NULL) {
+    /* Setup async operation */
+    op = setup_tcp_async_operation(asyncHandle, streamRef, TCP_ASYNC_LISTEN);
+    if (!op) {
         return memFullErr;
     }
-
-    op = (TCPAsyncOp *)*asyncHandle;
-    op->stream = streamRef;
-    op->opType = TCP_ASYNC_LISTEN;
 
     /* Set up parameter block */
     memset(&op->pb, 0, sizeof(TCPiopb));
@@ -440,15 +480,13 @@ static OSErr MacTCPImpl_TCPListenAsync(NetworkStreamRef streamRef, tcp_port loca
 
     /* Start async operation */
     err = PBControlAsync((ParmBlkPtr)&op->pb);
-    if (err != noErr) {
-        FreeTCPAsyncHandle(*asyncHandle);
-        *asyncHandle = NULL;
-        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPListenAsync: PBControlAsync failed: %d", err);
-        return err;
+    err = finalize_tcp_async_operation(op, err, asyncHandle, "MacTCPImpl_TCPListenAsync");
+    
+    if (err == noErr) {
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPListenAsync: Started async listen on port %u", localPort);
     }
-
-    log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPListenAsync: Started async listen on port %u", localPort);
-    return noErr;
+    
+    return err;
 }
 
 static OSErr MacTCPImpl_TCPConnect(NetworkStreamRef streamRef, ip_addr remoteHost,
@@ -491,15 +529,11 @@ static OSErr MacTCPImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remo
         return paramErr;
     }
 
-    /* Allocate async handle */
-    *asyncHandle = AllocateTCPAsyncHandle();
-    if (*asyncHandle == NULL) {
+    /* Setup async operation */
+    op = setup_tcp_async_operation(asyncHandle, streamRef, TCP_ASYNC_CONNECT);
+    if (!op) {
         return memFullErr;
     }
-
-    op = (TCPAsyncOp *)*asyncHandle;
-    op->stream = streamRef;
-    op->opType = TCP_ASYNC_CONNECT;
 
     /* Set up parameter block */
     memset(&op->pb, 0, sizeof(TCPiopb));
@@ -518,16 +552,14 @@ static OSErr MacTCPImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remo
 
     /* Start async operation */
     err = PBControlAsync((ParmBlkPtr)&op->pb);
-    if (err != noErr) {
-        FreeTCPAsyncHandle(*asyncHandle);
-        *asyncHandle = NULL;
-        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPConnectAsync: PBControlAsync failed: %d", err);
-        return err;
+    err = finalize_tcp_async_operation(op, err, asyncHandle, "MacTCPImpl_TCPConnectAsync");
+    
+    if (err == noErr) {
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPConnectAsync: Started async connect to %lu:%u",
+                      remoteHost, remotePort);
     }
-
-    log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPConnectAsync: Started async connect to %lu:%u",
-                  remoteHost, remotePort);
-    return noErr;
+    
+    return err;
 }
 
 static OSErr MacTCPImpl_TCPSend(NetworkStreamRef streamRef, Ptr data, unsigned short length,
@@ -542,10 +574,7 @@ static OSErr MacTCPImpl_TCPSend(NetworkStreamRef streamRef, Ptr data, unsigned s
     }
 
     /* Set up WDS */
-    wds[0].length = length;
-    wds[0].ptr = data;
-    wds[1].length = 0;
-    wds[1].ptr = NULL;
+    SETUP_SINGLE_WDS(wds, data, length);
 
     memset(&pb, 0, sizeof(TCPiopb));
     pb.tcpStream = (StreamPtr)streamRef;
@@ -596,10 +625,7 @@ static OSErr MacTCPImpl_TCPSendAsync(NetworkStreamRef streamRef, Ptr data, unsig
     }
 
     /* Set up WDS */
-    wds[0].length = length;
-    wds[0].ptr = data;
-    wds[1].length = 0;
-    wds[1].ptr = NULL;
+    SETUP_SINGLE_WDS(wds, data, length);
 
     /* Set up parameter block */
     memset(&op->pb, 0, sizeof(TCPiopb));
@@ -903,10 +929,7 @@ static OSErr MacTCPImpl_UDPSend(NetworkEndpointRef endpointRef, ip_addr remoteHo
     }
 
     /* Set up WDS */
-    wds[0].length = length;
-    wds[0].ptr = data;
-    wds[1].length = 0;
-    wds[1].ptr = nil;
+    SETUP_SINGLE_WDS(wds, data, length);
 
     /* Send datagram */
     memset(&pb, 0, sizeof(UDPiopb));
@@ -1021,10 +1044,7 @@ static OSErr MacTCPImpl_UDPSendAsync(NetworkEndpointRef endpointRef, ip_addr rem
     }
 
     /* Set up WDS */
-    wds[0].length = length;
-    wds[0].ptr = data;
-    wds[1].length = 0;
-    wds[1].ptr = nil;
+    SETUP_SINGLE_WDS(wds, data, length);
 
     /* Store WDS for cleanup */
     op->wdsArray = wds;

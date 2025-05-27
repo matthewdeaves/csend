@@ -2,6 +2,7 @@
 #include "ui_factory.h"
 #include "logging.h"
 #include "../shared/logging.h"
+#include "../shared/time_utils.h"
 #include <stdio.h>
 #include <time.h>
 #include <pthread.h>
@@ -25,17 +26,7 @@ static void interactive_display_message(void *context, const char *from_username
                                         const char *from_ip, const char *content)
 {
     (void)context;
-    time_t now = time(NULL);
-    char time_str[20];
-    struct tm *local_time_info = localtime(&now);
-
-    if (local_time_info) {
-        strftime(time_str, sizeof(time_str), "%H:%M:%S", local_time_info);
-        printf("[%s] ", time_str);
-    } else {
-        printf("[--:--:--] ");
-    }
-
+    print_timestamp("%H:%M:%S");
     printf("%s@%s: %s\n", from_username, from_ip, content);
     fflush(stdout);
 }
@@ -43,17 +34,7 @@ static void interactive_display_message(void *context, const char *from_username
 static void interactive_display_app_message(void *context, const char *format, va_list args)
 {
     (void)context;
-    time_t now = time(NULL);
-    char time_str[20];
-    struct tm *local_time_info = localtime(&now);
-
-    if (local_time_info) {
-        strftime(time_str, sizeof(time_str), "%H:%M:%S", local_time_info);
-        printf("[%s] ", time_str);
-    } else {
-        printf("[--:--:--] ");
-    }
-
+    print_timestamp("%H:%M:%S");
     vprintf(format, args);
     printf("\n");
     fflush(stdout);

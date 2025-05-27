@@ -48,6 +48,20 @@ trap cleanup EXIT SIGINT SIGTERM
 
 # --- Main Logic ---
 
+# Check for Java first
+if ! command -v java &> /dev/null; then
+    echo "Error: Java is required to run PMD/CPD but was not found."
+    echo ""
+    echo "Please install Java using one of these commands:"
+    echo "  Ubuntu/Debian:  sudo apt update && sudo apt install default-jre"
+    echo "  Fedora:         sudo dnf install java-latest-openjdk"
+    echo "  macOS:          brew install openjdk"
+    echo ""
+    echo "After installation, you may need to restart your terminal or run:"
+    echo "  source ~/.bashrc"
+    exit 1
+fi
+
 # 1. Check Dependencies
 check_command "wget"
 check_command "unzip"

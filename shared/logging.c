@@ -1,4 +1,5 @@
 #include "logging.h"
+#include "time_utils.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -34,16 +35,7 @@ static const char *g_level_names[] = {
 };
 static void fallback_get_timestamp(char *buffer, size_t buffer_size)
 {
-    time_t now;
-    struct tm *local_time_info;
-    time(&now);
-    local_time_info = localtime(&now);
-    if (local_time_info != NULL) {
-        strftime(buffer, buffer_size, "%Y-%m-%d %H:%M:%S", local_time_info);
-    } else {
-        strncpy(buffer, "0000-00-00 00:00:00", buffer_size);
-        if (buffer_size > 0) buffer[buffer_size - 1] = '\0';
-    }
+    format_current_time(buffer, buffer_size, "%Y-%m-%d %H:%M:%S");
 }
 void log_init(const char *log_file_name_suggestion, platform_logging_callbacks_t *callbacks)
 {

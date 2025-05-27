@@ -5,6 +5,7 @@
 #include "logging.h"
 #include "../shared/protocol.h"
 #include "../shared/logging.h"
+#include "../shared/time_utils.h"
 #include "messaging.h"
 #include <stdio.h>
 #include <string.h>
@@ -246,15 +247,7 @@ void terminal_display_app_message(const char *format, ...)
         UI_CALL_VA(g_state->ui, display_app_message, format, args);
     } else {
         /* Fallback to direct output */
-        time_t now = time(NULL);
-        char time_str[20];
-        struct tm *local_time_info = localtime(&now);
-        if (local_time_info) {
-            strftime(time_str, sizeof(time_str), "%H:%M:%S", local_time_info);
-            printf("[%s] ", time_str);
-        } else {
-            printf("[--:--:--] ");
-        }
+        print_timestamp("%H:%M:%S");
         vprintf(format, args);
         printf("\n");
         fflush(stdout);
