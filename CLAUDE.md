@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # CSend Project Information
 
-CSend is a cross-platform peer-to-peer terminal chat application written in C, supporting both POSIX systems (Linux/macOS) and Classic Macintosh (System 7.x).
+CSend is a cross-platform peer-to-peer terminal chat application written in C, supporting both POSIX systems (Linux/macOS) and Classic Macintosh (System 7.x). The project demonstrates network programming across different computing eras, featuring modern multi-threaded architecture alongside single-threaded event-driven GUI applications.
 
 ## Architecture Overview
 
@@ -16,11 +16,12 @@ The project uses a **shared core** design with platform-specific implementations
 
 ### Key Architectural Patterns
 
-1. **Protocol**: Custom format `MSG_MAGIC_NUMBER|TYPE|SENDER@IP|CONTENT` with message types: DISCOVERY, TEXT, QUIT
-2. **Networking**: UDP for peer discovery (broadcast), TCP for direct messaging
+1. **Protocol**: Custom format `MSG_MAGIC_NUMBER|TYPE|SENDER@IP|CONTENT` with message types: DISCOVERY, DISCOVERY_RESPONSE, TEXT, QUIT
+2. **Networking**: UDP for peer discovery (broadcast on port 2556), TCP for direct messaging (port 2555)
 3. **Shared Logic with Platform Callbacks**: Core logic in `shared/` uses callback interfaces for platform-specific operations
 4. **POSIX**: Multi-threaded design with separate threads for input, listening, and discovery
 5. **Classic Mac**: Single-threaded event loop with asynchronous network operations, dual TCP streams (listen + send)
+6. **Machine Mode**: JSON-based API for programmatic interaction with correlation IDs and event streaming
 
 ## Build Commands
 
@@ -57,6 +58,15 @@ make -f Makefile.retro68
 ```bash
 ./run_machine_mode.sh
 # Or: ./build/posix/csend_posix <username> --machine-mode
+```
+
+**AI Chatbot Integration**:
+```bash
+# Set up Anthropic API key
+export ANTHROPIC_API_KEY="your-api-key-here"
+
+# Run Claude chatbot
+./run_machine_mode.sh --chatbot
 ```
 
 ## Development Tools
@@ -104,12 +114,14 @@ make -f Makefile.retro68
 
 ## Testing Approaches
 
-- **Unit Testing**: No formal test framework currently in use
-- **Integration Testing**: Use Docker setup for multi-peer testing
-- **Machine Mode Testing**: `test_machine_mode.py` for automated testing
+- **Unit Testing**: No formal test framework currently in use (contributions welcome)
+- **Integration Testing**: Use Docker setup for multi-peer testing scenarios
+- **Machine Mode Testing**: `test_machine_mode.py` for automated JSON API testing
+- **AI Integration Testing**: Python client library (`csend_client.py`) for chatbot testing
 - **Logging**: Enable debug mode (`/debug` command) and check log files:
   - POSIX: `csend_posix.log`
   - Classic Mac: `csend_classic_mac.log`
+- **Cross-Platform Testing**: Build verification on both POSIX and Classic Mac (via Retro68)
 
 ## Important Implementation Notes
 
@@ -119,6 +131,9 @@ make -f Makefile.retro68
 4. **Timeout Handling**: Peers pruned after `PEER_TIMEOUT` (30 seconds) of inactivity
 5. **Protocol Endianness**: Magic number uses network byte order (`htonl`/`ntohl`)
 6. **Logging System**: Uses categorized logging (see LOGGING.md) with levels ERROR, WARNING, INFO, DEBUG
+7. **Machine Mode Threading**: JSON output is thread-safe with proper synchronization
+8. **AI Integration**: Claude Haiku chatbot with configurable behavior and rate limiting
+9. **Cross-Platform Time**: `time()` (POSIX) vs `TickCount()` (Classic Mac) abstraction
 
 ## Key Files to Understand
 
@@ -129,6 +144,8 @@ make -f Makefile.retro68
 - **Classic Mac Event Loop**: `classic_mac/main.c` - WaitNextEvent handling
 - **Network Abstraction**: `classic_mac/network_abstraction.h` - Network interface design
 - **Machine Mode UI**: `posix/ui_terminal_machine.c` - JSON-based interface implementation
+- **UI Factory**: `posix/ui_factory.c` - Strategy pattern for UI creation
+- **Python Integration**: `csend_client.py`, `csend_chatbot.py` - AI chatbot and automation
 - **Logging**: `shared/logging.c` - Centralized logging with categories and levels
 
 ## Code Quality Commands

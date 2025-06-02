@@ -1,234 +1,305 @@
-# P2P Terminal Chat Application (csend)
+# 🌐 CSend - Cross-Platform P2P Terminal Chat
 
-`csend` is a cross-platform peer-to-peer chat application in C, with functional versions for POSIX systems and Classic Macintosh.
+<p align="center">
+  <img src="images/system7.png" alt="CSend on Classic Mac OS" width="400"/>
+  <img src="images/ubuntu.png" alt="CSend on Ubuntu" width="400"/>
+</p>
 
-The **POSIX version** is a multi-threaded, command-line application. It uses UDP for local network peer discovery and TCP for direct messaging. Docker support is provided for testing. There is also a JSON-based machine mode for programmatic interaction, including a Claude Haiku chatbot integration. See [Machine Mode Documentation](MACHINE_MODE.md) for details.
+**CSend** is a cross-platform peer-to-peer chat application written in C, supporting both modern POSIX systems and Classic Macintosh (System 7.x). It demonstrates network programming across different eras of computing, from modern multi-threaded applications to single-threaded GUI applications.
 
-The **Classic Mac version** is a GUI application for System 7.x (via Retro68). It utilises MacTCP for UDP peer discovery and TCP messaging (TEXT and QUIT types). The application now features a network abstraction layer that enables easier porting to OpenTransport in the future. It uses dual TCP streams - one dedicated to listening for incoming connections and another for outgoing connections, managed through a single-threaded event loop with asynchronous operations.
+## 🎥 Demo Videos
 
-Both versions utilise a shared C codebase for core protocol handling, peer list management, and the underlying discovery and messaging logic.
-You can watch a [demo video on YouTube](https://www.youtube.com/watch?v=_9iXCBZ_FjE) (Note: Video shows an older version; current functionality is more advanced!). Here [is the latest](https://m.youtube.com/watch?v=YHCS2WfRO2Y).
+- [Latest Demo](https://m.youtube.com/watch?v=YHCS2WfRO2Y) - Current functionality showcase
+- [Original Demo](https://www.youtube.com/watch?v=_9iXCBZ_FjE) - Early version (functionality has evolved significantly)
 
-Detailed information on the evolving versions of the project can be found [here](TAGS.md).
+## ✨ Key Features
 
-## Screen Shots
+### 🖥️ **POSIX Version** (Linux, macOS)
+- **Multi-threaded Architecture**: Separate threads for input, networking, and discovery
+- **Terminal Interface**: Command-line chat with intuitive commands
+- **Machine Mode**: JSON-based API for programmatic interaction
+- **Claude AI Integration**: Built-in chatbot using Anthropic's Claude Haiku
+- **Docker Support**: Easy multi-peer testing with containerized instances
+- **Real-time Discovery**: Automatic peer detection on local networks
 
-<img src="images/system7.png" alt="Mac OS 7" width="640">
-<img src="images/ubuntu.png" alt="Ubuntu" width="640">
+### 🖱️ **Classic Mac Version** (System 7.x)
+- **Native GUI**: True Classic Mac interface using Dialog Manager
+- **MacTCP Networking**: Dual TCP streams for robust messaging
+- **Retro68 Compatible**: Builds with modern cross-compiler
+- **Network Abstraction**: Ready for future OpenTransport support
+- **Event-driven Architecture**: Single-threaded with asynchronous operations
 
+### 🔧 **Shared Core**
+- **Unified Protocol**: Custom message format for cross-platform compatibility
+- **UDP Discovery**: Broadcast-based peer discovery
+- **TCP Messaging**: Reliable direct communication between peers
+- **Peer Management**: Automatic timeout handling and status tracking
 
-## Project Structure
+## 🏗️ Architecture
 
-*   `posix/`: Source code specific to the POSIX (Linux, macOS) version.
-*   `classic_mac/`: Source code specific to the Classic Macintosh (System 7.x) version. Includes `DNR.c` (Domain Name Resolver library).
-*   `shared/`: Platform-independent code shared between versions (e.g., communication protocol, peer list management, discovery logic, messaging logic).
-*   `Makefile`: Builds the POSIX version.
-*   `Makefile.retro68`: Builds the Classic Mac version using Retro68.
-*   `MPW_resources/`: Contains `csend.r` (Rez input) and `csend.rsrc` (ResEdit output) for the Classic Mac GUI.
-*   `Dockerfile`, `docker-compose.yml`: Support files for running the POSIX version in Docker containers. (Run `./docker.sh start` to use these easily).
-*   `setup_retro68.sh` Script to download, build and setup your PATH for retro68.
-*   `tools/`: Contains copy paste detection tools.
-*   `misc/`: Miscellaneous files for Retro68.
-*   `resedit.md`: Explanation of using ResEdit and resource conversion.
-*   `TAGS.md`: Documents major development stages.
-*   `agentnotes.txt`: Notes for development with AI agents.
+The project uses a **shared core design** with platform-specific implementations:
 
-## Shared Core Logic
+```
+csend/
+├── shared/          # Platform-independent core logic
+│   ├── protocol.c   # Message format and parsing
+│   ├── peer.c       # Peer list management
+│   ├── discovery.c  # UDP peer discovery logic
+│   ├── messaging.c  # TCP message handling
+│   └── logging.c    # Centralized logging system
+├── posix/           # POSIX implementation
+│   ├── main.c       # Multi-threaded event loop
+│   ├── ui_terminal.c # Terminal interface
+│   ├── commands.c   # Command processing
+│   └── network.c    # POSIX networking
+└── classic_mac/     # Classic Mac implementation
+    ├── main.c       # Event-driven GUI loop
+    ├── dialog.c     # Dialog Manager interface
+    ├── mactcp_impl.c # MacTCP networking
+    └── network_abstraction.c # Network layer abstraction
+```
 
-The `shared/` directory contains the core logic that is platform-independent:
+### Protocol Design
+Messages use the format: `MSG_MAGIC_NUMBER|TYPE|SENDER@IP|CONTENT`
 
-*   **Common Definitions (`common_defs.h`):** Provides essential constants like `BUFFER_SIZE`, `INET_ADDRSTRLEN`, `PORT_TCP`, `PORT_UDP`, `MAX_PEERS`, `DISCOVERY_INTERVAL`, `PEER_TIMEOUT`, and the definition of the `peer_t` structure used for storing peer information (IP, username, last_seen, active status).
-*   **Protocol (`protocol.c`/`.h`):** Defines the message format (`MSG_MAGIC_NUMBER|TYPE|SENDER@IP|CONTENT`) and provides functions for formatting (`format_message`) and parsing (`parse_message`) messages. Handles byte order differences for `MSG_MAGIC_NUMBER` using `htonl`/`ntohl` (or platform-specific equivalents for Classic Mac). Defines message types `MSG_DISCOVERY`, `MSG_DISCOVERY_RESPONSE`, `MSG_TEXT`, and `MSG_QUIT`.
-*   **Peer Management (`peer.c`/`.h`):** Manages the list of peers (`peer_t` array within `peer_manager_t`), including initializing the list (`peer_shared_init_list`), adding/updating peers (`peer_shared_add_or_update`), finding peers by IP (`peer_shared_find_by_ip`), finding empty slots (`peer_shared_find_empty_slot`), and pruning timed-out peers (`peer_shared_prune_timed_out`). Handles platform-specific time functions (`TickCount()` for Classic Mac, `time()` for POSIX) for `last_seen` and timeout calculations.
-*   **Discovery Logic (`discovery.c`/`.h`):** Processes incoming UDP packets (`discovery_logic_process_packet`) for `MSG_DISCOVERY` and `MSG_DISCOVERY_RESPONSE`. Uses platform-specific callbacks (`discovery_platform_callbacks_t`) to send responses, add/update peers in the platform's peer list, and notify the UI/peer list display of updates.
-*   **Messaging Logic (`messaging.c`/`.h`):** Processes the content of received TCP messages (`handle_received_tcp_message`) for `MSG_TEXT` and `MSG_QUIT`. Uses platform-specific callbacks (`tcp_platform_callbacks_t`) to add/update peer status, display text messages in the UI, and mark peers as inactive upon receiving a `MSG_QUIT`.
-*   **Logging (`logging.c`/`.h`):** Provides a common logging interface (`log_init`, `log_shutdown`, `log_debug`, `log_app_event`). Uses platform-specific callbacks (`platform_logging_callbacks_t`) for timestamp generation and displaying debug messages to the UI/console. Also handles writing logs to a platform-specific file (e.g., `app_posix.log`, `app_classic_mac.log`).
+**Message Types:**
+- `MSG_DISCOVERY` - Peer discovery broadcasts
+- `MSG_DISCOVERY_RESPONSE` - Discovery replies
+- `MSG_TEXT` - Chat messages
+- `MSG_QUIT` - Graceful disconnect notifications
 
-## Features (POSIX Version)
-
-*   **Peer Discovery:** Automatically discovers other peers on the same local network using UDP broadcasts. Implements `discovery_platform_callbacks_t` for POSIX-specific network operations (sending UDP responses via `posix_send_discovery_response`) and peer list updates (via `posix_add_or_update_peer` which calls `add_peer`) (`posix/discovery.c`).
-*   **Direct Messaging (TCP):** Sends and receives text messages and quit notifications directly between peers using TCP connections. Implements `tcp_platform_callbacks_t` for POSIX behavior, including adding/updating peers (`posix_tcp_add_or_update_peer`), displaying messages to the terminal (`posix_tcp_display_text_message`), and marking peers inactive (`posix_tcp_mark_peer_inactive`) (`posix/messaging.c`).
-*   **Peer Management:** Maintains a list of active peers in an `app_state_t` structure, using the shared peer logic. Access to the peer list is protected by a `pthread_mutex_t`. Updates peer status based on network activity and timeouts (`posix/peer.c`).
-*   **Terminal UI:** Provides a simple command-line interface for user interaction (`posix/ui_terminal.c`).
-*   **Command Handling:** Supports commands like `/list`, `/send <peer_number> <message>`, `/broadcast <message>`, `/debug` (toggles debug output visibility), `/quit`, and `/help`. The `/broadcast` command sends individual TCP messages to all known active peers.
-*   **Multi-threading:** Uses Pthreads to handle user input (`user_input_thread`), network listening for TCP connections (`listener_thread`), and peer discovery/UDP listening (`discovery_thread`) concurrently (`posix/main.c`).
-*   **Graceful Shutdown:** Handles `SIGINT` (Ctrl+C) and `SIGTERM` signals for clean termination (`posix/signal_handler.c`). The `/quit` command also initiates shutdown, notifying other peers by sending `MSG_QUIT` messages (`posix/ui_terminal.c`).
-*   **Network Utilities:** Includes helpers for getting the local IP address (`get_local_ip`) and setting socket timeouts (`set_socket_timeout`) (`posix/network.c`).
-*   **Logging:** Uses the shared logging system. Platform-specific callbacks provide POSIX-style timestamps and print debug messages to `stdout` (`posix/logging.c`). Log messages are also written to `csend_posix.log`.
-*   **Docker Support:** Includes `Dockerfile`, `docker-compose.yml` (and a helper script `docker.sh`) to easily build and run multiple peer instances.
-*   **Machine Mode & AI Integration:** Provides a JSON-based machine mode for programmatic interaction, including a Claude Haiku chatbot integration. See [Machine Mode Documentation](MACHINE_MODE.md) for details.
-
-## Features (Classic Mac Version)
-
-*   **Network Abstraction Layer:**
-    *   Introduces a platform-agnostic network abstraction layer (`classic_mac/network_abstraction.c`/`.h`) that provides a unified interface for network operations.
-    *   Currently implements MacTCP support through `mactcp_impl.c`, with infrastructure ready for OpenTransport implementation.
-    *   All network operations (TCP/UDP create, connect, send, receive, etc.) go through a function table interface, making the upper-level code network-implementation agnostic.
-*   **Networking Stack:**
-    *   Initializes network stack through the abstraction layer, which internally handles MacTCP driver initialization using `PBOpenSync` (`classic_mac/network_init.c`, `classic_mac/mactcp_impl.c`).
-    *   Initializes DNR (Domain Name Resolver) using `DNR.c` for IP-to-string conversion (`AddrToStr`) and string-to-IP (`ParseIPv4` helper).
-    *   Obtains the local IP address from MacTCP using `ipctlGetAddr`.
-*   **Peer Discovery (UDP):**
-    *   Initializes a UDP endpoint through the network abstraction layer (`classic_mac/discovery.c`).
-    *   Sends periodic discovery broadcasts (`MSG_DISCOVERY`) synchronously.
-    *   Uses asynchronous UDP operations with polling for receiving packets and returning buffers.
-    *   Processes received UDP packets using the shared `discovery.c` (`discovery_logic_process_packet`), with Mac-specific callbacks.
-*   **Direct Messaging (TCP):**
-    *   Uses **dual TCP streams** - one dedicated for listening and one for sending (`classic_mac/messaging.c`).
-    *   **Listen Stream:**
-        *   Continuously listens for incoming TCP connections on `PORT_TCP` using asynchronous operations.
-        *   Has its own dedicated receive buffer and ASR (Asynchronous Status Routine) handler.
-        *   Processes incoming messages through the shared protocol and messaging logic.
-    *   **Send Stream:**
-        *   Used exclusively for outgoing connections.
-        *   Has its own dedicated receive buffer and ASR handler.
-        *   Performs synchronous-style operations with polling for connect, send, and close.
-    *   **Message Queue:**
-        *   Implements a message queue system for broadcast operations.
-        *   Allows queuing of multiple messages when the send stream is busy.
-        *   Processes queued messages automatically when the send stream becomes idle.
-    *   This dual-stream architecture eliminates the need to interrupt listening when sending messages, providing more reliable operation.
-*   **Peer Management:**
-    *   Initializes and maintains the peer list (`gPeerManager`) using shared code (`classic_mac/peer.c`, `shared/peer.c`).
-    *   Prunes timed-out peers based on `TickCount()`.
-    *   Updates the peer list display in the GUI (`UpdatePeerDisplayList`).
-*   **Graphical User Interface (GUI):**
-    *   Uses ResEdit-defined resources (`MPW_resources/csend.r`, `MPW_resources/csend.rsrc`) managed by the Dialog Manager (`classic_mac/dialog.c`).
-    *   **Message Display Area:** A TextEdit field (`gMessagesTE`) for displaying incoming messages, logs, and sent messages (`classic_mac/dialog_messages.c`). Includes a functional scrollbar (`gMessagesScrollBar`).
-    *   **Message Input Area:** A TextEdit field (`gInputTE`) for typing messages (`classic_mac/dialog_input.c`).
-    *   **Peer List Display:** Uses a List Manager control (`gPeerListHandle`) to display active peers (username@IP) dynamically (`classic_mac/dialog_peerlist.c`). Users can select a peer from this list for direct messaging.
-    *   **Controls:** "Send" button (`kSendButton`), "Broadcast" checkbox (`kBroadcastCheckbox`), and "Debug" checkbox (`kDebugCheckbox`). The "Broadcast" checkbox, when checked, causes messages to be sent to all active peers. The "Debug" checkbox toggles display of debug messages in the Message Display Area.
-*   **Event Loop:** A standard Classic Mac event loop (`classic_mac/main.c`):
-    *   Handles mouse clicks (button presses, list selection, scrollbar interaction, window dragging/closing), key down events for input, window updates, and activation/deactivation of UI elements.
-    *   Calls `TEIdle` for TextEdit fields.
-    *   Periodically polls network services (`PollUDPListener`, `ProcessTCPStateMachine`) in `HandleIdleTasks`, checks for discovery broadcast intervals, and updates the peer list display.
-*   **Logging:**
-    *   Uses the shared logging system. Platform-specific callbacks provide Classic Mac timestamps (`classic_mac_platform_get_timestamp`) and display debug messages in the GUI's message display area (`classic_mac_platform_display_debug_log`) (`classic_mac/logging.c`).
-    *   Logs messages to a file (`csend_mac.log`) for debugging.
-*   **Quit Support:**
-    *   Allows quitting via the window's close box.
-    *   Upon quitting, attempts to send `MSG_QUIT` notifications to all known active peers using `MacTCP_SendMessageSync`.
-
-## Prerequisites
-
-### For Building POSIX Version Locally:
-
-*   A C compiler (like `gcc`)
-*   `make` build tool
-*   A POSIX-compliant operating system (Linux, macOS recommended) supporting Pthreads and standard socket libraries.
-
-### For Running POSIX Version with Docker (tested only on Ubuntu 24):
-
-*   Docker Engine
-*   Docker Compose
-*   A compatible terminal emulator (`gnome-terminal`, `xterm`, `konsole`, maybe macOS `Terminal`) when using `docker.sh` that opens new terminals.
-
-### For Building Classic Mac Version:
-
-*   Retro68 cross-compiler toolchain [https://github.com/autc04/Retro68](https://github.com/autc04/Retro68). You can run `./setup_retro68.sh` to download, build and setup retro68.
-*   Classic Mac OS environment (e.g., via QEMU, Basilisk II, or real hardware) for testing. Consider using a project like [QemuMac](https://github.com/matthewdeaves/QemuMac) for easy setup.
-*   A tool like [binUnpk](https://www.macintoshrepository.org/74045-binunpk) or Stuffit Expander on the Classic Mac environment to unpack the compiled MacBinary (`.bin`) file.
-
-## Building
+## 🚀 Quick Start
 
 ### POSIX Version
 
-1.  Clone the repository:
-    ```bash
-    git clone git@github.com:matthewdeaves/csend.git
-    cd csend
-    ```
-2.  Compile the application using the Makefile:
-    ```bash
-    make
-    ```
-    This will create an executable file named `build/posix/csend_posix`.
-
-### Classic Mac Version
-
-1.  Ensure the Retro68 toolchain is installed and in your PATH (or use `./setup_retro68.sh`).
-2.  Clone the repository:
-    ```bash
-    git clone git@github.com:matthewdeaves/csend.git
-    cd csend
-    ```
-3.  Compile the application using the Classic Mac Makefile:
-    ```bash
-    make -f Makefile.retro68
-    ```
-    This will create:
-    *   `build/classic_mac/csend-mac.APPL`: A Macintosh application bundle.
-    *   `build/classic_mac/csend-mac.bin`: A MacBinary (`.bin`) encoded version of `csend-mac.APPL`, which combines data and resource forks into a single file. This is generally the most portable format for transferring the application to a Classic Mac environment or emulator.
-    *   `build/classic_mac/csend-mac.dsk`: A floppy disk image containing `csend-mac`.
-
-#### A Note on ResEdit and .rsrc files
-I use ResEdit on a Mac VM to create the GUI for csend, saved as a `csend.rsrc` file (located in `MPW_resources/`). You can't easily work with `.rsrc` files directly in modern development environments. The build process uses `Rez` to compile a textual representation of resources (`MPW_resources/csend.r`) into the application's resource fork. I've written a detailed explanation of this process [here](resedit.md).
-
-## Running
-
-### POSIX Version Locally
-
-Run the compiled executable from your terminal. You can optionally provide a username as a command-line argument. If no username is provided, it defaults to "anonymous".
-
+#### Build and Run
 ```bash
+git clone https://github.com/matthewdeaves/csend.git
+cd csend
+make
 ./build/posix/csend_posix alice
 ```
-Open another terminal and run:
-```bash
-./build/posix/csend_posix bob
-```
-They should discover each other if on the same network.
 
-### POSIX Version With Docker (Recommended for Testing)
-The provided `docker.sh` script simplifies running multiple POSIX peers in isolated containers.
-
-Start the containers:
+#### Docker Testing (Recommended)
 ```bash
+# Start multiple peer containers
 ./docker.sh start
-```
-This command will:
-*   Build the Docker image if not already built.
-*   Start multiple containers (e.g., peer1, peer2, peer3) as defined in `docker-compose.yml`.
-*   Assign static IPs within a dedicated Docker network.
-*   Attempt to open a new terminal window attached to each running container.
 
-Interact with each peer in its dedicated terminal window. They should discover each other automatically.
+# Check container status
+./docker.sh status
 
-To stop the containers:
-```bash
+# Stop all containers
 ./docker.sh stop
 ```
 
-To check the status of the containers:
+#### Machine Mode with AI Chatbot
 ```bash
-./docker.sh status
+# Set up Anthropic API key
+export ANTHROPIC_API_KEY="your-api-key-here"
+
+# Run Claude chatbot
+./run_machine_mode.sh --chatbot
 ```
-
-Note: To detach from a container's terminal without stopping it, use the key sequence Ctrl+P followed by Ctrl+Q. Use Ctrl+C if you want to test SIGINT handling and graceful shutdown.
-
-### Usage Commands (POSIX Terminal UI)
-Once the POSIX application is running (locally or in Docker), you can use the following commands in the terminal:
-
-*   `/list`: Show the list of currently known active peers, their assigned number, username, IP address, and when they were last seen.
-*   `/send <peer_number> <message>`: Send a private `<message>` to the peer identified by `<peer_number>` from the `/list` command.
-*   `/broadcast <message>`: Send a `<message>` to all currently active peers (iteratively sends TCP unicast messages).
-*   `/debug`: Toggle detailed debug message visibility in the console.
-*   `/quit`: Send a quit notification to all peers, gracefully shut down the application, and exit.
-*   `/help`: Display the list of available commands.
 
 ### Classic Mac Version
 
-1.  Transfer the compiled `build/classic_mac/csend-mac.bin` file to your Classic Mac OS environment (e.g., using a shared folder with an emulator, or transferring the `.dsk` image).
-2.  On the Classic Mac, use `binUnpk` to decode the `csend-mac.bin` file. This will extract the actual application file (named `csend-mac`).
-3.  Double-click the unpacked application file to run it.
-4.  **To send a message:**
-    *   Type your message in the lower input field.
-    *   **For a direct message to a selected peer:**
-        *   Ensure the "Broadcast" checkbox is **unchecked**.
-        *   Select the desired recipient from the peer list by clicking on their entry.
-        *   Click the "Send" button. The message will be sent via TCP to the selected peer. Your sent message will appear in the main message area, prefixed with "You (to <username>):".
-    *   **For a broadcast message:**
-        *   Check the "Broadcast" checkbox. (This will automatically deselect any peer in the list).
-        *   Click the "Send" button. The message will be sent via TCP to all currently active peers (using the message queue if needed). Your message will appear in the main message area, prefixed with "You (Broadcast):".
-5.  **To toggle debug message visibility:** Click the "Debug" checkbox. Debug messages will appear in the main message area.
-6.  **To quit:** Click the close box on the application window. It will attempt to send QUIT messages to all active peers before shutting down.
+#### Prerequisites
+- Retro68 cross-compiler ([setup guide](https://github.com/autc04/Retro68))
+- Classic Mac OS environment ([QemuMac](https://github.com/matthewdeaves/QemuMac) recommended)
+
+#### Build
+```bash
+# Quick setup for Retro68
+./setup_retro68.sh
+
+# Build Classic Mac version
+make -f Makefile.retro68
+```
+
+**Output files:**
+- `build/classic_mac/csend-mac.APPL` - Application bundle
+- `build/classic_mac/csend-mac.bin` - MacBinary format (most portable)
+- `build/classic_mac/csend-mac.dsk` - Floppy disk image
+
+#### Run on Classic Mac
+1. Transfer `csend-mac.bin` to your Classic Mac environment
+2. Use **binUnpk** or **Stuffit Expander** to decode the MacBinary file
+3. Double-click the extracted application to run
+
+## 🎮 Usage
+
+### POSIX Terminal Commands
+```bash
+/list                      # Show active peers
+/send <peer_num> <message> # Send private message
+/broadcast <message>       # Send to all peers
+/debug                     # Toggle debug output
+/quit                      # Exit gracefully
+/help                      # Show command help
+```
+
+### Classic Mac GUI
+- **Message Input**: Type in the bottom text field
+- **Send Button**: Send message to selected peer or broadcast
+- **Peer List**: Click to select message recipient
+- **Broadcast Checkbox**: Send to all peers when checked
+- **Debug Checkbox**: Show debug messages
+- **Close Box**: Quit application (sends quit notifications)
+
+### Machine Mode API
+```bash
+# Start machine mode
+./build/posix/csend_posix --machine-mode claude
+
+# JSON command examples
+/list --id=1
+/send 1 "Hello!" --id=2
+/status --id=3
+```
+
+See [Machine Mode Documentation](MACHINE_MODE.md) for full API reference.
+
+## 🛠️ Development
+
+### Code Quality Tools
+
+**Format code** (required before commits):
+```bash
+./format_code.sh
+```
+
+**Check for duplicated code**:
+```bash
+./cpd_check.sh
+```
+
+**Analyze complexity**:
+```bash
+./complexity_check.sh warnings    # Show only complex functions
+./complexity_check.sh detailed    # Generate HTML reports
+```
+
+**Detect dead code**:
+```bash
+./deadcode_check.sh warnings      # Show compiler warnings
+./deadcode_check.sh               # Full analysis
+```
+
+**Filter logs**:
+```bash
+./filter_logs.sh csend_posix.log NETWORK DISCOVERY
+```
+
+### Build Verification
+```bash
+# POSIX build
+make clean && make
+
+# Classic Mac build (requires Retro68)
+make -f Makefile.retro68
+
+# Docker multi-peer test
+./docker.sh start
+```
+
+### Testing
+- **Unit Testing**: No formal framework (contributions welcome)
+- **Integration Testing**: Use Docker setup for multi-peer scenarios
+- **Machine Mode Testing**: `test_machine_mode.py` for automated testing
+- **Logging**: Enable debug mode and check log files
+
+### Code Style
+- **K&R style** with 4-space indentation
+- **Complexity limits**: CCN ≤ 10, function length ≤ 60 lines
+- **Thread safety**: POSIX peer list protected by mutex
+- **Error handling**: Comprehensive logging with categories
+
+## 📚 Documentation
+
+| File | Description |
+|------|-------------|
+| [CLAUDE.md](CLAUDE.md) | Development guidelines for AI assistants |
+| [MACHINE_MODE.md](MACHINE_MODE.md) | Complete machine mode API reference |
+| [LOGGING.md](LOGGING.md) | Logging system documentation |
+| [TAGS.md](TAGS.md) | Development milestone history |
+| [resedit.md](resedit.md) | ResEdit and resource conversion guide |
+
+## 🔧 Project Structure
+
+```
+csend/
+├── posix/              # POSIX-specific source code
+├── classic_mac/        # Classic Mac source code
+├── shared/             # Platform-independent core logic
+├── MPW_resources/      # Classic Mac GUI resources
+├── tools/              # Development and analysis tools
+├── images/             # Screenshot assets
+├── build/              # Compiled binaries (generated)
+├── Makefile           # POSIX build configuration
+├── Makefile.retro68   # Classic Mac build configuration
+├── Dockerfile         # Docker container setup
+└── docker-compose.yml # Multi-container orchestration
+```
+
+## 🌟 Advanced Features
+
+### Machine Mode & AI Integration
+- **JSON API**: Structured programmatic interface
+- **Claude Chatbot**: AI-powered chat participant
+- **Correlation IDs**: Request/response tracking
+- **Event Streaming**: Real-time peer and message events
+- **Python Client**: Async client library for automation
+
+### Network Architecture
+- **UDP Discovery**: Broadcast-based peer discovery on port 2556
+- **TCP Messaging**: Direct peer communication on port 2555
+- **Dual Streams (Mac)**: Separate listen/send TCP connections
+- **Message Queuing**: Buffered broadcasts during busy periods
+- **Timeout Handling**: Automatic peer pruning (30-second timeout)
+
+### Cross-Platform Compatibility
+- **Endian Handling**: Network byte order for message magic numbers
+- **Time Abstraction**: `time()` (POSIX) vs `TickCount()` (Mac)
+- **Threading Models**: Multi-threaded (POSIX) vs event-driven (Mac)
+- **UI Abstraction**: Terminal vs GUI with consistent command processing
+
+## 🤝 Contributing
+
+1. **Format your code**: Run `./format_code.sh` before committing
+2. **Check complexity**: Keep functions under complexity thresholds
+3. **Test thoroughly**: Use Docker setup for multi-peer testing
+4. **Document changes**: Update relevant documentation files
+5. **Follow patterns**: Study existing platform implementations
+
+## 📋 Prerequisites
+
+### For POSIX Development
+- C compiler (GCC recommended)
+- Make build tool
+- Pthreads support
+- Standard POSIX socket libraries
+
+### For Classic Mac Development
+- [Retro68](https://github.com/autc04/Retro68) cross-compiler
+- Classic Mac OS environment for testing
+- ResEdit for GUI resource editing (optional)
+
+### For Docker Testing
+- Docker Engine
+- Docker Compose
+- Compatible terminal emulator
+
+### For AI Integration
+- Python 3.6+
+- Anthropic API key
+- Virtual environment (automatically managed by launcher)
+
+## 📄 License
+
+This project demonstrates cross-platform network programming techniques and is available for educational and research purposes.
+
+---
+
+<p align="center">
+  <strong>A bridge between computing eras - from Classic Mac to modern POSIX systems</strong>
+</p>
