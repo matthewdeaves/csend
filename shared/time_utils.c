@@ -6,12 +6,12 @@ void format_current_time(char *buffer, size_t size, const char *format)
 {
     time_t now;
     struct tm *local_time_info;
-    
+
     if (!buffer || size == 0) return;
-    
+
     time(&now);
     local_time_info = localtime(&now);
-    
+
     if (local_time_info != NULL) {
         strftime(buffer, size, format, local_time_info);
     } else {
@@ -36,12 +36,12 @@ void get_timestamp_with_fallback(char *buffer, size_t size, const char *format, 
 {
     time_t now;
     struct tm *local_time_info;
-    
+
     if (!buffer || size == 0) return;
-    
+
     time(&now);
     local_time_info = localtime(&now);
-    
+
     if (local_time_info != NULL) {
         strftime(buffer, size, format, local_time_info);
     } else {
