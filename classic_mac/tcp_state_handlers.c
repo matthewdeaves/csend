@@ -100,6 +100,8 @@ void process_listen_async_completion(GiveTimePtr giveTime)
         /* Get connection info */
         NetworkTCPInfo tcpInfo;
         if (gNetworkOps->TCPStatus(gTCPListenStream, &tcpInfo) == noErr) {
+            /* Note: For OpenTransport, OTAccept is called automatically in the T_LISTEN notifier */
+            /* The connection is already accepted when we reach this point */
             handle_connection_accepted(tcpInfo.remoteHost, tcpInfo.remotePort, giveTime);
         } else {
             log_app_event("TCPStatus failed after listen accept");

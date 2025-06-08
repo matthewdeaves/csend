@@ -4,9 +4,14 @@
 
 #include "opentransport_impl.h"
 #include "../shared/logging.h"
+#include "messaging.h" /* For ASR handler declarations */
 #include <string.h>
 #include <Errors.h>
 #include <Gestalt.h>
+
+/* External declarations for TCP stream variables */
+extern NetworkStreamRef gTCPListenStream;
+extern NetworkStreamRef gTCPSendStream;
 
 /* OpenTransport async operation types */
 typedef enum {
@@ -304,6 +309,39 @@ static pascal void OTTCPNotifier(void *contextPtr, OTEventCode code, OTResult re
         
     case T_ORDREL:
         log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: T_ORDREL - orderly release");
+        {
+            /* Handle orderly release from peer */
+            OSStatus rcvDisconnErr, sndDisconnErr;
+            
+            /* Acknowledge the orderly release from peer */
+            rcvDisconnErr = OTRcvOrderlyDisconnect(tcpEp->endpoint);
+            if (rcvDisconnErr == noErr) {
+                log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: Acknowledged peer's orderly release");
+                
+                /* Send our own orderly release to complete the handshake */
+                sndDisconnErr = OTSndOrderlyDisconnect(tcpEp->endpoint);
+                if (sndDisconnErr == noErr) {
+                    log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: Sent orderly release to peer");
+                } else {
+                    log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: Failed to send orderly release: %d", sndDisconnErr);
+                }
+            } else {
+                log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: Failed to acknowledge orderly release: %d", rcvDisconnErr);
+            }
+            
+            /* Mark connection as closed */
+            tcpEp->isConnected = false;
+            
+            /* For OpenTransport, we need to simulate the MacTCP ASR event */
+            /* Call the appropriate ASR handler directly since we're in the same address space */
+            if (tcpEp == (OTTCPEndpoint *)gTCPListenStream) {
+                /* This is the listen stream - generate TCPClosing event */
+                TCP_Listen_ASR_Handler((StreamPtr)tcpEp, TCPClosing, NULL, 0, NULL);
+            } else if (tcpEp == (OTTCPEndpoint *)gTCPSendStream) {
+                /* This is the send stream - generate TCPTerminate event */
+                TCP_Send_ASR_Handler((StreamPtr)tcpEp, TCPTerminate, NULL, 0, NULL);
+            }
+        }
         break;
         
     default:
@@ -601,6 +639,7 @@ static OSErr OTImpl_TCPConnect(NetworkStreamRef streamRef, ip_addr remoteHost,
             OTSndDisconnect(tcpEp->endpoint, NULL);
         }
         if (state >= T_IDLE) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnect: Unbinding endpoint from state %d", state);
             OTUnbind(tcpEp->endpoint);
         }
         tcpEp->isConnected = false;
@@ -750,10 +789,15 @@ static OSErr OTImpl_TCPReceiveNoCopy(NetworkStreamRef streamRef, Ptr rdsPtr,
         rdsArray[entriesCreated].length = 0;
         rdsArray[entriesCreated].ptr = NULL;
         
-        /* Store the OTBuffer chain head in the terminating entry for later release */
-        if (entriesCreated < maxEntries - 1) {
+        /* FIX: Store the OTBuffer chain head in the entry after the null terminator for later release */
+        /* This ensures the caller allocates maxEntries + 2 entries: data + null terminator + buffer chain storage */
+        if (entriesCreated < maxEntries - 2) {
             rdsArray[entriesCreated + 1].length = 0;
             rdsArray[entriesCreated + 1].ptr = (Ptr)otBufferChain; /* Store chain head for cleanup */
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPReceiveNoCopy: Stored OTBuffer chain 0x%08lX at rdsArray[%d]", 
+                          (unsigned long)otBufferChain, entriesCreated + 1);
+        } else {
+            log_warning_cat(LOG_CAT_NETWORKING, "OTImpl_TCPReceiveNoCopy: Not enough RDS entries to store buffer chain - memory leak possible");
         }
         
         log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPReceiveNoCopy: Converted %d OTBuffer(s) to RDS array", entriesCreated);
@@ -787,26 +831,33 @@ static OSErr OTImpl_TCPReturnBuffer(NetworkStreamRef streamRef, Ptr rdsPtr,
     {
         wdsEntry *rdsArray = (wdsEntry *)rdsPtr;
         OTBuffer *otBufferChain = NULL;
+        int entryIndex = 0;
         
-        /* Find the terminating entry and the stored OTBuffer chain */
-        while (rdsArray->length != 0) {
-            rdsArray++;
+        /* Find the first terminating entry (null terminator for valid data) */
+        while (rdsArray[entryIndex].length != 0) {
+            entryIndex++;
         }
         
-        /* Skip the first terminating entry and check for the stored chain */
-        rdsArray++;
-        if (rdsArray->length == 0 && rdsArray->ptr != NULL) {
-            otBufferChain = (OTBuffer *)rdsArray->ptr;
-            rdsArray->ptr = NULL; /* Clear the stored pointer */
+        /* The entry after the null terminator should contain the stored OTBuffer chain */
+        entryIndex++;
+        if (rdsArray[entryIndex].length == 0 && rdsArray[entryIndex].ptr != NULL) {
+            otBufferChain = (OTBuffer *)rdsArray[entryIndex].ptr;
+            rdsArray[entryIndex].ptr = NULL; /* Clear the stored pointer to prevent double-free */
+            
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPReturnBuffer: Found stored OTBuffer chain 0x%08lX at rdsArray[%d]", 
+                          (unsigned long)otBufferChain, entryIndex);
+        } else {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPReturnBuffer: No OTBuffer chain found at rdsArray[%d] (length=%d, ptr=0x%08lX)", 
+                          entryIndex, rdsArray[entryIndex].length, (unsigned long)rdsArray[entryIndex].ptr);
         }
         
         /* Release the OTBuffer chain if found */
         if (otBufferChain != NULL) {
             OTReleaseBuffer(otBufferChain);
-            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPReturnBuffer: Released OTBuffer chain at 0x%08lX", 
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPReturnBuffer: Successfully released OTBuffer chain 0x%08lX", 
                           (unsigned long)otBufferChain);
         } else {
-            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPReturnBuffer: No OTBuffer chain found to release");
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPReturnBuffer: No OTBuffer chain to release (expected for copy-based receives)");
         }
     }
     
@@ -859,6 +910,18 @@ static OSErr OTImpl_TCPAbort(NetworkStreamRef streamRef)
     }
     
     tcpEp->isConnected = false;
+    
+    /* For OpenTransport abort, we need to trigger the appropriate ASR event */
+    /* This ensures proper state machine transitions in the messaging layer */
+    if (tcpEp == (OTTCPEndpoint *)gTCPSendStream) {
+        /* This is the send stream - generate TCPTerminate event to trigger RELEASING state */
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPAbort: Triggering TCPTerminate for send stream");
+        TCP_Send_ASR_Handler((StreamPtr)tcpEp, TCPTerminate, NULL, 0, NULL);
+    } else if (tcpEp == (OTTCPEndpoint *)gTCPListenStream) {
+        /* This is the listen stream - generate TCPTerminate event */
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPAbort: Triggering TCPTerminate for listen stream");
+        TCP_Listen_ASR_Handler((StreamPtr)tcpEp, TCPTerminate, NULL, 0, NULL);
+    }
     
     log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPAbort: Connection aborted");
     return err;
@@ -938,9 +1001,40 @@ static OSErr OTImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remoteHo
     InetAddress addr;
     TCall sndCall;
     OTAsyncOperation *asyncOp;
+    OTResult state;
     
     if (tcpEp == NULL || asyncHandle == NULL) {
         return paramErr;
+    }
+    
+    /* Check endpoint state and bind if needed (FIX: Missing OTBind for outgoing connections) */
+    state = OTGetEndpointState(tcpEp->endpoint);
+    if (state == T_UNBND) {
+        InetAddress localAddr;
+        TBind reqAddr, retAddr;
+        
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: Endpoint in T_UNBND state, binding to ephemeral port");
+        
+        /* Bind to any local address and port for outgoing connection */
+        OTInitInetAddress(&localAddr, 0, kOTAnyInetAddress);
+        
+        reqAddr.addr.buf = (UInt8 *)&localAddr;
+        reqAddr.addr.len = sizeof(localAddr);
+        reqAddr.qlen = 0; /* No listen queue for client */
+        
+        retAddr.addr.buf = (UInt8 *)&localAddr;
+        retAddr.addr.maxlen = sizeof(localAddr);
+        
+        err = OTBind(tcpEp->endpoint, &reqAddr, &retAddr);
+        if (err != noErr) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: OTBind failed: %d", err);
+            return err;
+        }
+        
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: Successfully bound endpoint to ephemeral port");
+    } else if (state != T_IDLE) {
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: Endpoint in invalid state %d for connect", state);
+        return kOTOutStateErr;
     }
     
     /* Allocate async operation handle */
@@ -977,7 +1071,7 @@ static OSErr OTImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remoteHo
     tcpEp->remotePort = remotePort;
     asyncOp->result = err;
     
-    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: Async connection initiated");
+    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: Async connection initiated to %08lX:%d", remoteHost, remotePort);
     return noErr;
 }
 
