@@ -60,15 +60,6 @@ typedef struct {
     wdsEntry *wdsArray;      /* For send operations */
 } MacTCPAsyncOp;
 
-/* DNS async operation tracking */
-typedef struct {
-    Boolean inUse;
-    struct hostInfo hostResult;
-    char hostname[256];
-    ip_addr *resultAddress;     /* Pointer to caller's result location */
-    OSErr result;
-    Boolean completed;
-} DNSAsyncOp;
 
 /* TCP async operation tracking */
 typedef enum {
@@ -92,13 +83,10 @@ typedef struct {
 
 #define MAX_ASYNC_OPS 4
 #define MAX_TCP_ASYNC_OPS 8
-#define MAX_DNS_ASYNC_OPS 2
 static MacTCPAsyncOp gAsyncOps[MAX_ASYNC_OPS];
 static TCPAsyncOp gTCPAsyncOps[MAX_TCP_ASYNC_OPS];
-static DNSAsyncOp gDNSAsyncOps[MAX_DNS_ASYNC_OPS];
 static Boolean gAsyncOpsInitialized = false;
 static Boolean gTCPAsyncOpsInitialized = false;
-static Boolean gDNSAsyncOpsInitialized = false;
 
 /* Forward declarations for all functions */
 static OSErr MacTCPImpl_Initialize(short *refNum, ip_addr *localIP, char *localIPStr);
@@ -250,83 +238,6 @@ static void FreeTCPAsyncHandle(NetworkAsyncHandle handle)
     }
 }
 
-static void InitializeDNSAsyncOps(void)
-{
-    int i;
-
-    if (gDNSAsyncOpsInitialized) {
-        return;
-    }
-
-    for (i = 0; i < MAX_DNS_ASYNC_OPS; i++) {
-        gDNSAsyncOps[i].inUse = false;
-        gDNSAsyncOps[i].completed = false;
-        gDNSAsyncOps[i].result = noErr;
-        gDNSAsyncOps[i].resultAddress = NULL;
-    }
-
-    gDNSAsyncOpsInitialized = true;
-}
-
-static NetworkAsyncHandle AllocateDNSAsyncHandle(void)
-{
-    int i;
-
-    InitializeDNSAsyncOps();
-
-    for (i = 0; i < MAX_DNS_ASYNC_OPS; i++) {
-        if (!gDNSAsyncOps[i].inUse) {
-            gDNSAsyncOps[i].inUse = true;
-            gDNSAsyncOps[i].completed = false;
-            gDNSAsyncOps[i].result = noErr;
-            return (NetworkAsyncHandle)&gDNSAsyncOps[i];
-        }
-    }
-
-    log_debug_cat(LOG_CAT_NETWORKING, "AllocateDNSAsyncHandle: No free DNS async operation slots");
-    return NULL;
-}
-
-static void FreeDNSAsyncHandle(NetworkAsyncHandle handle)
-{
-    DNSAsyncOp *op = (DNSAsyncOp *)handle;
-
-    if (op >= &gDNSAsyncOps[0] && op < &gDNSAsyncOps[MAX_DNS_ASYNC_OPS]) {
-        op->inUse = false;
-        op->completed = false;
-        op->result = noErr;
-        op->resultAddress = NULL;
-    }
-}
-
-/* DNS completion procedure for StrToAddr callback */
-static pascal void DNSCompletionProc(struct hostInfo *hostInfoPtr, char *userDataPtr)
-{
-    DNSAsyncOp *op = (DNSAsyncOp *)userDataPtr;
-
-    if (op == NULL) {
-        log_debug_cat(LOG_CAT_NETWORKING, "DNSCompletionProc: NULL operation pointer");
-        return;
-    }
-
-    /* Copy result from hostInfo structure */
-    op->result = hostInfoPtr->rtnCode;
-
-    if (op->result == noErr && hostInfoPtr->addr[0] != 0) {
-        /* Copy first address */
-        if (op->resultAddress != NULL) {
-            *(op->resultAddress) = hostInfoPtr->addr[0];
-        }
-        log_debug_cat(LOG_CAT_NETWORKING, "DNSCompletionProc: Resolved '%s' to %08lX",
-                      op->hostname, hostInfoPtr->addr[0]);
-    } else {
-        log_debug_cat(LOG_CAT_NETWORKING, "DNSCompletionProc: Failed to resolve '%s', error %d",
-                      op->hostname, op->result);
-    }
-
-    /* Mark operation as completed */
-    op->completed = true;
-}
 
 static MacTCPUDPEndpoint *AllocateUDPEndpoint(void)
 {
@@ -1346,71 +1257,10 @@ static void MacTCPImpl_UDPCancelAsync(NetworkAsyncHandle asyncHandle)
 
 static OSErr MacTCPImpl_ResolveAddress(const char *hostname, ip_addr *address)
 {
-    OSErr err;
+    /* For now, just try to parse as IP address */
+    return ParseIPv4(hostname, address);
 
-    /* First try to parse as IP address for efficiency */
-    err = ParseIPv4(hostname, address);
-    if (err == noErr) {
-        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_ResolveAddress: '%s' parsed as IP address: %08lX",
-                      hostname, *address);
-        return noErr;
-    }
-
-    /* Not an IP address, need DNS resolution */
-    /* For synchronous interface, we'll do a blocking DNS lookup */
-    /* Note: This is acceptable for the sync API, async DNS is handled separately */
-
-    NetworkAsyncHandle asyncHandle = AllocateDNSAsyncHandle();
-    if (asyncHandle == NULL) {
-        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_ResolveAddress: Failed to allocate DNS async handle");
-        return memFullErr;
-    }
-
-    DNSAsyncOp *op = (DNSAsyncOp *)asyncHandle;
-
-    /* Set up operation */
-    strncpy(op->hostname, hostname, sizeof(op->hostname) - 1);
-    op->hostname[sizeof(op->hostname) - 1] = '\0';
-    op->resultAddress = address;
-    op->completed = false;
-
-    /* Call StrToAddr with completion procedure */
-    err = StrToAddr((char *)hostname, &op->hostResult, (long)DNSCompletionProc, (char *)op);
-
-    if (err != noErr) {
-        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_ResolveAddress: StrToAddr failed: %d", err);
-        FreeDNSAsyncHandle(asyncHandle);
-        return err;
-    }
-
-    /* Poll for completion (synchronous behavior) */
-    unsigned long startTime = TickCount();
-    unsigned long timeout = 30 * 60; /* 30 seconds timeout */
-
-    while (!op->completed && (TickCount() - startTime) < timeout) {
-        /* Give time to system using event manager */
-        EventRecord theEvent;
-        WaitNextEvent(everyEvent, &theEvent, 1, NULL);
-    }
-
-    if (!op->completed) {
-        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_ResolveAddress: DNS lookup timed out for '%s'", hostname);
-        FreeDNSAsyncHandle(asyncHandle);
-        return commandTimeout;
-    }
-
-    err = op->result;
-    FreeDNSAsyncHandle(asyncHandle);
-
-    if (err == noErr) {
-        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_ResolveAddress: Successfully resolved '%s' to %08lX",
-                      hostname, *address);
-    } else {
-        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_ResolveAddress: Failed to resolve '%s', error %d",
-                      hostname, err);
-    }
-
-    return err;
+    /* TODO: Implement actual DNS resolution using StrToAddr */
 }
 
 static OSErr MacTCPImpl_AddressToString(ip_addr address, char *addressStr)
