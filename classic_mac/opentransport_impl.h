@@ -10,6 +10,7 @@
 /* Include OpenTransport headers - Retro68 has full OpenTransport support */
 #include <OpenTransport.h>
 #include <OpenTptInternet.h>
+#include <OpenTptClient.h>
 
 /* OpenTransport is available in Retro68 */
 #define HAVE_OPENTRANSPORT 1

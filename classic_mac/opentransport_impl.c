@@ -325,7 +325,7 @@ static pascal void OTUDPNotifier(void *contextPtr, OTEventCode code, OTResult re
     
     switch (code) {
     case T_DATA:
-        log_debug_cat(LOG_CAT_NETWORKING, "OTUDPNotifier: T_DATA - datagram available");
+        log_debug_cat(LOG_CAT_NETWORKING, "OTUDPNotifier: T_DATA - datagram available, result=%d", result);
         /* Complete any pending receive operations */
         for (i = 0; i < MAX_OT_ASYNC_OPS; i++) {
             if (gOTAsyncOps[i].inUse && 
@@ -334,6 +334,7 @@ static pascal void OTUDPNotifier(void *contextPtr, OTEventCode code, OTResult re
                 !gOTAsyncOps[i].completed) {
                 gOTAsyncOps[i].completed = true;
                 gOTAsyncOps[i].result = result;
+                log_debug_cat(LOG_CAT_NETWORKING, "OTUDPNotifier: Marked async receive operation %d as completed", i);
                 break;
             }
         }
@@ -691,9 +692,8 @@ static OSErr OTImpl_TCPReceiveNoCopy(NetworkStreamRef streamRef, Ptr rdsPtr,
     OTTCPEndpoint *tcpEp = (OTTCPEndpoint *)streamRef;
     OSStatus err;
     OTFlags flags = 0;
-    OTByteCount bytesReceived;
     
-    (void)maxEntries; (void)timeout; (void)giveTime; /* Simplified for OpenTransport */
+    (void)timeout; (void)giveTime; /* Simplified for OpenTransport */
     
     if (tcpEp == NULL || rdsPtr == NULL) {
         return paramErr;
@@ -703,21 +703,61 @@ static OSErr OTImpl_TCPReceiveNoCopy(NetworkStreamRef streamRef, Ptr rdsPtr,
         return connectionDoesntExist;
     }
     
-    /* Use the endpoint's receive buffer */
-    err = OTRcv(tcpEp->endpoint, tcpEp->receiveBuffer, tcpEp->bufferSize, &flags);
+    /* 
+     * FIX: Use OpenTransport's proper no-copy receive mechanism with OTBuffer chains.
+     * The previous approach was fundamentally flawed - it used copying OTRcv and pointed
+     * to potentially stale buffer data. This caused protocol parsing to read garbage.
+     */
+    OTBuffer* otBufferChain;
+    
+    /* Use OT's native no-copy receive to get OTBuffer chain */
+    err = OTRcv(tcpEp->endpoint, &otBufferChain, kOTNetbufDataIsOTBufferStar, &flags);
     if (err < 0) {
         if (err == kOTNoDataErr) {
             return commandTimeout; /* No data available */
         }
-        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPReceiveNoCopy: OTRcv failed: %d", err);
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPReceiveNoCopy: OTRcv no-copy failed: %d", err);
         return err;
     }
     
-    bytesReceived = err;
-    
-    /* Set up RDS-like structure (simplified) */
-    *((Ptr *)rdsPtr) = tcpEp->receiveBuffer;
-    *((unsigned short *)(rdsPtr + sizeof(Ptr))) = bytesReceived;
+    /* Convert OTBuffer chain to rdsEntry array format expected by the application */
+    {
+        wdsEntry *rdsArray = (wdsEntry *)rdsPtr;
+        OTBuffer *currentBuffer = otBufferChain;
+        int entriesCreated = 0;
+        
+        /* Convert each OTBuffer to an rdsEntry */
+        while (currentBuffer != NULL && entriesCreated < (maxEntries - 1)) {
+            rdsArray[entriesCreated].length = currentBuffer->fLen;
+            rdsArray[entriesCreated].ptr = (Ptr)currentBuffer->fData;
+            
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPReceiveNoCopy: RDS entry %d: length=%d, ptr=0x%08lX", 
+                          entriesCreated, rdsArray[entriesCreated].length, (unsigned long)rdsArray[entriesCreated].ptr);
+            
+            /* Debug dump first buffer's content */
+            if (entriesCreated == 0 && currentBuffer->fLen > 0 && currentBuffer->fData) {
+                unsigned char *data = (unsigned char *)currentBuffer->fData;
+                log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPReceiveNoCopy: First 16 bytes: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+                              data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+                              data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15]);
+            }
+            
+            currentBuffer = currentBuffer->fNext;
+            entriesCreated++;
+        }
+        
+        /* Terminate the RDS array with a null entry */
+        rdsArray[entriesCreated].length = 0;
+        rdsArray[entriesCreated].ptr = NULL;
+        
+        /* Store the OTBuffer chain head in the terminating entry for later release */
+        if (entriesCreated < maxEntries - 1) {
+            rdsArray[entriesCreated + 1].length = 0;
+            rdsArray[entriesCreated + 1].ptr = (Ptr)otBufferChain; /* Store chain head for cleanup */
+        }
+        
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPReceiveNoCopy: Converted %d OTBuffer(s) to RDS array", entriesCreated);
+    }
     
     if (urgent != NULL) {
         *urgent = (flags & T_EXPEDITED) != 0;
@@ -726,7 +766,6 @@ static OSErr OTImpl_TCPReceiveNoCopy(NetworkStreamRef streamRef, Ptr rdsPtr,
         *mark = false; /* Not supported in this simplified implementation */
     }
     
-    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPReceiveNoCopy: Received %d bytes", bytesReceived);
     return noErr;
 }
 
@@ -741,10 +780,36 @@ static OSErr OTImpl_TCPReturnBuffer(NetworkStreamRef streamRef, Ptr rdsPtr,
         return paramErr;
     }
     
-    /* In OpenTransport, buffer management is simpler than MacTCP */
-    /* The receive buffer is owned by the endpoint, no explicit return needed */
+    /* 
+     * FIX: Release the OTBuffer chain that was stored during the no-copy receive.
+     * Find the end of the RDS array and retrieve the stored OTBuffer chain head.
+     */
+    {
+        wdsEntry *rdsArray = (wdsEntry *)rdsPtr;
+        OTBuffer *otBufferChain = NULL;
+        
+        /* Find the terminating entry and the stored OTBuffer chain */
+        while (rdsArray->length != 0) {
+            rdsArray++;
+        }
+        
+        /* Skip the first terminating entry and check for the stored chain */
+        rdsArray++;
+        if (rdsArray->length == 0 && rdsArray->ptr != NULL) {
+            otBufferChain = (OTBuffer *)rdsArray->ptr;
+            rdsArray->ptr = NULL; /* Clear the stored pointer */
+        }
+        
+        /* Release the OTBuffer chain if found */
+        if (otBufferChain != NULL) {
+            OTReleaseBuffer(otBufferChain);
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPReturnBuffer: Released OTBuffer chain at 0x%08lX", 
+                          (unsigned long)otBufferChain);
+        } else {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPReturnBuffer: No OTBuffer chain found to release");
+        }
+    }
     
-    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPReturnBuffer: Buffer returned");
     return noErr;
 }
 
@@ -1094,6 +1159,41 @@ static OSErr OTImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
         return err;
     }
     
+    /* 
+     * FIX: Set the IP_BROADCAST option to allow receiving broadcast packets.
+     * This is crucial for OpenTransport to receive broadcasts from other hosts.
+     */
+    {
+        TOption option;
+        TOptMgmt request, result;
+
+        /* Prepare the option structure */
+        option.len    = kOTFourByteOptionSize;
+        option.level  = INET_IP;
+        option.name   = IP_BROADCAST;
+        option.status = 0;
+        *(UInt32*)option.value = T_YES; /* Enable broadcast reception */
+
+        /* Prepare the request for OTOptionManagement */
+        request.opt.buf = (UInt8*)&option;
+        request.opt.len = sizeof(option);
+        request.flags   = T_NEGOTIATE;
+        
+        result.opt.buf = (UInt8*)&option;
+        result.opt.maxlen = sizeof(option);
+        
+        /* Set the option on the endpoint */
+        err = OTOptionManagement(endpoint, &request, &result);
+        if (err != noErr || option.status != T_SUCCESS) {
+            log_error_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: Failed to set IP_BROADCAST option. Err: %d, Status: %d", 
+                         err, option.status);
+            DisposePtr((Ptr)udpEp);
+            OTCloseProvider(endpoint);
+            return (err != noErr) ? err : kOTBadOptionErr;
+        }
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: IP_BROADCAST option set successfully");
+    }
+    
     /* Set endpoint to async mode */
     err = OTSetAsynchronous(endpoint);
     if (err != noErr) {
@@ -1365,9 +1465,11 @@ static OSErr OTImpl_UDPReceiveAsync(NetworkEndpointRef endpointRef,
     asyncOp->result = noErr;
     asyncOp->userData = (void *)udpEp; /* Store UDP endpoint for later use */
     
-    /* The actual receive happens when T_DATA event arrives in notifier */
+    /* In OpenTransport, we rely on T_DATA notifier events to signal data availability */
+    /* The receive operation is conceptually always active once the endpoint is bound */
+    asyncOp->completed = false;
     
-    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPReceiveAsync: Async receive initiated");
+    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPReceiveAsync: Async receive initiated, waiting for incoming UDP data");
     return noErr;
 }
 
