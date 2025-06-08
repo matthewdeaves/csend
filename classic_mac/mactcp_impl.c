@@ -32,7 +32,6 @@ extern OSErr StrToAddr(char *hostName, struct hostInfo *rtnStruct,
                        long resultProc, char *userData);
 
 /* System function declarations */
-extern void SystemTask(void);
 
 /* Macro for setting up single-entry WDS */
 #define SETUP_SINGLE_WDS(wds, data, length) do { \
@@ -1385,8 +1384,8 @@ static OSErr MacTCPImpl_ResolveAddress(const char *hostname, ip_addr *address)
     }
 
     /* Poll for completion (synchronous behavior) */
-    long startTime = TickCount();
-    long timeout = 30 * 60; /* 30 seconds timeout */
+    unsigned long startTime = TickCount();
+    unsigned long timeout = 30 * 60; /* 30 seconds timeout */
 
     while (!op->completed && (TickCount() - startTime) < timeout) {
         /* Give time to system using event manager */

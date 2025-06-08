@@ -77,3 +77,6 @@ __pycache__/
 
 # Static Code Analysis Outputs
 reports
+
+# Retro68 Development Reference (optional development resource)
+Retro68Reference/
