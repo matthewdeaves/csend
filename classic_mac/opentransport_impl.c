@@ -13,18 +13,22 @@
 extern NetworkStreamRef gTCPListenStream;
 extern NetworkStreamRef gTCPSendStream;
 
-/* OpenTransport async operation types */
+/* OpenTransport async operation types for UDP */
+typedef enum {
+    OT_ASYNC_UDP_SEND,
+    OT_ASYNC_UDP_RECEIVE
+} OTAsyncOpType;
+
+/* OpenTransport async operation types for TCP */
 typedef enum {
     OT_ASYNC_TCP_CONNECT,
     OT_ASYNC_TCP_LISTEN,
     OT_ASYNC_TCP_SEND,
     OT_ASYNC_TCP_RECEIVE,
-    OT_ASYNC_TCP_CLOSE,
-    OT_ASYNC_UDP_SEND,
-    OT_ASYNC_UDP_RECEIVE
-} OTAsyncOpType;
+    OT_ASYNC_TCP_CLOSE
+} OTTCPAsyncOpType;
 
-/* OpenTransport async operation tracking */
+/* OpenTransport UDP async operation tracking */
 typedef struct {
     Boolean inUse;
     EndpointRef endpoint;
@@ -34,9 +38,25 @@ typedef struct {
     void *userData;
 } OTAsyncOperation;
 
+/* OpenTransport TCP async operation tracking */
+typedef struct {
+    Boolean inUse;
+    EndpointRef endpoint;
+    OTTCPAsyncOpType opType;
+    OSStatus result;
+    Boolean completed;
+    void *userData;
+    NetworkStreamRef stream;
+    Ptr dataBuffer;           /* For send operations */
+    unsigned short dataLength;
+} OTTCPAsyncOperation;
+
 #define MAX_OT_ASYNC_OPS 16
-static OTAsyncOperation gOTAsyncOps[MAX_OT_ASYNC_OPS];
+#define MAX_OT_TCP_ASYNC_OPS 8
+static OTAsyncOperation gOTAsyncOps[MAX_OT_ASYNC_OPS];  /* UDP operations */
+static OTTCPAsyncOperation gOTTCPAsyncOps[MAX_OT_TCP_ASYNC_OPS];  /* TCP operations */
 static Boolean gOTAsyncOpsInitialized = false;
+static Boolean gOTTCPAsyncOpsInitialized = false;
 
 /* OpenTransport endpoint structures for TCP and UDP */
 typedef struct {
@@ -61,10 +81,15 @@ typedef struct {
 /* Global OpenTransport state */
 static Boolean gOTInitialized = false;
 
-/* Async operation management */
+/* Async operation management - UDP */
 static void InitializeOTAsyncOps(void);
 static NetworkAsyncHandle AllocateOTAsyncHandle(void);
 static void FreeOTAsyncHandle(NetworkAsyncHandle handle);
+
+/* Async operation management - TCP */
+static void InitializeOTTCPAsyncOps(void);
+static NetworkAsyncHandle AllocateOTTCPAsyncHandle(void);
+static void FreeOTTCPAsyncHandle(NetworkAsyncHandle handle);
 
 /* OpenTransport notifier procedures */
 static pascal void OTTCPNotifier(void *contextPtr, OTEventCode code, OTResult result, void *cookie);
@@ -199,6 +224,64 @@ static void FreeOTAsyncHandle(NetworkAsyncHandle handle)
     }
 }
 
+/* TCP Async operation management - implementation */
+static void InitializeOTTCPAsyncOps(void)
+{
+    int i;
+    
+    if (gOTTCPAsyncOpsInitialized) {
+        return;
+    }
+    
+    for (i = 0; i < MAX_OT_TCP_ASYNC_OPS; i++) {
+        gOTTCPAsyncOps[i].inUse = false;
+        gOTTCPAsyncOps[i].endpoint = kOTInvalidEndpointRef;
+        gOTTCPAsyncOps[i].completed = false;
+        gOTTCPAsyncOps[i].result = noErr;
+        gOTTCPAsyncOps[i].userData = NULL;
+        gOTTCPAsyncOps[i].stream = NULL;
+        gOTTCPAsyncOps[i].dataBuffer = NULL;
+        gOTTCPAsyncOps[i].dataLength = 0;
+    }
+    
+    gOTTCPAsyncOpsInitialized = true;
+}
+
+static NetworkAsyncHandle AllocateOTTCPAsyncHandle(void)
+{
+    int i;
+    
+    InitializeOTTCPAsyncOps();
+    
+    for (i = 0; i < MAX_OT_TCP_ASYNC_OPS; i++) {
+        if (!gOTTCPAsyncOps[i].inUse) {
+            gOTTCPAsyncOps[i].inUse = true;
+            gOTTCPAsyncOps[i].completed = false;
+            gOTTCPAsyncOps[i].result = noErr;
+            return (NetworkAsyncHandle)&gOTTCPAsyncOps[i];
+        }
+    }
+    
+    log_debug_cat(LOG_CAT_NETWORKING, "AllocateOTTCPAsyncHandle: No free TCP async operation slots");
+    return NULL;
+}
+
+static void FreeOTTCPAsyncHandle(NetworkAsyncHandle handle)
+{
+    OTTCPAsyncOperation *op = (OTTCPAsyncOperation *)handle;
+    
+    if (op >= &gOTTCPAsyncOps[0] && op < &gOTTCPAsyncOps[MAX_OT_TCP_ASYNC_OPS]) {
+        op->inUse = false;
+        op->endpoint = kOTInvalidEndpointRef;
+        op->completed = false;
+        op->result = noErr;
+        op->userData = NULL;
+        op->stream = NULL;
+        op->dataBuffer = NULL;
+        op->dataLength = 0;
+    }
+}
+
 /* OpenTransport notifier for TCP endpoints */
 static pascal void OTTCPNotifier(void *contextPtr, OTEventCode code, OTResult result, void *cookie)
 {
@@ -217,13 +300,13 @@ static pascal void OTTCPNotifier(void *contextPtr, OTEventCode code, OTResult re
             tcpEp->isConnected = true;
         }
         /* Complete any pending connect operations */
-        for (i = 0; i < MAX_OT_ASYNC_OPS; i++) {
-            if (gOTAsyncOps[i].inUse && 
-                gOTAsyncOps[i].endpoint == tcpEp->endpoint &&
-                gOTAsyncOps[i].opType == OT_ASYNC_TCP_CONNECT &&
-                !gOTAsyncOps[i].completed) {
-                gOTAsyncOps[i].completed = true;
-                gOTAsyncOps[i].result = result;
+        for (i = 0; i < MAX_OT_TCP_ASYNC_OPS; i++) {
+            if (gOTTCPAsyncOps[i].inUse && 
+                gOTTCPAsyncOps[i].endpoint == tcpEp->endpoint &&
+                gOTTCPAsyncOps[i].opType == OT_ASYNC_TCP_CONNECT &&
+                !gOTTCPAsyncOps[i].completed) {
+                gOTTCPAsyncOps[i].completed = true;
+                gOTTCPAsyncOps[i].result = result;
                 break;
             }
         }
@@ -270,13 +353,13 @@ static pascal void OTTCPNotifier(void *contextPtr, OTEventCode code, OTResult re
             }
             
             /* Complete any pending listen operations */
-            for (i = 0; i < MAX_OT_ASYNC_OPS; i++) {
-                if (gOTAsyncOps[i].inUse && 
-                    gOTAsyncOps[i].endpoint == tcpEp->endpoint &&
-                    gOTAsyncOps[i].opType == OT_ASYNC_TCP_LISTEN &&
-                    !gOTAsyncOps[i].completed) {
-                    gOTAsyncOps[i].completed = true;
-                    gOTAsyncOps[i].result = (acceptErr == noErr) ? result : acceptErr;
+            for (i = 0; i < MAX_OT_TCP_ASYNC_OPS; i++) {
+                if (gOTTCPAsyncOps[i].inUse && 
+                    gOTTCPAsyncOps[i].endpoint == tcpEp->endpoint &&
+                    gOTTCPAsyncOps[i].opType == OT_ASYNC_TCP_LISTEN &&
+                    !gOTTCPAsyncOps[i].completed) {
+                    gOTTCPAsyncOps[i].completed = true;
+                    gOTTCPAsyncOps[i].result = (acceptErr == noErr) ? result : acceptErr;
                     break;
                 }
             }
@@ -286,13 +369,13 @@ static pascal void OTTCPNotifier(void *contextPtr, OTEventCode code, OTResult re
     case T_DATA:
         log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: T_DATA - data available");
         /* Complete any pending receive operations */
-        for (i = 0; i < MAX_OT_ASYNC_OPS; i++) {
-            if (gOTAsyncOps[i].inUse && 
-                gOTAsyncOps[i].endpoint == tcpEp->endpoint &&
-                gOTAsyncOps[i].opType == OT_ASYNC_TCP_RECEIVE &&
-                !gOTAsyncOps[i].completed) {
-                gOTAsyncOps[i].completed = true;
-                gOTAsyncOps[i].result = result;
+        for (i = 0; i < MAX_OT_TCP_ASYNC_OPS; i++) {
+            if (gOTTCPAsyncOps[i].inUse && 
+                gOTTCPAsyncOps[i].endpoint == tcpEp->endpoint &&
+                gOTTCPAsyncOps[i].opType == OT_ASYNC_TCP_RECEIVE &&
+                !gOTTCPAsyncOps[i].completed) {
+                gOTTCPAsyncOps[i].completed = true;
+                gOTTCPAsyncOps[i].result = result;
                 break;
             }
         }
@@ -962,7 +1045,7 @@ static OSErr OTImpl_TCPListenAsync(NetworkStreamRef streamRef, tcp_port localPor
 {
     OTTCPEndpoint *tcpEp = (OTTCPEndpoint *)streamRef;
     OSStatus err;
-    OTAsyncOperation *asyncOp;
+    OTTCPAsyncOperation *asyncOp;
     
     if (tcpEp == NULL || asyncHandle == NULL) {
         return paramErr;
@@ -976,15 +1059,16 @@ static OSErr OTImpl_TCPListenAsync(NetworkStreamRef streamRef, tcp_port localPor
         }
     }
     
-    /* Allocate async operation handle */
-    *asyncHandle = AllocateOTAsyncHandle();
+    /* Allocate TCP async operation handle */
+    *asyncHandle = AllocateOTTCPAsyncHandle();
     if (*asyncHandle == NULL) {
         return memFullErr;
     }
     
-    asyncOp = (OTAsyncOperation *)*asyncHandle;
+    asyncOp = (OTTCPAsyncOperation *)*asyncHandle;
     asyncOp->endpoint = tcpEp->endpoint;
     asyncOp->opType = OT_ASYNC_TCP_LISTEN;
+    asyncOp->stream = streamRef;
     asyncOp->result = noErr;
     
     /* The actual listening happens in the notifier when T_LISTEN event arrives */
@@ -1000,7 +1084,7 @@ static OSErr OTImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remoteHo
     OSStatus err;
     InetAddress addr;
     TCall sndCall;
-    OTAsyncOperation *asyncOp;
+    OTTCPAsyncOperation *asyncOp;
     OTResult state;
     
     if (tcpEp == NULL || asyncHandle == NULL) {
@@ -1037,15 +1121,16 @@ static OSErr OTImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remoteHo
         return kOTOutStateErr;
     }
     
-    /* Allocate async operation handle */
-    *asyncHandle = AllocateOTAsyncHandle();
+    /* Allocate TCP async operation handle (FIX: Use TCP handle pool, not UDP) */
+    *asyncHandle = AllocateOTTCPAsyncHandle();
     if (*asyncHandle == NULL) {
         return memFullErr;
     }
     
-    asyncOp = (OTAsyncOperation *)*asyncHandle;
+    asyncOp = (OTTCPAsyncOperation *)*asyncHandle;
     asyncOp->endpoint = tcpEp->endpoint;
     asyncOp->opType = OT_ASYNC_TCP_CONNECT;
+    asyncOp->stream = streamRef;
     
     /* Set up address */
     OTInitInetAddress(&addr, remotePort, remoteHost);
@@ -1061,7 +1146,7 @@ static OSErr OTImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remoteHo
     /* Initiate async connection */
     err = OTConnect(tcpEp->endpoint, &sndCall, NULL);
     if (err != noErr && err != kOTNoDataErr) {
-        FreeOTAsyncHandle(*asyncHandle);
+        FreeOTTCPAsyncHandle(*asyncHandle);
         *asyncHandle = NULL;
         log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: OTConnect failed: %d", err);
         return err;
@@ -1081,7 +1166,7 @@ static OSErr OTImpl_TCPSendAsync(NetworkStreamRef streamRef, Ptr data, unsigned 
     OTTCPEndpoint *tcpEp = (OTTCPEndpoint *)streamRef;
     OSStatus err;
     OTFlags flags = 0;
-    OTAsyncOperation *asyncOp;
+    OTTCPAsyncOperation *asyncOp;
     
     if (tcpEp == NULL || data == NULL || asyncHandle == NULL) {
         return paramErr;
@@ -1091,15 +1176,18 @@ static OSErr OTImpl_TCPSendAsync(NetworkStreamRef streamRef, Ptr data, unsigned 
         return connectionDoesntExist;
     }
     
-    /* Allocate async operation handle */
-    *asyncHandle = AllocateOTAsyncHandle();
+    /* Allocate TCP async operation handle (FIX: Use TCP handle pool, not UDP) */
+    *asyncHandle = AllocateOTTCPAsyncHandle();
     if (*asyncHandle == NULL) {
         return memFullErr;
     }
     
-    asyncOp = (OTAsyncOperation *)*asyncHandle;
+    asyncOp = (OTTCPAsyncOperation *)*asyncHandle;
     asyncOp->endpoint = tcpEp->endpoint;
     asyncOp->opType = OT_ASYNC_TCP_SEND;
+    asyncOp->stream = streamRef;
+    asyncOp->dataBuffer = data;
+    asyncOp->dataLength = length;
     
     if (push) {
         flags |= T_MORE; /* Use T_MORE instead of T_PUSH in OpenTransport */
@@ -1108,7 +1196,7 @@ static OSErr OTImpl_TCPSendAsync(NetworkStreamRef streamRef, Ptr data, unsigned 
     /* Send data asynchronously */
     err = OTSnd(tcpEp->endpoint, data, length, flags);
     if (err < 0) {
-        FreeOTAsyncHandle(*asyncHandle);
+        FreeOTTCPAsyncHandle(*asyncHandle);
         *asyncHandle = NULL;
         log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPSendAsync: OTSnd failed: %d", err);
         return err;
@@ -1125,7 +1213,7 @@ static OSErr OTImpl_TCPReceiveAsync(NetworkStreamRef streamRef, Ptr rdsPtr,
                                     short maxEntries, NetworkAsyncHandle *asyncHandle)
 {
     OTTCPEndpoint *tcpEp = (OTTCPEndpoint *)streamRef;
-    OTAsyncOperation *asyncOp;
+    OTTCPAsyncOperation *asyncOp;
     
     (void)maxEntries; /* Simplified for OpenTransport */
     
@@ -1137,15 +1225,16 @@ static OSErr OTImpl_TCPReceiveAsync(NetworkStreamRef streamRef, Ptr rdsPtr,
         return connectionDoesntExist;
     }
     
-    /* Allocate async operation handle */
-    *asyncHandle = AllocateOTAsyncHandle();
+    /* Allocate TCP async operation handle (FIX: Use TCP handle pool, not UDP) */
+    *asyncHandle = AllocateOTTCPAsyncHandle();
     if (*asyncHandle == NULL) {
         return memFullErr;
     }
     
-    asyncOp = (OTAsyncOperation *)*asyncHandle;
+    asyncOp = (OTTCPAsyncOperation *)*asyncHandle;
     asyncOp->endpoint = tcpEp->endpoint;
     asyncOp->opType = OT_ASYNC_TCP_RECEIVE;
+    asyncOp->stream = streamRef;
     asyncOp->result = noErr;
     asyncOp->userData = rdsPtr; /* Store RDS pointer for completion */
     
@@ -1158,7 +1247,7 @@ static OSErr OTImpl_TCPReceiveAsync(NetworkStreamRef streamRef, Ptr rdsPtr,
 static OSErr OTImpl_TCPCheckAsyncStatus(NetworkAsyncHandle asyncHandle,
                                         OSErr *operationResult, void **resultData)
 {
-    OTAsyncOperation *asyncOp = (OTAsyncOperation *)asyncHandle;
+    OTTCPAsyncOperation *asyncOp = (OTTCPAsyncOperation *)asyncHandle;
     
     if (asyncOp == NULL) {
         return paramErr;
@@ -1182,13 +1271,17 @@ static OSErr OTImpl_TCPCheckAsyncStatus(NetworkAsyncHandle asyncHandle,
         *resultData = asyncOp->userData;
     }
     
-    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPCheckAsyncStatus: Operation completed with result %d", asyncOp->result);
+    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPCheckAsyncStatus: TCP operation completed with result %d", asyncOp->result);
+    
+    /* Free the TCP async handle (FIX: Use TCP handle pool) */
+    FreeOTTCPAsyncHandle(asyncHandle);
+    
     return noErr; /* Completed */
 }
 
 static void OTImpl_TCPCancelAsync(NetworkAsyncHandle asyncHandle)
 {
-    OTAsyncOperation *asyncOp = (OTAsyncOperation *)asyncHandle;
+    OTTCPAsyncOperation *asyncOp = (OTTCPAsyncOperation *)asyncHandle;
     
     if (asyncOp == NULL || !asyncOp->inUse) {
         return;
@@ -1201,8 +1294,8 @@ static void OTImpl_TCPCancelAsync(NetworkAsyncHandle asyncHandle)
         asyncOp->result = kOTCanceledErr;
     }
     
-    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPCancelAsync: Operation cancelled");
-    FreeOTAsyncHandle(asyncHandle);
+    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPCancelAsync: TCP operation cancelled");
+    FreeOTTCPAsyncHandle(asyncHandle);
 }
 
 /* UDP stubs */
