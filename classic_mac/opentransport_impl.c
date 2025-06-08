@@ -226,15 +226,54 @@ static pascal void OTTCPNotifier(void *contextPtr, OTEventCode code, OTResult re
         
     case T_LISTEN:
         log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: T_LISTEN - incoming connection");
-        /* Complete any pending listen operations */
-        for (i = 0; i < MAX_OT_ASYNC_OPS; i++) {
-            if (gOTAsyncOps[i].inUse && 
-                gOTAsyncOps[i].endpoint == tcpEp->endpoint &&
-                gOTAsyncOps[i].opType == OT_ASYNC_TCP_LISTEN &&
-                !gOTAsyncOps[i].completed) {
-                gOTAsyncOps[i].completed = true;
-                gOTAsyncOps[i].result = result;
-                break;
+        {
+            /* Handle incoming connection request */
+            TCall call;
+            InetAddress clientAddr;
+            OSStatus acceptErr;
+            
+            /* Set up call structure to receive connection details */
+            call.addr.buf = (UInt8 *)&clientAddr;
+            call.addr.maxlen = sizeof(clientAddr);
+            call.opt.buf = NULL;
+            call.opt.maxlen = 0;
+            call.udata.buf = NULL;
+            call.udata.maxlen = 0;
+            
+            /* Get the connection request details */
+            acceptErr = OTListen(tcpEp->endpoint, &call);
+            if (acceptErr == noErr) {
+                /* Accept the connection */
+                acceptErr = OTAccept(tcpEp->endpoint, tcpEp->endpoint, &call);
+                if (acceptErr == noErr) {
+                    /* Connection accepted successfully */
+                    tcpEp->isConnected = true;
+                    /* Keep isListening true for the listen stream to handle more connections */
+                    tcpEp->remoteHost = clientAddr.fHost;
+                    tcpEp->remotePort = clientAddr.fPort;
+                    log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: Connection accepted from %d.%d.%d.%d:%d", 
+                                  (tcpEp->remoteHost >> 24) & 0xFF,
+                                  (tcpEp->remoteHost >> 16) & 0xFF, 
+                                  (tcpEp->remoteHost >> 8) & 0xFF,
+                                  tcpEp->remoteHost & 0xFF,
+                                  tcpEp->remotePort);
+                } else {
+                    log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: OTAccept failed: %d", acceptErr);
+                }
+            } else {
+                log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: OTListen failed: %d", acceptErr);
+            }
+            
+            /* Complete any pending listen operations */
+            for (i = 0; i < MAX_OT_ASYNC_OPS; i++) {
+                if (gOTAsyncOps[i].inUse && 
+                    gOTAsyncOps[i].endpoint == tcpEp->endpoint &&
+                    gOTAsyncOps[i].opType == OT_ASYNC_TCP_LISTEN &&
+                    !gOTAsyncOps[i].completed) {
+                    gOTAsyncOps[i].completed = true;
+                    gOTAsyncOps[i].result = (acceptErr == noErr) ? result : acceptErr;
+                    break;
+                }
             }
         }
         break;

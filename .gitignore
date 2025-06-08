@@ -70,8 +70,9 @@ CLAUDE.local.md
 # Application logs
 logs
 
-# Python virtual environment
+# Python virtual environments
 csend_venv/
+venv/
 __pycache__/
 *.pyc
 

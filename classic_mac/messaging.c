@@ -689,8 +689,12 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
         gTCPSendState = TCP_STATE_IDLE;
         break;
 
-    case TCP_STATE_UNINITIALIZED:
     case TCP_STATE_IDLE:
+        /* Send stream is ready for new connections or operations */
+        /* This is a normal state - no action needed */
+        break;
+
+    case TCP_STATE_UNINITIALIZED:
     case TCP_STATE_LISTENING:
     case TCP_STATE_CONNECTED_IN:
     case TCP_STATE_CONNECTED_OUT:
