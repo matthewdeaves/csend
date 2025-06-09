@@ -8,6 +8,8 @@
 #include <string.h>
 #include <Errors.h>
 #include <Gestalt.h>
+#include <OpenTransport.h>
+#include <OpenTptInternet.h>
 
 /* External declarations for TCP stream variables */
 extern NetworkStreamRef gTCPListenStream;
@@ -481,14 +483,20 @@ OSStatus InitializeOpenTransport(void)
     
     log_debug_cat(LOG_CAT_NETWORKING, "InitializeOpenTransport: Initializing OpenTransport");
     
-    err = InitOpenTransport();
-    if (err != noErr) {
-        log_debug_cat(LOG_CAT_NETWORKING, "InitializeOpenTransport: InitOpenTransport failed: %d", err);
-        return err;
+    /* Don't call InitOpenTransport() here if already called by IsAvailable */
+    /* Check if we need to call it or if it was already called */
+    /* Since IsAvailable() now calls InitOpenTransport(), just verify state */
+    if (!gOTInitialized) {
+        err = InitOpenTransport();
+        if (err != noErr) {
+            log_debug_cat(LOG_CAT_NETWORKING, "InitializeOpenTransport: InitOpenTransport failed: %d", err);
+            return err;
+        }
+        gOTInitialized = true;
     }
     
     InitializeOTAsyncOps();
-    gOTInitialized = true;
+    InitializeOTTCPAsyncOps();
     
     log_debug_cat(LOG_CAT_NETWORKING, "InitializeOpenTransport: OpenTransport initialized successfully");
     return noErr;
@@ -498,8 +506,32 @@ void ShutdownOpenTransport(void)
 {
     if (gOTInitialized) {
         log_debug_cat(LOG_CAT_NETWORKING, "ShutdownOpenTransport: Closing OpenTransport");
+        
+        /* Cancel all pending async operations before shutdown */
+        InitializeOTAsyncOps();
+        InitializeOTTCPAsyncOps();
+        for (int i = 0; i < MAX_OT_ASYNC_OPS; i++) {
+            if (gOTAsyncOps[i].inUse) {
+                gOTAsyncOps[i].inUse = false;
+                gOTAsyncOps[i].completed = true;
+                gOTAsyncOps[i].result = kOTCanceledErr;
+            }
+        }
+        for (int i = 0; i < MAX_OT_TCP_ASYNC_OPS; i++) {
+            if (gOTTCPAsyncOps[i].inUse) {
+                gOTTCPAsyncOps[i].inUse = false;
+                gOTTCPAsyncOps[i].completed = true;
+                gOTTCPAsyncOps[i].result = kOTCanceledErr;
+            }
+        }
+        
+        /* Reset initialization flags */
+        gOTAsyncOpsInitialized = false;
+        gOTTCPAsyncOpsInitialized = false;
+        
         CloseOpenTransport();
         gOTInitialized = false;
+        log_debug_cat(LOG_CAT_NETWORKING, "ShutdownOpenTransport: OpenTransport shutdown complete");
     }
 }
 
@@ -515,13 +547,46 @@ static OSErr OTImpl_Initialize(short *refNum, ip_addr *localIP, char *localIPStr
     }
     
     /* Get local IP address */
+    /* Note: OTInetGetInterfaceInfo may fail if TCP/IP stack isn't loaded yet.
+     * According to Apple docs: "If Open Transport TCP/IP has not yet been loaded into memory,
+     * the OTInetGetInterfaceInfo function returns no valid interfaces."
+     * Solution: Force TCP/IP loading by creating a dummy endpoint first.
+     */
+    
     err = OTInetGetInterfaceInfo(&info, kDefaultInetInterface);
-    if (err == noErr && localIP != NULL) {
+    if (err != noErr || info.fAddress == 0) {
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_Initialize: First OTInetGetInterfaceInfo failed (%d) or returned 0.0.0.0, forcing TCP/IP stack load", err);
+        
+        /* Force TCP/IP stack loading by creating a dummy endpoint */
+        OTConfigurationRef config = OTCreateConfiguration(kTCPName);
+        if (config != kOTInvalidConfigurationPtr && config != kOTNoMemoryConfigurationPtr && config != NULL) {
+            TEndpointInfo endpointInfo;
+            OSStatus dummyErr;
+            EndpointRef dummyEndpoint = OTOpenEndpoint(config, 0, &endpointInfo, &dummyErr);
+            if (dummyEndpoint != kOTInvalidEndpointRef) {
+                /* TCP/IP stack should now be loaded, close the dummy endpoint */
+                OTCloseProvider(dummyEndpoint);
+                log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_Initialize: TCP/IP stack loaded via dummy endpoint");
+                
+                /* Try getting interface info again */
+                err = OTInetGetInterfaceInfo(&info, kDefaultInetInterface);
+                log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_Initialize: Second OTInetGetInterfaceInfo attempt: err=%d, address=0x%08lX", err, (unsigned long)info.fAddress);
+            } else {
+                log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_Initialize: Failed to create dummy endpoint for TCP/IP loading: %d", dummyErr);
+            }
+        } else {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_Initialize: Failed to create TCP configuration for stack loading");
+        }
+    }
+    
+    if (err == noErr && info.fAddress != 0 && localIP != NULL) {
         *localIP = info.fAddress;
         if (localIPStr != NULL) {
             OTInetHostToString(info.fAddress, localIPStr);
         }
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_Initialize: Successfully got local IP: 0x%08lX", (unsigned long)info.fAddress);
     } else {
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_Initialize: Final OTInetGetInterfaceInfo failed: err=%d, address=0x%08lX", err, (unsigned long)info.fAddress);
         if (localIP != NULL) {
             *localIP = 0;
         }
@@ -541,8 +606,10 @@ static OSErr OTImpl_Initialize(short *refNum, ip_addr *localIP, char *localIPStr
 static void OTImpl_Shutdown(short refNum)
 {
     (void)refNum; /* Unused */
-    /* OpenTransport cleanup is handled by ShutdownOpenTransport() */
     log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_Shutdown: OpenTransport shutdown requested");
+    
+    /* Actually shutdown OpenTransport */
+    ShutdownOpenTransport();
 }
 
 /* Stub implementations for all required functions */
@@ -564,10 +631,26 @@ static OSErr OTImpl_TCPCreate(short refNum, NetworkStreamRef *streamRef,
     }
     
     /* Create TCP endpoint */
-    endpoint = OTOpenEndpoint(OTCreateConfiguration(kTCPName), 0, &info, &err);
-    if (err != noErr) {
-        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPCreate: OTOpenEndpoint failed: %d", err);
-        return err;
+    {
+        OTConfigurationRef config = OTCreateConfiguration(kTCPName);
+        if (config == kOTInvalidConfigurationPtr) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPCreate: Invalid TCP configuration");
+            return kOTBadConfigurationErr;
+        } else if (config == kOTNoMemoryConfigurationPtr) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPCreate: Out of memory creating TCP configuration");
+            return memFullErr;
+        } else if (config == NULL) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPCreate: Failed to create TCP configuration");
+            return kOTBadConfigurationErr;
+        }
+        
+        endpoint = OTOpenEndpoint(config, 0, &info, &err);
+        /* NOTE: OTOpenEndpoint automatically disposes of the configuration - do NOT call OTDestroyConfiguration */
+        
+        if (err != noErr) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPCreate: OTOpenEndpoint failed: %d", err);
+            return err;
+        }
     }
     
     /* Allocate TCP endpoint structure */
@@ -596,6 +679,7 @@ static OSErr OTImpl_TCPCreate(short refNum, NetworkStreamRef *streamRef,
         return err;
     }
     
+
     /* Set endpoint to async mode */
     err = OTSetAsynchronous(endpoint);
     if (err != noErr) {
@@ -659,6 +743,31 @@ static OSErr OTImpl_TCPListen(NetworkStreamRef streamRef, tcp_port localPort,
     
     /* Set up local address */
     OTInitInetAddress(&addr, localPort, kOTAnyInetAddress);
+    
+    /* Set IP_REUSEADDR option before binding for listening endpoints */
+    /* This allows rebinding to the same port quickly as per OpenTransport documentation */
+    {
+        TOption option;
+        TOptMgmt request;
+
+        option.len    = kOTFourByteOptionSize;
+        option.level  = INET_IP;
+        option.name   = IP_REUSEADDR;
+        option.status = 0;
+        *(UInt32*)option.value = T_YES; /* Enable address reuse */
+
+        request.opt.buf = (UInt8*)&option;
+        request.opt.len = sizeof(option);
+        request.flags   = T_NEGOTIATE;
+
+        err = OTOptionManagement(tcpEp->endpoint, &request, &request);
+        if (err != noErr || option.status != T_SUCCESS) {
+            log_warning_cat(LOG_CAT_NETWORKING, "Could not set IP_REUSEADDR on listening endpoint. Err: %d, Status: %d", err, option.status);
+            /* Continue without IP_REUSEADDR - not critical for listen streams */
+        } else {
+            log_debug_cat(LOG_CAT_NETWORKING, "IP_REUSEADDR option set successfully on listening endpoint");
+        }
+    }
     
     /* Set up bind request */
     reqAddr.addr.buf = (UInt8 *)&addr;
@@ -733,6 +842,31 @@ static OSErr OTImpl_TCPConnect(NetworkStreamRef streamRef, ip_addr remoteHost,
     if (OTGetEndpointState(tcpEp->endpoint) == T_UNBND) {
         InetAddress localAddr;
         TBind reqAddr, retAddr;
+        
+        /* Set IP_REUSEADDR option before binding for client endpoints */
+        /* This allows rapid reconnection in broadcast scenarios */
+        {
+            TOption option;
+            TOptMgmt request;
+
+            option.len    = kOTFourByteOptionSize;
+            option.level  = INET_IP;
+            option.name   = IP_REUSEADDR;
+            option.status = 0;
+            *(UInt32*)option.value = T_YES; /* Enable address reuse */
+
+            request.opt.buf = (UInt8*)&option;
+            request.opt.len = sizeof(option);
+            request.flags   = T_NEGOTIATE;
+
+            err = OTOptionManagement(tcpEp->endpoint, &request, &request);
+            if (err != noErr || option.status != T_SUCCESS) {
+                log_warning_cat(LOG_CAT_NETWORKING, "Could not set IP_REUSEADDR on client endpoint. Err: %d, Status: %d", err, option.status);
+                /* Continue without IP_REUSEADDR - not critical but may affect broadcast performance */
+            } else {
+                log_debug_cat(LOG_CAT_NETWORKING, "IP_REUSEADDR option set successfully on client endpoint");
+            }
+        }
         
         OTInitInetAddress(&localAddr, 0, kOTAnyInetAddress); /* Any local port */
         
@@ -1099,6 +1233,31 @@ static OSErr OTImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remoteHo
         
         log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: Endpoint in T_UNBND state, binding to ephemeral port");
         
+        /* Set IP_REUSEADDR option before binding for async client endpoints */
+        /* This allows rapid reconnection in broadcast scenarios */
+        {
+            TOption option;
+            TOptMgmt request;
+
+            option.len    = kOTFourByteOptionSize;
+            option.level  = INET_IP;
+            option.name   = IP_REUSEADDR;
+            option.status = 0;
+            *(UInt32*)option.value = T_YES; /* Enable address reuse */
+
+            request.opt.buf = (UInt8*)&option;
+            request.opt.len = sizeof(option);
+            request.flags   = T_NEGOTIATE;
+
+            err = OTOptionManagement(tcpEp->endpoint, &request, &request);
+            if (err != noErr || option.status != T_SUCCESS) {
+                log_warning_cat(LOG_CAT_NETWORKING, "Could not set IP_REUSEADDR on async client endpoint. Err: %d, Status: %d", err, option.status);
+                /* Continue without IP_REUSEADDR - not critical but may affect broadcast performance */
+            } else {
+                log_debug_cat(LOG_CAT_NETWORKING, "IP_REUSEADDR option set successfully on async client endpoint");
+            }
+        }
+        
         /* Bind to any local address and port for outgoing connection */
         OTInitInetAddress(&localAddr, 0, kOTAnyInetAddress);
         
@@ -1312,23 +1471,55 @@ static OSErr OTImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
     
     (void)refNum; /* Unused */
     
+    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: Entry - port=%d, buffer=0x%08lX, size=%d", 
+                  localPort, (unsigned long)recvBuffer, bufferSize);
+    
     if (endpointRef == NULL) {
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: endpointRef is NULL");
         return paramErr;
     }
     
     /* Create UDP endpoint */
-    endpoint = OTOpenEndpoint(OTCreateConfiguration(kUDPName), 0, &info, &err);
-    if (err != noErr) {
-        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: OTOpenEndpoint failed: %d", err);
-        return err;
+    {
+        OTConfigurationRef config;
+        
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: About to call OTCreateConfiguration with kUDPName");
+        config = OTCreateConfiguration(kUDPName);
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: OTCreateConfiguration returned 0x%08lX", (unsigned long)config);
+        
+        if (config == kOTInvalidConfigurationPtr) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: Invalid UDP configuration");
+            return kOTBadConfigurationErr;
+        } else if (config == kOTNoMemoryConfigurationPtr) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: Out of memory creating UDP configuration");
+            return memFullErr;
+        } else if (config == NULL) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: Failed to create UDP configuration");
+            return kOTBadConfigurationErr;
+        }
+        
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: About to call OTOpenEndpoint");
+        endpoint = OTOpenEndpoint(config, 0, &info, &err);
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: OTOpenEndpoint returned endpoint=0x%08lX, err=%d", (unsigned long)endpoint, err);
+        
+        /* NOTE: OTOpenEndpoint automatically disposes of the configuration - do NOT call OTDestroyConfiguration */
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: Configuration automatically disposed by OTOpenEndpoint");
+        
+        if (err != noErr) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: OTOpenEndpoint failed: %d", err);
+            return err;
+        }
     }
     
     /* Allocate UDP endpoint structure */
+    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: Allocating UDP endpoint structure (%ld bytes)", (long)sizeof(OTUDPEndpoint));
     udpEp = (OTUDPEndpoint *)NewPtr(sizeof(OTUDPEndpoint));
     if (udpEp == NULL) {
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: Failed to allocate UDP endpoint structure");
         OTCloseProvider(endpoint);
         return memFullErr;
     }
+    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: UDP endpoint structure allocated at 0x%08lX", (unsigned long)udpEp);
     
     /* Initialize UDP endpoint */
     udpEp->endpoint = endpoint;
@@ -1338,6 +1529,7 @@ static OSErr OTImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
     udpEp->isCreated = true;
     
     /* Install notifier */
+    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: Installing notifier");
     err = OTInstallNotifier(endpoint, OTUDPNotifier, udpEp);
     if (err != noErr) {
         log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: OTInstallNotifier failed: %d", err);
@@ -1345,6 +1537,7 @@ static OSErr OTImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
         OTCloseProvider(endpoint);
         return err;
     }
+    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: Notifier installed successfully");
     
     /* 
      * FIX: Set the IP_BROADCAST option to allow receiving broadcast packets.
@@ -1841,27 +2034,27 @@ static const char *OTImpl_GetImplementationName(void)
 
 static Boolean OTImpl_IsAvailable(void)
 {
-    OSErr err;
-    long response;
+    OSStatus err;
     
     /* If already initialized, it's available */
     if (gOTInitialized) {
         return true;
     }
     
-    /* Check if OpenTransport is available using Gestalt */
-    err = Gestalt('otan', &response);
-    if (err != noErr) {
+    /* Use InitOpenTransport() as recommended by Apple documentation */
+    /* This is the authoritative way to detect AND initialize OpenTransport */
+    err = InitOpenTransport();
+    if (err == noErr) {
+        /* OpenTransport is available and now initialized */
+        gOTInitialized = true;
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_IsAvailable: OpenTransport detected and initialized successfully");
+        return true;
+    } else {
+        /* OpenTransport not available or initialization failed */
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_IsAvailable: InitOpenTransport failed: %d", err);
+        gOTInitialized = false;
         return false;
     }
-    
-    /* Check required bits: present, loaded, TCP present, TCP loaded */
-    if ((response & ((1 << 0) | (1 << 1) | (1 << 4) | (1 << 5))) != 
-        ((1 << 0) | (1 << 1) | (1 << 4) | (1 << 5))) {
-        return false;
-    }
-    
-    return true;
 }
 
 /* Error translation */

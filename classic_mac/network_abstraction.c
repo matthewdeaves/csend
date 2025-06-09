@@ -15,44 +15,21 @@
 NetworkOperations *gNetworkOps = NULL;
 NetworkImplementation gCurrentNetworkImpl = NETWORK_IMPL_NONE;
 
-/* Check if OpenTransport is available using proper Gestalt detection */
+/* Check if OpenTransport is available using proper detection */
 static Boolean IsOpenTransportAvailable(void)
 {
-    OSErr err;
-    long response;
-    
-    /* Check if OpenTransport is present and loaded */
-    err = Gestalt('otan', &response);
-    if (err != noErr) {
-        log_debug_cat(LOG_CAT_NETWORKING, "IsOpenTransportAvailable: Gestalt failed: %d", err);
-        return false;
+    /* Use the OpenTransport implementation's IsAvailable function */
+    /* This will use InitOpenTransport() as per Apple's documentation */
+    NetworkOperations *otOps = GetOpenTransportOperations();
+    if (otOps != NULL && otOps->IsAvailable != NULL) {
+        Boolean available = otOps->IsAvailable();
+        log_debug_cat(LOG_CAT_NETWORKING, "IsOpenTransportAvailable: OpenTransport availability = %s", 
+                      available ? "true" : "false");
+        return available;
     }
     
-    /* Check if OpenTransport is present */
-    if ((response & (1 << 0)) == 0) { /* gestaltOpenTptPresentBit */
-        log_debug_cat(LOG_CAT_NETWORKING, "IsOpenTransportAvailable: OpenTransport not present");
-        return false;
-    }
-    
-    /* Check if OpenTransport is loaded */
-    if ((response & (1 << 1)) == 0) { /* gestaltOpenTptLoadedBit */
-        log_debug_cat(LOG_CAT_NETWORKING, "IsOpenTransportAvailable: OpenTransport not loaded");
-        return false;
-    }
-    
-    /* Check if TCP is available if we need it */
-    if ((response & (1 << 4)) == 0) { /* gestaltOpenTptTCPPresentBit */
-        log_debug_cat(LOG_CAT_NETWORKING, "IsOpenTransportAvailable: OpenTransport TCP not present");
-        return false;
-    }
-    
-    if ((response & (1 << 5)) == 0) { /* gestaltOpenTptTCPLoadedBit */
-        log_debug_cat(LOG_CAT_NETWORKING, "IsOpenTransportAvailable: OpenTransport TCP not loaded");
-        return false;
-    }
-    
-    log_debug_cat(LOG_CAT_NETWORKING, "IsOpenTransportAvailable: OpenTransport with TCP is available (response: 0x%08lX)", response);
-    return true;
+    log_debug_cat(LOG_CAT_NETWORKING, "IsOpenTransportAvailable: Failed to get OpenTransport operations table");
+    return false;
 }
 
 /* Initialize the network abstraction layer */

@@ -382,35 +382,38 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
             gUDPReadHandle = NULL;
 
             if (dataLength > 0) {
-                if (remoteHost != myLocalIP) {
+                /* Debug the self-discovery filtering */
+                log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Comparing remoteHost=0x%08lX with myLocalIP=0x%08lX", 
+                              (unsigned long)remoteHost, (unsigned long)myLocalIP);
+                
+                /* Convert to string format for reliable comparison */
+                char remoteIPStr[INET_ADDRSTRLEN];
+                char localIPStr[INET_ADDRSTRLEN];
+                Boolean isSelfPacket = false;
+                
+                if (gNetworkOps->AddressToString) {
+                    gNetworkOps->AddressToString(remoteHost, remoteIPStr);
+                    gNetworkOps->AddressToString(myLocalIP, localIPStr);
+                    isSelfPacket = (strcmp(remoteIPStr, localIPStr) == 0);
+                } else {
+                    /* Fallback: compare raw addresses but ensure same byte order */
+                    isSelfPacket = (remoteHost == myLocalIP);
+                }
+                
+                log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Self-packet check: remote='%s' local='%s' isSelf=%s", 
+                              remoteIPStr, localIPStr, isSelfPacket ? "true" : "false");
+                
+                if (!isSelfPacket) {
+                    /* Use the already converted string for consistency */
                     char senderIPStr[INET_ADDRSTRLEN];
-                    if (gNetworkOps->AddressToString) {
-                        OSErr addrErr = gNetworkOps->AddressToString(remoteHost, senderIPStr);
-                        if (addrErr != noErr) {
-                            sprintf(senderIPStr, "%lu.%lu.%lu.%lu",
-                                    (remoteHost >> 24) & 0xFF, (remoteHost >> 16) & 0xFF,
-                                    (remoteHost >> 8) & 0xFF, remoteHost & 0xFF);
-                        }
-                    } else {
-                        sprintf(senderIPStr, "%lu.%lu.%lu.%lu",
-                                (remoteHost >> 24) & 0xFF, (remoteHost >> 16) & 0xFF,
-                                (remoteHost >> 8) & 0xFF, remoteHost & 0xFF);
-                    }
+                    strcpy(senderIPStr, remoteIPStr);  /* Already converted above */
 
                     uint32_t sender_ip_for_shared = (uint32_t)remoteHost;
                     discovery_logic_process_packet((const char *)dataPtr, dataLength,
                                                    senderIPStr, sender_ip_for_shared, remotePort,
                                                    &mac_callbacks, NULL);
                 } else {
-                    char selfIPStr[INET_ADDRSTRLEN];
-                    if (gNetworkOps->AddressToString) {
-                        gNetworkOps->AddressToString(remoteHost, selfIPStr);
-                    } else {
-                        sprintf(selfIPStr, "%lu.%lu.%lu.%lu",
-                                (remoteHost >> 24) & 0xFF, (remoteHost >> 16) & 0xFF,
-                                (remoteHost >> 8) & 0xFF, remoteHost & 0xFF);
-                    }
-                    log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Ignored UDP packet from self (%s).", selfIPStr);
+                    log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Ignored UDP packet from self (%s).", remoteIPStr);
                 }
 
                 /* Return the buffer asynchronously */
