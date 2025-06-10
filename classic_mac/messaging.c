@@ -58,9 +58,10 @@ Boolean gListenNoCopyRdsPendingReturn = false;
 NetworkAsyncHandle gListenAsyncHandle = NULL;
 Boolean gListenAsyncOperationInProgress = false;
 
-/* Connection cleanup tracking */
-Boolean gListenStreamNeedsReset = false;
-unsigned long gListenStreamResetTime = 0;
+/* Connection cleanup tracking - REMOVED: Reset logic eliminated per Apple OpenTransport docs
+ * Listen endpoints should remain persistent and immediately ready for next connection */
+/* Boolean gListenStreamNeedsReset = false; -- REMOVED */
+/* unsigned long gListenStreamResetTime = 0; -- REMOVED */
 
 /* Message queue support */
 static QueuedMessage gMessageQueue[MAX_QUEUED_MESSAGES];
@@ -352,8 +353,7 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
     gTCPSendState = TCP_STATE_IDLE;
     gListenAsyncOperationInProgress = false;
     gListenNoCopyRdsPendingReturn = false;
-    gListenStreamNeedsReset = false;
-    gListenStreamResetTime = 0;
+    /* REMOVED: Reset tracking variables - listen endpoint remains persistent */
     memset((Ptr)&gListenAsrEvent, 0, sizeof(ASR_Event_Info));
     memset((Ptr)&gSendAsrEvent, 0, sizeof(ASR_Event_Info));
 
@@ -507,8 +507,7 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
                 log_error_cat(LOG_CAT_MESSAGING, "Listen ASR: TCPDataArrival, but GetStatus failed.");
                 gNetworkOps->TCPAbort(gTCPListenStream);
                 gTCPListenState = TCP_STATE_IDLE;
-                gListenStreamNeedsReset = true;
-                gListenStreamResetTime = TickCount();
+                /* REMOVED: Reset logic - listen endpoint stays ready for next connection */
                 break;
             }
 
@@ -536,14 +535,12 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
                 log_app_event("Listen connection closing by peer.");
                 gNetworkOps->TCPAbort(gTCPListenStream);
                 gTCPListenState = TCP_STATE_IDLE;
-                gListenStreamNeedsReset = true;
-                gListenStreamResetTime = TickCount();
+                /* REMOVED: Reset logic - listen endpoint immediately ready for next connection */
             } else if (rcvErr != commandTimeout) {
                 log_app_event("Error during Listen TCPNoCopyRcv: %d", rcvErr);
                 gNetworkOps->TCPAbort(gTCPListenStream);
                 gTCPListenState = TCP_STATE_IDLE;
-                gListenStreamNeedsReset = true;
-                gListenStreamResetTime = TickCount();
+                /* REMOVED: Reset logic - listen endpoint immediately ready for next connection */
             }
         }
         break;
@@ -556,17 +553,15 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
         }
         gListenAsyncOperationInProgress = false;
         gTCPListenState = TCP_STATE_IDLE;
-        /* Always set reset flag when connection terminates */
-        gListenStreamNeedsReset = true;
-        gListenStreamResetTime = TickCount();
+        /* REMOVED: Reset logic - per Apple docs, listen endpoint should remain persistent
+         * and immediately return to T_IDLE state ready for next connection */
         break;
 
     case TCPClosing:
         log_app_event("Listen ASR: Remote peer closed connection.");
         gNetworkOps->TCPAbort(gTCPListenStream);
         gTCPListenState = TCP_STATE_IDLE;
-        gListenStreamNeedsReset = true;
-        gListenStreamResetTime = TickCount();
+        /* REMOVED: Reset logic - listen endpoint immediately ready for next connection */
         break;
 
     default:

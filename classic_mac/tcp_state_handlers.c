@@ -10,15 +10,17 @@
 /* External variables from messaging.c */
 extern NetworkStreamRef gTCPListenStream;
 extern TCPStreamState gTCPListenState;
-extern Boolean gListenStreamNeedsReset;
-extern unsigned long gListenStreamResetTime;
+/* REMOVED: Reset tracking variables - listen endpoint remains persistent */
+/* extern Boolean gListenStreamNeedsReset; */
+/* extern unsigned long gListenStreamResetTime; */
 extern Boolean gListenAsyncOperationInProgress;
 extern NetworkAsyncHandle gListenAsyncHandle;
 extern wdsEntry gListenNoCopyRDS[];
 extern Boolean gListenNoCopyRdsPendingReturn;
 
 /* Constants */
-#define TCP_STREAM_RESET_DELAY_TICKS 60  /* 1 second at 60Hz */
+/* REMOVED: Reset delay - per Apple OpenTransport docs, listen endpoints should be persistent */
+/* #define TCP_STREAM_RESET_DELAY_TICKS 60  -- 1 second at 60Hz -- REMOVED */
 #define DATA_CHECK_INTERVAL_TICKS 30     /* 0.5 seconds */
 
 /* Forward declarations */
@@ -51,32 +53,25 @@ void dispatch_listen_state_handler(TCPStreamState state, GiveTimePtr giveTime)
     handle_listen_unexpected_state(giveTime);
 }
 
-/* Check if we should wait for stream reset */
-Boolean should_wait_for_stream_reset(void)
-{
-    if (!gListenStreamNeedsReset) {
-        return false;
-    }
+/* REMOVED: Reset wait logic - per Apple OpenTransport documentation,
+ * listen endpoints should remain persistent and immediately ready for next connection.
+ * The TIME_WAIT state only applies to data endpoints, not listening endpoints. */
 
-    unsigned long currentTime = TickCount();
-    if ((currentTime - gListenStreamResetTime) < TCP_STREAM_RESET_DELAY_TICKS) {
-        return true;  /* Still waiting */
-    }
+/* Boolean should_wait_for_stream_reset(void) -- FUNCTION REMOVED */
+/*
+ * REMOVED FUNCTION: This function implemented incorrect reset logic that caused
+ * intermittent "Connection refused" errors. Per Apple's OpenTransport documentation,
+ * listening endpoints should remain in T_IDLE state and be immediately ready
+ * for the next connection without any delay.
+ */
 
-    /* Enough time has passed */
-    gListenStreamNeedsReset = false;
-    return false;
-}
-
-/* Handle IDLE state - start listening if ready */
+/* Handle IDLE state - start listening immediately (no reset delay) */
 void handle_listen_idle_state(GiveTimePtr giveTime)
 {
     (void)giveTime;  /* Unused parameter */
 
-    if (should_wait_for_stream_reset()) {
-        return;  /* Still waiting for reset */
-    }
-
+    /* FIXED: Per Apple OpenTransport docs, listen endpoints should remain persistent.
+     * No reset delay needed - start listening immediately when in IDLE state. */
     StartPassiveListen();
 }
 
@@ -110,8 +105,7 @@ void process_listen_async_completion(GiveTimePtr giveTime)
     } else {
         log_app_event("TCPListenAsync failed: %d.", operationResult);
         gTCPListenState = TCP_STATE_IDLE;
-        gListenStreamNeedsReset = true;
-        gListenStreamResetTime = TickCount();
+        /* REMOVED: Reset logic - listen endpoint immediately ready for retry */
     }
 }
 
@@ -213,8 +207,7 @@ void check_for_incoming_data(GiveTimePtr giveTime)
         log_app_event("Listen connection closed by peer (periodic check).");
         gNetworkOps->TCPAbort(gTCPListenStream);
         gTCPListenState = TCP_STATE_IDLE;
-        gListenStreamNeedsReset = true;
-        gListenStreamResetTime = TickCount();
+        /* REMOVED: Reset logic - listen endpoint immediately ready for next connection */
     }
 }
 
