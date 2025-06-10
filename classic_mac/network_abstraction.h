@@ -71,6 +71,8 @@ typedef struct {
     OSErr(*TCPRelease)(short refNum, NetworkStreamRef streamRef);
     OSErr(*TCPListen)(NetworkStreamRef streamRef, tcp_port localPort,
                       Byte timeout, Boolean async);
+    OSErr(*TCPAcceptConnection)(NetworkStreamRef listenerRef, NetworkStreamRef *dataStreamRef,
+                                ip_addr *remoteHost, tcp_port *remotePort);
     OSErr(*TCPConnect)(NetworkStreamRef streamRef, ip_addr remoteHost,
                        tcp_port remotePort, Byte timeout,
                        NetworkGiveTimeProcPtr giveTime);

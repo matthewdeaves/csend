@@ -11,6 +11,63 @@
 #include <OpenTransport.h>
 #include <OpenTptInternet.h>
 
+/********************************************************************************
+ *                                                                              *
+ *   OpenTransport Notifier Implementation                                      *
+ *                                                                              *
+ ********************************************************************************/
+
+/*
+ * Global variables for Universal Procedure Pointers (UPPs) for our notifiers.
+ * These are necessary so we can install them when creating endpoints
+ * and remove them cleanly at shutdown.
+ */
+static OTNotifyUPP gOTNotifierUPP = NULL;
+static OTNotifyUPP gOTPersistentListenerUPP = NULL;
+static OTNotifyUPP gOTDataEndpointUPP = NULL;
+
+/**
+ * @brief The application's global OpenTransport notifier procedure.
+ *
+ * @param contextPtr    A context pointer provided by our app during installation. Unused for now.
+ * @param code          The event code from OpenTransport (e.g., T_LISTEN, T_DATA).
+ * @param result        The result of the event (e.g., kOTNoError).
+ * @param cookie        A value specific to the event, often the EndpointRef that sourced it.
+ *
+ * This function is the heart of OpenTransport's asynchronous model. It is called by
+ * the system at deferred task time to notify our application of a network event.
+ *
+ * Inside Macintosh Best Practice:
+ * This function must be extremely fast and non-blocking. It must not call any
+ * Toolbox function that could move or purge memory, as it runs in a restricted
+ * context. Its primary job is to record the event and signal the main event
+ * loop to process it later.
+ */
+pascal void OTNotifierProc(void* contextPtr, OTEventCode code, OTResult result, void* cookie)
+{
+    /* These parameters are unused in this basic implementation, but are essential. */
+    (void)contextPtr;
+
+    /*
+     * For now, we will simply log the event. This is an essential debugging aid.
+     * In a more advanced implementation, this notifier would set flags or post
+     * custom events to the main event loop.
+     */
+    log_debug_cat(LOG_CAT_NETWORKING, "OT Notifier: code=0x%lX, result=0x%lX, cookie=0x%lX",
+                  (unsigned long)code, (unsigned long)result, (unsigned long)cookie);
+
+    /*
+     * A T_UDERR_IND event is an unsolicited "unrecoverable error" indication.
+     * It means an endpoint has experienced a fatal error and is now unusable.
+     * It is critical to be aware of this possibility.
+     */
+    if (code == T_UDERR) {
+        if ((EndpointRef)cookie != kOTInvalidEndpointRef) {
+            log_warning_cat(LOG_CAT_NETWORKING, "OT Notifier: Received T_UDERR for endpoint 0x%lX. It is now idle due to a fatal error.", (unsigned long)cookie);
+        }
+    }
+}
+
 /* External declarations for TCP stream variables */
 extern NetworkStreamRef gTCPListenStream;
 extern NetworkStreamRef gTCPSendStream;
@@ -20,9 +77,23 @@ static TCall* gOTRcvConnectCall = NULL;
 static InetAddress* gOTRemoteAddr = NULL;
 static Boolean gOTGlobalBuffersInitialized = false;
 
+/* OpenTransport Factory Pattern: Persistent Listener + Data Endpoints */
+static EndpointRef gPersistentListener = kOTInvalidEndpointRef;
+static EndpointRef gCurrentDataEndpoint = kOTInvalidEndpointRef;
+static Boolean gPersistentListenerInitialized = false;
+static tcp_port gListenPort = 0;
+
 /* Forward declarations for buffer management */
 static OSErr InitializeOTGlobalBuffers(void);
 static void CleanupOTGlobalBuffers(void);
+
+/* Forward declarations for OpenTransport factory pattern */
+static OSErr InitializePersistentListener(tcp_port localPort);
+static OSErr CreateDataEndpoint(void);
+static void CleanupDataEndpoint(void);
+static void CleanupPersistentListener(void);
+static pascal void OTPersistentListenerNotifier(void *contextPtr, OTEventCode code, OTResult result, void *cookie);
+static pascal void OTDataEndpointNotifier(void *contextPtr, OTEventCode code, OTResult result, void *cookie);
 
 /* OpenTransport async operation types for UDP */
 typedef enum {
@@ -118,6 +189,8 @@ static OSErr OTImpl_TCPCreate(short refNum, NetworkStreamRef *streamRef,
 static OSErr OTImpl_TCPRelease(short refNum, NetworkStreamRef streamRef);
 static OSErr OTImpl_TCPListen(NetworkStreamRef streamRef, tcp_port localPort,
                               Byte timeout, Boolean async);
+static OSErr OTImpl_TCPAcceptConnection(NetworkStreamRef listenerRef, NetworkStreamRef *dataStreamRef,
+                                        ip_addr *remoteHost, tcp_port *remotePort);
 static OSErr OTImpl_TCPConnect(NetworkStreamRef streamRef, ip_addr remoteHost,
                                tcp_port remotePort, Byte timeout,
                                NetworkGiveTimeProcPtr giveTime);
@@ -367,57 +440,9 @@ static pascal void OTTCPNotifier(void *contextPtr, OTEventCode code, OTResult re
         break;
         
     case T_LISTEN:
-        log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: T_LISTEN - incoming connection");
-        {
-            /* Handle incoming connection request */
-            TCall call;
-            InetAddress clientAddr;
-            OSStatus acceptErr;
-            
-            /* Set up call structure to receive connection details */
-            call.addr.buf = (UInt8 *)&clientAddr;
-            call.addr.maxlen = sizeof(clientAddr);
-            call.opt.buf = NULL;
-            call.opt.maxlen = 0;
-            call.udata.buf = NULL;
-            call.udata.maxlen = 0;
-            
-            /* Get the connection request details */
-            acceptErr = OTListen(tcpEp->endpoint, &call);
-            if (acceptErr == noErr) {
-                /* Accept the connection */
-                acceptErr = OTAccept(tcpEp->endpoint, tcpEp->endpoint, &call);
-                if (acceptErr == noErr) {
-                    /* Connection accepted successfully */
-                    tcpEp->isConnected = true;
-                    /* Keep isListening true for the listen stream to handle more connections */
-                    tcpEp->remoteHost = clientAddr.fHost;
-                    tcpEp->remotePort = clientAddr.fPort;
-                    log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: Connection accepted from %d.%d.%d.%d:%d", 
-                                  (tcpEp->remoteHost >> 24) & 0xFF,
-                                  (tcpEp->remoteHost >> 16) & 0xFF, 
-                                  (tcpEp->remoteHost >> 8) & 0xFF,
-                                  tcpEp->remoteHost & 0xFF,
-                                  tcpEp->remotePort);
-                } else {
-                    log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: OTAccept failed: %d", acceptErr);
-                }
-            } else {
-                log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: OTListen failed: %d", acceptErr);
-            }
-            
-            /* Complete any pending listen operations */
-            for (i = 0; i < MAX_OT_TCP_ASYNC_OPS; i++) {
-                if (gOTTCPAsyncOps[i].inUse && 
-                    gOTTCPAsyncOps[i].endpoint == tcpEp->endpoint &&
-                    gOTTCPAsyncOps[i].opType == OT_ASYNC_TCP_LISTEN &&
-                    !gOTTCPAsyncOps[i].completed) {
-                    gOTTCPAsyncOps[i].completed = true;
-                    gOTTCPAsyncOps[i].result = (acceptErr == noErr) ? result : acceptErr;
-                    break;
-                }
-            }
-        }
+        /* DEPRECATED: This case is no longer used with factory pattern */
+        /* All T_LISTEN events are now handled by OTPersistentListenerNotifier */
+        log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: T_LISTEN on old endpoint (should not happen with factory pattern)");
         break;
         
     case T_DATA:
@@ -525,39 +550,246 @@ static pascal void OTUDPNotifier(void *contextPtr, OTEventCode code, OTResult re
     }
 }
 
+/* OpenTransport Factory Pattern: Persistent Listener Notifier */
+static pascal void OTPersistentListenerNotifier(void *contextPtr, OTEventCode code, OTResult result, void *cookie)
+{
+    (void)contextPtr; (void)result; (void)cookie; /* Unused */
+    
+    switch (code) {
+    case T_LISTEN:
+        log_debug_cat(LOG_CAT_NETWORKING, "OTPersistentListenerNotifier: T_LISTEN - incoming connection");
+        {
+            /* Factory Pattern: Create NEW data endpoint for this connection */
+            TCall call;
+            InetAddress clientAddr;
+            OSStatus acceptErr;
+            
+            /* Set up call structure to receive connection details */
+            call.addr.buf = (UInt8 *)&clientAddr;
+            call.addr.maxlen = sizeof(clientAddr);
+            call.opt.buf = NULL;
+            call.opt.maxlen = 0;
+            call.udata.buf = NULL;
+            call.udata.maxlen = 0;
+            
+            /* Get the connection request details from persistent listener */
+            acceptErr = OTListen(gPersistentListener, &call);
+            if (acceptErr == noErr) {
+                /* CRITICAL: Create NEW endpoint for data transfer */
+                OSErr createErr = CreateDataEndpoint();
+                if (createErr == noErr && gCurrentDataEndpoint != kOTInvalidEndpointRef) {
+                    /* Accept connection on the NEW data endpoint (factory pattern) */
+                    acceptErr = OTAccept(gPersistentListener, gCurrentDataEndpoint, &call);
+                    if (acceptErr == noErr) {
+                        /* Connection accepted successfully on new data endpoint */
+                        log_debug_cat(LOG_CAT_NETWORKING, "OTPersistentListenerNotifier: Connection accepted from %d.%d.%d.%d:%d", 
+                                      (clientAddr.fHost >> 24) & 0xFF,
+                                      (clientAddr.fHost >> 16) & 0xFF, 
+                                      (clientAddr.fHost >> 8) & 0xFF,
+                                      clientAddr.fHost & 0xFF,
+                                      clientAddr.fPort);
+                        
+                        /* GEMINI ARCHITECTURE: Signal connection availability instead of switching */
+                        /* The persistent listener remains dedicated to listening */
+                        /* Application layer will call TCPAcceptConnection to get separate data stream */
+                        
+                        log_debug_cat(LOG_CAT_NETWORKING, "OTPersistentListenerNotifier: Connection available from %d.%d.%d.%d:%d", 
+                                      (clientAddr.fHost >> 24) & 0xFF,
+                                      (clientAddr.fHost >> 16) & 0xFF, 
+                                      (clientAddr.fHost >> 8) & 0xFF,
+                                      clientAddr.fHost & 0xFF,
+                                      clientAddr.fPort);
+                        
+                        /* Generate Listen ASR event to signal connection availability */
+                        if (gTCPListenStream != NULL) {
+                            OTTCPEndpoint *listenerEp = (OTTCPEndpoint *)gTCPListenStream;
+                            /* Keep listener state unchanged - it remains listening */
+                            TCP_Listen_ASR_Handler((StreamPtr)listenerEp, TCPDataArrival, NULL, 0, NULL);
+                        }
+                    } else {
+                        log_debug_cat(LOG_CAT_NETWORKING, "OTPersistentListenerNotifier: OTAccept failed: %d", acceptErr);
+                        CleanupDataEndpoint(); /* Clean up failed data endpoint */
+                    }
+                } else {
+                    log_debug_cat(LOG_CAT_NETWORKING, "OTPersistentListenerNotifier: Failed to create data endpoint: %d", createErr);
+                }
+            } else {
+                log_debug_cat(LOG_CAT_NETWORKING, "OTPersistentListenerNotifier: OTListen failed: %d", acceptErr);
+            }
+            
+            /* CRITICAL: Persistent listener remains in T_LISTEN state, ready for next connection */
+        }
+        break;
+        
+    default:
+        log_debug_cat(LOG_CAT_NETWORKING, "OTPersistentListenerNotifier: Unhandled event 0x%08lX", code);
+        break;
+    }
+}
+
+/* OpenTransport Factory Pattern: Data Endpoint Notifier */
+static pascal void OTDataEndpointNotifier(void *contextPtr, OTEventCode code, OTResult result, void *cookie)
+{
+    (void)contextPtr; (void)result; (void)cookie; /* Unused */
+    
+    switch (code) {
+    case T_DATA:
+        log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: T_DATA - data available on data endpoint");
+        /* Forward to messaging layer for data processing */
+        if (gTCPListenStream != NULL) {
+            OTTCPEndpoint *tcpEp = (OTTCPEndpoint *)gTCPListenStream;
+            /* Ensure we're operating on the data endpoint, not persistent listener */
+            if (tcpEp->endpoint == gCurrentDataEndpoint) {
+                TCP_Listen_ASR_Handler((StreamPtr)tcpEp, TCPDataArrival, NULL, 0, NULL);
+            } else {
+                log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Endpoint mismatch - skipping ASR");
+            }
+        }
+        break;
+        
+    case T_ORDREL:
+        log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: T_ORDREL - orderly release");
+        /* Handle connection close on data endpoint */
+        if (gCurrentDataEndpoint != kOTInvalidEndpointRef) {
+            OSErr rcvDisconnErr = OTRcvOrderlyDisconnect(gCurrentDataEndpoint);
+            if (rcvDisconnErr == noErr) {
+                log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Acknowledged peer's orderly release");
+                OSErr sndDisconnErr = OTSndOrderlyDisconnect(gCurrentDataEndpoint);
+                if (sndDisconnErr == noErr) {
+                    log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Sent orderly release to peer");
+                } else {
+                    log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Failed to send orderly release: %d", sndDisconnErr);
+                }
+            } else {
+                log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Failed to acknowledge orderly release: %d", rcvDisconnErr);
+            }
+        }
+        
+        /* Generate ASR event for messaging layer */
+        if (gTCPListenStream != NULL) {
+            OTTCPEndpoint *tcpEp = (OTTCPEndpoint *)gTCPListenStream;
+            tcpEp->isConnected = false;
+            TCP_Listen_ASR_Handler((StreamPtr)tcpEp, TCPClosing, NULL, 0, NULL);
+        }
+        
+        /* Clean up the data endpoint - persistent listener remains active */
+        CleanupDataEndpoint();
+        
+        /* CRITICAL: Reset gTCPListenStream endpoint reference after cleanup */
+        if (gTCPListenStream != NULL) {
+            OTTCPEndpoint *tcpEp = (OTTCPEndpoint *)gTCPListenStream;
+            tcpEp->endpoint = kOTInvalidEndpointRef;
+            tcpEp->isConnected = false;
+            log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Reset gTCPListenStream endpoint reference (ORDREL)");
+        }
+        break;
+        
+    case T_DISCONNECT:
+        log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: T_DISCONNECT");
+        /* Handle abortive disconnect on data endpoint */
+        if (gTCPListenStream != NULL) {
+            OTTCPEndpoint *tcpEp = (OTTCPEndpoint *)gTCPListenStream;
+            tcpEp->isConnected = false;
+            TCP_Listen_ASR_Handler((StreamPtr)tcpEp, TCPClosing, NULL, 0, NULL);
+        }
+        
+        /* Clean up the data endpoint - persistent listener remains active */
+        CleanupDataEndpoint();
+        
+        /* CRITICAL: Reset gTCPListenStream endpoint reference after cleanup */
+        if (gTCPListenStream != NULL) {
+            OTTCPEndpoint *tcpEp = (OTTCPEndpoint *)gTCPListenStream;
+            tcpEp->endpoint = kOTInvalidEndpointRef;
+            tcpEp->isConnected = false;
+            log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Reset gTCPListenStream endpoint reference (DISCONNECT)");
+        }
+        break;
+        
+    default:
+        log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Unhandled event 0x%08lX", code);
+        break;
+    }
+}
+
 OSStatus InitializeOpenTransport(void)
 {
     OSStatus err;
     
-    if (gOTInitialized) {
-        return noErr;
-    }
-    
-    log_debug_cat(LOG_CAT_NETWORKING, "InitializeOpenTransport: Initializing OpenTransport");
-    
-    /* Don't call InitOpenTransport() here if already called by IsAvailable */
-    /* Check if we need to call it or if it was already called */
-    /* Since IsAvailable() now calls InitOpenTransport(), just verify state */
+    log_info_cat(LOG_CAT_NETWORKING, "OT: Initializing OpenTransport stack...");
+
+    /* Initialize OpenTransport if not already done */
     if (!gOTInitialized) {
         err = InitOpenTransport();
-        if (err != noErr) {
-            log_debug_cat(LOG_CAT_NETWORKING, "InitializeOpenTransport: InitOpenTransport failed: %d", err);
+        if (err != kOTNoError) {
+            log_error_cat(LOG_CAT_NETWORKING, "FATAL: InitOpenTransport() failed with error: %ld", (long)err);
             return err;
         }
         gOTInitialized = true;
+        log_debug_cat(LOG_CAT_NETWORKING, "OT: InitOpenTransport() successful.");
+    } else {
+        log_debug_cat(LOG_CAT_NETWORKING, "OT: OpenTransport already initialized.");
     }
+
+    /*
+     * CRITICAL STEP 1: Create the Universal Procedure Pointers (UPPs).
+     * These create callable pointers that OpenTransport can use to execute our notifiers.
+     */
+    if (gOTNotifierUPP == NULL) {
+        gOTNotifierUPP = NewOTNotifyUPP(OTNotifierProc);
+        if (gOTNotifierUPP == NULL) {
+            log_error_cat(LOG_CAT_NETWORKING, "FATAL: NewOTNotifyUPP(OTNotifierProc) failed. Out of memory.");
+            CloseOpenTransport(); /* Attempt to clean up */
+            return memFullErr;
+        }
+    }
+    
+    if (gOTPersistentListenerUPP == NULL) {
+        gOTPersistentListenerUPP = NewOTNotifyUPP(OTPersistentListenerNotifier);
+        if (gOTPersistentListenerUPP == NULL) {
+            log_error_cat(LOG_CAT_NETWORKING, "FATAL: NewOTNotifyUPP(OTPersistentListenerNotifier) failed. Out of memory.");
+            if (gOTNotifierUPP) {
+                DisposeOTNotifyUPP(gOTNotifierUPP);
+            }
+            gOTNotifierUPP = NULL;
+            CloseOpenTransport(); /* Attempt to clean up */
+            return memFullErr;
+        }
+    }
+    
+    if (gOTDataEndpointUPP == NULL) {
+        gOTDataEndpointUPP = NewOTNotifyUPP(OTDataEndpointNotifier);
+        if (gOTDataEndpointUPP == NULL) {
+            log_error_cat(LOG_CAT_NETWORKING, "FATAL: NewOTNotifyUPP(OTDataEndpointNotifier) failed. Out of memory.");
+            if (gOTNotifierUPP) {
+                DisposeOTNotifyUPP(gOTNotifierUPP);
+            }
+            if (gOTPersistentListenerUPP) {
+                DisposeOTNotifyUPP(gOTPersistentListenerUPP);
+            }
+            gOTNotifierUPP = NULL;
+            gOTPersistentListenerUPP = NULL;
+            CloseOpenTransport(); /* Attempt to clean up */
+            return memFullErr;
+        }
+    }
+
+    /*
+     * Note: The notifier UPP is created here but will be installed per-endpoint
+     * when endpoints are created. OpenTransport notifiers are installed per
+     * provider/endpoint, not globally.
+     */
     
     InitializeOTAsyncOps();
     InitializeOTTCPAsyncOps();
     
-    log_debug_cat(LOG_CAT_NETWORKING, "InitializeOpenTransport: OpenTransport initialized successfully");
-    return noErr;
+    log_info_cat(LOG_CAT_NETWORKING, "OT: Notifier UPPs created successfully. OpenTransport is ready.");
+    return kOTNoError;
 }
 
 void ShutdownOpenTransport(void)
 {
     if (gOTInitialized) {
-        log_debug_cat(LOG_CAT_NETWORKING, "ShutdownOpenTransport: Closing OpenTransport");
+        log_info_cat(LOG_CAT_NETWORKING, "OT: Shutting down OpenTransport stack...");
         
         /* Cancel all pending async operations before shutdown */
         InitializeOTAsyncOps();
@@ -580,10 +812,35 @@ void ShutdownOpenTransport(void)
         /* Reset initialization flags */
         gOTAsyncOpsInitialized = false;
         gOTTCPAsyncOpsInitialized = false;
+
+        /*
+         * Clean up the notifier UPPs.
+         * Individual endpoints should have removed their notifiers when closed.
+         */
+        if (gOTDataEndpointUPP != NULL) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OT: Disposing Data Endpoint Notifier UPP...");
+            DisposeOTNotifyUPP(gOTDataEndpointUPP);
+            gOTDataEndpointUPP = NULL;
+        }
         
+        if (gOTPersistentListenerUPP != NULL) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OT: Disposing Persistent Listener Notifier UPP...");
+            DisposeOTNotifyUPP(gOTPersistentListenerUPP);
+            gOTPersistentListenerUPP = NULL;
+        }
+        
+        if (gOTNotifierUPP != NULL) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OT: Disposing General Notifier UPP...");
+            DisposeOTNotifyUPP(gOTNotifierUPP);
+            gOTNotifierUPP = NULL;
+        }
+
+        /* Finally, close the OpenTransport library itself. */
+        log_debug_cat(LOG_CAT_NETWORKING, "OT: Calling CloseOpenTransport()...");
         CloseOpenTransport();
         gOTInitialized = false;
-        log_debug_cat(LOG_CAT_NETWORKING, "ShutdownOpenTransport: OpenTransport shutdown complete");
+        
+        log_info_cat(LOG_CAT_NETWORKING, "OT: Shutdown complete.");
     }
 }
 
@@ -725,10 +982,198 @@ static void CleanupOTGlobalBuffers(void)
     log_debug_cat(LOG_CAT_NETWORKING, "CleanupOTGlobalBuffers: Global OTRcvConnect buffers cleaned up");
 }
 
+/* OpenTransport Factory Pattern Implementation */
+
+/* Initialize persistent listener that lives forever */
+static OSErr InitializePersistentListener(tcp_port localPort)
+{
+    OSStatus err;
+    InetAddress addr;
+    TBind reqAddr, retAddr;
+    TCall call;
+    
+    if (gPersistentListenerInitialized) {
+        log_debug_cat(LOG_CAT_NETWORKING, "InitializePersistentListener: Already initialized");
+        return noErr;
+    }
+    
+    /* Create TCP endpoint for persistent listener */
+    {
+        OTConfigurationRef config = OTCreateConfiguration(kTCPName);
+        if (config == kOTInvalidConfigurationPtr || config == kOTNoMemoryConfigurationPtr || config == NULL) {
+            log_debug_cat(LOG_CAT_NETWORKING, "InitializePersistentListener: Failed to create TCP configuration");
+            return kOTBadConfigurationErr;
+        }
+        
+        gPersistentListener = OTOpenEndpoint(config, 0, NULL, &err);
+        if (err != noErr) {
+            log_debug_cat(LOG_CAT_NETWORKING, "InitializePersistentListener: OTOpenEndpoint failed: %d", err);
+            return err;
+        }
+    }
+    
+    /* Install persistent listener notifier */
+    err = OTInstallNotifier(gPersistentListener, gOTPersistentListenerUPP, NULL);
+    if (err != noErr) {
+        log_debug_cat(LOG_CAT_NETWORKING, "InitializePersistentListener: OTInstallNotifier failed: %d", err);
+        OTCloseProvider(gPersistentListener);
+        gPersistentListener = kOTInvalidEndpointRef;
+        return err;
+    }
+    
+    /* Set endpoint to async mode */
+    err = OTSetAsynchronous(gPersistentListener);
+    if (err != noErr) {
+        log_debug_cat(LOG_CAT_NETWORKING, "InitializePersistentListener: OTSetAsynchronous failed: %d", err);
+        OTCloseProvider(gPersistentListener);
+        gPersistentListener = kOTInvalidEndpointRef;
+        return err;
+    }
+    
+    /* Set up local address for binding */
+    OTInitInetAddress(&addr, localPort, kOTAnyInetAddress);
+    
+    /* Set up bind request */
+    reqAddr.addr.buf = (UInt8 *)&addr;
+    reqAddr.addr.len = sizeof(addr);
+    reqAddr.qlen = 1; /* Listen queue length */
+    
+    retAddr.addr.buf = (UInt8 *)&addr;
+    retAddr.addr.maxlen = sizeof(addr);
+    
+    /* Bind persistent listener to local address */
+    err = OTBind(gPersistentListener, &reqAddr, &retAddr);
+    if (err != noErr) {
+        log_debug_cat(LOG_CAT_NETWORKING, "InitializePersistentListener: OTBind failed: %d", err);
+        OTCloseProvider(gPersistentListener);
+        gPersistentListener = kOTInvalidEndpointRef;
+        return err;
+    }
+    
+    /* Set up call structure for OTListen */
+    call.addr.buf = (UInt8 *)&addr;
+    call.addr.maxlen = sizeof(addr);
+    call.opt.buf = NULL;
+    call.opt.maxlen = 0;
+    call.udata.buf = NULL;
+    call.udata.maxlen = 0;
+    
+    /* Start persistent listening - this endpoint will NEVER be destroyed */
+    err = OTListen(gPersistentListener, &call);
+    if (err != noErr && err != kOTNoDataErr) {
+        log_debug_cat(LOG_CAT_NETWORKING, "InitializePersistentListener: OTListen failed: %d", err);
+        OTUnbind(gPersistentListener);
+        OTCloseProvider(gPersistentListener);
+        gPersistentListener = kOTInvalidEndpointRef;
+        return err;
+    }
+    
+    gListenPort = localPort;
+    gPersistentListenerInitialized = true;
+    
+    log_debug_cat(LOG_CAT_NETWORKING, "InitializePersistentListener: Persistent listener created and listening on port %d", localPort);
+    return noErr;
+}
+
+/* Create new data endpoint for incoming connection (factory pattern) */
+static OSErr CreateDataEndpoint(void)
+{
+    OSStatus err;
+    
+    /* Clean up any existing data endpoint first */
+    CleanupDataEndpoint();
+    
+    /* Create NEW TCP endpoint for data transfer */
+    {
+        OTConfigurationRef config = OTCreateConfiguration(kTCPName);
+        if (config == kOTInvalidConfigurationPtr || config == kOTNoMemoryConfigurationPtr || config == NULL) {
+            log_debug_cat(LOG_CAT_NETWORKING, "CreateDataEndpoint: Failed to create TCP configuration");
+            return kOTBadConfigurationErr;
+        }
+        
+        gCurrentDataEndpoint = OTOpenEndpoint(config, 0, NULL, &err);
+        if (err != noErr) {
+            log_debug_cat(LOG_CAT_NETWORKING, "CreateDataEndpoint: OTOpenEndpoint failed: %d", err);
+            return err;
+        }
+    }
+    
+    /* Install data endpoint notifier */
+    err = OTInstallNotifier(gCurrentDataEndpoint, gOTDataEndpointUPP, NULL);
+    if (err != noErr) {
+        log_debug_cat(LOG_CAT_NETWORKING, "CreateDataEndpoint: OTInstallNotifier failed: %d", err);
+        OTCloseProvider(gCurrentDataEndpoint);
+        gCurrentDataEndpoint = kOTInvalidEndpointRef;
+        return err;
+    }
+    
+    /* Set endpoint to async mode */
+    err = OTSetAsynchronous(gCurrentDataEndpoint);
+    if (err != noErr) {
+        log_debug_cat(LOG_CAT_NETWORKING, "CreateDataEndpoint: OTSetAsynchronous failed: %d", err);
+        OTCloseProvider(gCurrentDataEndpoint);
+        gCurrentDataEndpoint = kOTInvalidEndpointRef;
+        return err;
+    }
+    
+    log_debug_cat(LOG_CAT_NETWORKING, "CreateDataEndpoint: New data endpoint created successfully");
+    return noErr;
+}
+
+/* Clean up current data endpoint (not the persistent listener) */
+static void CleanupDataEndpoint(void)
+{
+    if (gCurrentDataEndpoint != kOTInvalidEndpointRef) {
+        /* CRITICAL: Protect against UDP endpoint corruption */
+        log_debug_cat(LOG_CAT_NETWORKING, "CleanupDataEndpoint: Cleaning up data endpoint (factory pattern)");
+        
+        /* Apply proper state validation before disconnect (as Gemini recommended) */
+        OTResult state = OTGetEndpointState(gCurrentDataEndpoint);
+        
+        /* Only disconnect if actually connected */
+        if (state == T_DATAXFER || state == T_OUTCON || state == T_INCON) {
+            OTSndDisconnect(gCurrentDataEndpoint, NULL);
+        }
+        
+        /* Only unbind if endpoint is bound */
+        if (state >= T_IDLE) {
+            OTUnbind(gCurrentDataEndpoint);
+        }
+        
+        /* Close the data endpoint */
+        OTCloseProvider(gCurrentDataEndpoint);
+        gCurrentDataEndpoint = kOTInvalidEndpointRef;
+        
+        log_debug_cat(LOG_CAT_NETWORKING, "CleanupDataEndpoint: Data endpoint cleaned up");
+    }
+    
+    /* CRITICAL: NEVER touch gPersistentListener - it stays active forever */
+}
+
+/* Cleanup persistent listener (only called during shutdown) */
+static void CleanupPersistentListener(void)
+{
+    if (gPersistentListener != kOTInvalidEndpointRef) {
+        /* Clean up any current data endpoint first */
+        CleanupDataEndpoint();
+        
+        /* Shutdown the persistent listener */
+        OTUnbind(gPersistentListener);
+        OTCloseProvider(gPersistentListener);
+        gPersistentListener = kOTInvalidEndpointRef;
+        
+        gPersistentListenerInitialized = false;
+        log_debug_cat(LOG_CAT_NETWORKING, "CleanupPersistentListener: Persistent listener cleaned up");
+    }
+}
+
 static void OTImpl_Shutdown(short refNum)
 {
     (void)refNum; /* Unused */
     log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_Shutdown: OpenTransport shutdown requested");
+    
+    /* Cleanup factory pattern endpoints */
+    CleanupPersistentListener();
     
     /* Cleanup global buffers before shutdown */
     CleanupOTGlobalBuffers();
@@ -850,9 +1295,6 @@ static OSErr OTImpl_TCPListen(NetworkStreamRef streamRef, tcp_port localPort,
 {
     OTTCPEndpoint *tcpEp = (OTTCPEndpoint *)streamRef;
     OSStatus err;
-    InetAddress addr;
-    TBind reqAddr, retAddr;
-    TCall call;
     
     (void)timeout; (void)async; /* Always async in OpenTransport */
     
@@ -860,75 +1302,91 @@ static OSErr OTImpl_TCPListen(NetworkStreamRef streamRef, tcp_port localPort,
         return paramErr;
     }
     
-    /* First unbind if already bound */
-    if (tcpEp->isListening) {
-        OTUnbind(tcpEp->endpoint);
-        tcpEp->isListening = false;
-    }
+    /* OpenTransport Factory Pattern: Use persistent listener instead of per-stream listening */
+    /* This is the key architectural change that eliminates -3155 errors */
     
-    /* Set up local address */
-    OTInitInetAddress(&addr, localPort, kOTAnyInetAddress);
-    
-    /* Set IP_REUSEADDR option before binding for listening endpoints */
-    /* This allows rebinding to the same port quickly as per OpenTransport documentation */
-    {
-        TOption option;
-        TOptMgmt request;
-
-        option.len    = kOTFourByteOptionSize;
-        option.level  = INET_IP;
-        option.name   = IP_REUSEADDR;
-        option.status = 0;
-        *(UInt32*)option.value = T_YES; /* Enable address reuse */
-
-        request.opt.buf = (UInt8*)&option;
-        request.opt.len = sizeof(option);
-        request.flags   = T_NEGOTIATE;
-
-        err = OTOptionManagement(tcpEp->endpoint, &request, &request);
-        if (err != noErr || option.status != T_SUCCESS) {
-            log_warning_cat(LOG_CAT_NETWORKING, "Could not set IP_REUSEADDR on listening endpoint. Err: %d, Status: %d", err, option.status);
-            /* Continue without IP_REUSEADDR - not critical for listen streams */
-        } else {
-            log_debug_cat(LOG_CAT_NETWORKING, "IP_REUSEADDR option set successfully on listening endpoint");
+    if (!gPersistentListenerInitialized) {
+        /* Initialize persistent listener on first call */
+        err = InitializePersistentListener(localPort);
+        if (err != noErr) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPListen: Failed to initialize persistent listener: %d", err);
+            return err;
         }
     }
     
-    /* Set up bind request */
-    reqAddr.addr.buf = (UInt8 *)&addr;
-    reqAddr.addr.len = sizeof(addr);
-    reqAddr.qlen = 1; /* Listen queue length */
-    
-    retAddr.addr.buf = (UInt8 *)&addr;
-    retAddr.addr.maxlen = sizeof(addr);
-    
-    /* Bind to local address */
-    err = OTBind(tcpEp->endpoint, &reqAddr, &retAddr);
-    if (err != noErr) {
-        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPListen: OTBind failed: %d", err);
-        return err;
-    }
-    
-    /* Set up call structure for OTListen */
-    call.addr.buf = (UInt8 *)&addr;
-    call.addr.maxlen = sizeof(addr);
-    call.opt.buf = NULL;
-    call.opt.maxlen = 0;
-    call.udata.buf = NULL;
-    call.udata.maxlen = 0;
-    
-    /* Now listen for incoming connections - this is what was missing! */
-    err = OTListen(tcpEp->endpoint, &call);
-    if (err != noErr && err != kOTNoDataErr) {
-        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPListen: OTListen failed: %d", err);
-        OTUnbind(tcpEp->endpoint);
-        return err;
-    }
-    
+    /* Mark the stream as listening for compatibility with existing code */
     tcpEp->localPort = localPort;
     tcpEp->isListening = true;
+    tcpEp->isConnected = false;
     
-    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPListen: Successfully bound and listening on port %d", localPort);
+    /* The persistent listener handles all actual listening operations */
+    /* When connections arrive, they will be accepted on new data endpoints */
+    /* This stream object is just a placeholder for messaging compatibility */
+    
+    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPListen: Factory pattern listening active on port %d", localPort);
+    return noErr;
+}
+
+/* GEMINI'S ARCHITECTURAL IMPROVEMENT: Separate listener and data connection handling */
+static OSErr OTImpl_TCPAcceptConnection(NetworkStreamRef listenerRef, NetworkStreamRef *dataStreamRef,
+                                        ip_addr *remoteHost, tcp_port *remotePort)
+{
+    OTTCPEndpoint *listenerEp = (OTTCPEndpoint *)listenerRef;
+    OSStatus err;
+    
+    if (listenerEp == NULL || dataStreamRef == NULL || remoteHost == NULL || remotePort == NULL) {
+        return paramErr;
+    }
+    
+    /* Verify this is actually a listener stream */
+    if (!listenerEp->isListening) {
+        log_error_cat(LOG_CAT_NETWORKING, "OTImpl_TCPAcceptConnection: Stream is not in listening state");
+        return kOTBadSequenceErr;
+    }
+    
+    /* Check if we have a pending connection on the persistent listener */
+    if (gCurrentDataEndpoint == kOTInvalidEndpointRef) {
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPAcceptConnection: No pending connection available");
+        return kOTNoDataErr;
+    }
+    
+    /* Create a NEW NetworkStreamRef for the data connection */
+    err = OTImpl_TCPCreate(0, dataStreamRef, listenerEp->bufferSize, listenerEp->receiveBuffer, NULL);
+    if (err != noErr) {
+        log_error_cat(LOG_CAT_NETWORKING, "OTImpl_TCPAcceptConnection: Failed to create data stream: %d", err);
+        return err;
+    }
+    
+    /* Configure the new data stream to use the accepted endpoint */
+    OTTCPEndpoint *dataEp = (OTTCPEndpoint *)*dataStreamRef;
+    if (dataEp->endpoint != kOTInvalidEndpointRef) {
+        /* Release the auto-created endpoint since we'll use the accepted one */
+        OTCloseProvider(dataEp->endpoint);
+    }
+    
+    /* Transfer the accepted endpoint to the new data stream */
+    dataEp->endpoint = gCurrentDataEndpoint;
+    dataEp->isConnected = true;
+    dataEp->isListening = false;
+    
+    /* Extract connection info from the data endpoint */
+    NetworkTCPInfo tcpInfo;
+    err = OTImpl_TCPStatus(*dataStreamRef, &tcpInfo);
+    if (err == noErr) {
+        *remoteHost = tcpInfo.remoteHost;
+        *remotePort = tcpInfo.remotePort;
+        dataEp->remoteHost = tcpInfo.remoteHost;
+        dataEp->remotePort = tcpInfo.remotePort;
+    } else {
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPAcceptConnection: Could not get connection info: %d", err);
+        *remoteHost = 0;
+        *remotePort = 0;
+    }
+    
+    /* Clear the global data endpoint reference - it's now owned by the data stream */
+    gCurrentDataEndpoint = kOTInvalidEndpointRef;
+    
+    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPAcceptConnection: Created separate data stream for connection");
     return noErr;
 }
 
@@ -1239,33 +1697,61 @@ static OSErr OTImpl_TCPClose(NetworkStreamRef streamRef, Byte timeout,
 static OSErr OTImpl_TCPAbort(NetworkStreamRef streamRef)
 {
     OTTCPEndpoint *tcpEp = (OTTCPEndpoint *)streamRef;
-    OSStatus err;
+    OSStatus err = noErr;
     
     if (tcpEp == NULL) {
         return paramErr;
     }
     
-    /* Abort connection immediately */
-    err = OTSndDisconnect(tcpEp->endpoint, NULL);
-    if (err != noErr) {
-        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPAbort: OTSndDisconnect failed: %d", err);
-    }
-    
-    tcpEp->isConnected = false;
-    
-    /* For OpenTransport abort, we need to trigger the appropriate ASR event */
-    /* This ensures proper state machine transitions in the messaging layer */
-    if (tcpEp == (OTTCPEndpoint *)gTCPSendStream) {
-        /* This is the send stream - generate TCPTerminate event to trigger RELEASING state */
-        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPAbort: Triggering TCPTerminate for send stream");
-        TCP_Send_ASR_Handler((StreamPtr)tcpEp, TCPTerminate, NULL, 0, NULL);
-    } else if (tcpEp == (OTTCPEndpoint *)gTCPListenStream) {
-        /* This is the listen stream - generate TCPTerminate event */
-        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPAbort: Triggering TCPTerminate for listen stream");
+    /* Factory Pattern: Check if this is a listen stream or send stream */
+    if (tcpEp == (OTTCPEndpoint *)gTCPListenStream) {
+        /* CRITICAL: For listen streams, clean up data endpoint, NOT the persistent listener */
+        /* This is the key fix that eliminates -3155 errors */
+        
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPAbort: Cleaning up data endpoint (not persistent listener)");
+        CleanupDataEndpoint();
+        
+        tcpEp->isConnected = false;
+        
+        /* Generate TCPTerminate event for messaging layer */
         TCP_Listen_ASR_Handler((StreamPtr)tcpEp, TCPTerminate, NULL, 0, NULL);
+        
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPAbort: Listen stream abort complete (persistent listener remains active)");
+        
+    } else if (tcpEp == (OTTCPEndpoint *)gTCPSendStream) {
+        /* For send streams, apply proper state validation as Gemini recommended */
+        OTResult state = OTGetEndpointState(tcpEp->endpoint);
+        
+        /* Only disconnect if actually connected */
+        if (state == T_DATAXFER || state == T_OUTCON || state == T_INCON) {
+            err = OTSndDisconnect(tcpEp->endpoint, NULL);
+            if (err != noErr) {
+                log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPAbort: OTSndDisconnect failed: %d", err);
+            }
+        }
+        
+        tcpEp->isConnected = false;
+        
+        /* Generate TCPTerminate event for messaging layer */
+        TCP_Send_ASR_Handler((StreamPtr)tcpEp, TCPTerminate, NULL, 0, NULL);
+        
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPAbort: Send stream abort complete");
+        
+    } else {
+        /* Unknown stream type */
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPAbort: Unknown stream type, applying generic cleanup");
+        
+        OTResult state = OTGetEndpointState(tcpEp->endpoint);
+        if (state == T_DATAXFER || state == T_OUTCON || state == T_INCON) {
+            err = OTSndDisconnect(tcpEp->endpoint, NULL);
+            if (err != noErr) {
+                log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPAbort: OTSndDisconnect failed: %d", err);
+            }
+        }
+        
+        tcpEp->isConnected = false;
     }
     
-    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPAbort: Connection aborted");
     return err;
 }
 
@@ -2325,7 +2811,16 @@ static OSErr OTImpl_AddressToString(ip_addr address, char *addressStr)
         return paramErr;
     }
     
-    /* Convert IP address to string */
+    /* CRITICAL: Add safety checks to prevent crash during factory pattern operations */
+    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_AddressToString: Converting %08lX to string", address);
+    
+    /* Validate buffer before calling OTInetHostToString */
+    if ((Ptr)addressStr < (Ptr)0x1000) {
+        log_error_cat(LOG_CAT_NETWORKING, "OTImpl_AddressToString: Invalid buffer pointer %p", addressStr);
+        return paramErr;
+    }
+    
+    /* Convert IP address to string using Apple's function */
     OTInetHostToString(address, addressStr);
     
     log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_AddressToString: %08lX -> %s", address, addressStr);
@@ -2340,24 +2835,28 @@ static const char *OTImpl_GetImplementationName(void)
 static Boolean OTImpl_IsAvailable(void)
 {
     OSStatus err;
+    long response;
     
     /* If already initialized, it's available */
     if (gOTInitialized) {
         return true;
     }
     
-    /* Use InitOpenTransport() as recommended by Apple documentation */
-    /* This is the authoritative way to detect AND initialize OpenTransport */
-    err = InitOpenTransport();
+    /* Check for OpenTransport availability using Gestalt without initializing */
+    /* This avoids premature initialization that would bypass notifier setup */
+    err = Gestalt(gestaltOpenTpt, &response);
     if (err == noErr) {
-        /* OpenTransport is available and now initialized */
-        gOTInitialized = true;
-        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_IsAvailable: OpenTransport detected and initialized successfully");
-        return true;
+        /* Check if OpenTransport is present and TCP/IP support is available */
+        if ((response & gestaltOpenTptPresentMask) && (response & gestaltOpenTptTCPPresentMask)) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_IsAvailable: OpenTransport detected via Gestalt (flags 0x%08lX)", response);
+            return true;
+        } else {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_IsAvailable: OpenTransport Gestalt returned insufficient features: 0x%08lX", response);
+            return false;
+        }
     } else {
-        /* OpenTransport not available or initialization failed */
-        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_IsAvailable: InitOpenTransport failed: %d", err);
-        gOTInitialized = false;
+        /* OpenTransport not available */
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_IsAvailable: Gestalt(gestaltOpenTpt) failed: %d", err);
         return false;
     }
 }
@@ -2410,6 +2909,7 @@ static NetworkOperations gOpenTransportOperations = {
     OTImpl_TCPCreate,
     OTImpl_TCPRelease,
     OTImpl_TCPListen,
+    OTImpl_TCPAcceptConnection,
     OTImpl_TCPConnect,
     OTImpl_TCPSend,
     OTImpl_TCPReceiveNoCopy,

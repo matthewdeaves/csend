@@ -102,6 +102,8 @@ static OSErr MacTCPImpl_TCPCreate(short refNum, NetworkStreamRef *streamRef,
 static OSErr MacTCPImpl_TCPRelease(short refNum, NetworkStreamRef streamRef);
 static OSErr MacTCPImpl_TCPListen(NetworkStreamRef streamRef, tcp_port localPort,
                                   Byte timeout, Boolean async);
+static OSErr MacTCPImpl_TCPAcceptConnection(NetworkStreamRef listenerRef, NetworkStreamRef *dataStreamRef,
+                                            ip_addr *remoteHost, tcp_port *remotePort);
 static OSErr MacTCPImpl_TCPConnect(NetworkStreamRef streamRef, ip_addr remoteHost,
                                    tcp_port remotePort, Byte timeout,
                                    NetworkGiveTimeProcPtr giveTime);
@@ -463,6 +465,17 @@ static OSErr MacTCPImpl_TCPListen(NetworkStreamRef streamRef, tcp_port localPort
     }
 
     return err;
+}
+
+/* MacTCP stub implementation - not applicable for single-stream model */
+static OSErr MacTCPImpl_TCPAcceptConnection(NetworkStreamRef listenerRef, NetworkStreamRef *dataStreamRef,
+                                            ip_addr *remoteHost, tcp_port *remotePort)
+{
+    (void)listenerRef; (void)dataStreamRef; (void)remoteHost; (void)remotePort; /* Unused */
+    
+    /* MacTCP uses single-stream model, so this function is not applicable */
+    /* Connections are handled directly through the existing listen stream */
+    return kOTNotSupportedErr;
 }
 
 /* Async TCP Listen implementation */
@@ -1440,6 +1453,7 @@ static NetworkOperations gMacTCPOperations = {
     MacTCPImpl_TCPCreate,
     MacTCPImpl_TCPRelease,
     MacTCPImpl_TCPListen,
+    MacTCPImpl_TCPAcceptConnection,
     MacTCPImpl_TCPConnect,
     MacTCPImpl_TCPSend,
     MacTCPImpl_TCPReceiveNoCopy,
