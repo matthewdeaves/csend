@@ -103,7 +103,7 @@ static OSErr MacTCPImpl_TCPRelease(short refNum, NetworkStreamRef streamRef);
 static OSErr MacTCPImpl_TCPListen(NetworkStreamRef streamRef, tcp_port localPort,
                                   Byte timeout, Boolean async);
 static OSErr MacTCPImpl_TCPAcceptConnection(NetworkStreamRef listenerRef, NetworkStreamRef *dataStreamRef,
-                                            ip_addr *remoteHost, tcp_port *remotePort);
+        ip_addr *remoteHost, tcp_port *remotePort);
 static OSErr MacTCPImpl_TCPConnect(NetworkStreamRef streamRef, ip_addr remoteHost,
                                    tcp_port remotePort, Byte timeout,
                                    NetworkGiveTimeProcPtr giveTime);
@@ -469,10 +469,13 @@ static OSErr MacTCPImpl_TCPListen(NetworkStreamRef streamRef, tcp_port localPort
 
 /* MacTCP stub implementation - not applicable for single-stream model */
 static OSErr MacTCPImpl_TCPAcceptConnection(NetworkStreamRef listenerRef, NetworkStreamRef *dataStreamRef,
-                                            ip_addr *remoteHost, tcp_port *remotePort)
+        ip_addr *remoteHost, tcp_port *remotePort)
 {
-    (void)listenerRef; (void)dataStreamRef; (void)remoteHost; (void)remotePort; /* Unused */
-    
+    (void)listenerRef;
+    (void)dataStreamRef;
+    (void)remoteHost;
+    (void)remotePort; /* Unused */
+
     /* MacTCP uses single-stream model, so this function is not applicable */
     /* Connections are handled directly through the existing listen stream */
     return kOTNotSupportedErr;
@@ -832,7 +835,7 @@ static OSErr MacTCPImpl_TCPAbort(NetworkStreamRef streamRef)
 
     /* For abort, we always use sync to ensure immediate effect */
     err = PBControlSync((ParmBlkPtr)&pb);
-    
+
     /* For MacTCP abort, we need to trigger the appropriate ASR event to match OpenTransport behavior.
        This ensures proper state machine transitions in the messaging layer. */
     if (streamRef == gTCPSendStream) {
@@ -844,7 +847,7 @@ static OSErr MacTCPImpl_TCPAbort(NetworkStreamRef streamRef)
         log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPAbort: Triggering TCPTerminate for listen stream");
         TCP_Listen_ASR_Handler((StreamPtr)streamRef, TCPTerminate, NULL, 0, NULL);
     }
-    
+
     log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPAbort: Connection aborted");
     return err;
 }
@@ -888,7 +891,7 @@ static OSErr MacTCPImpl_TCPUnbind(NetworkStreamRef streamRef)
     if (streamRef == NULL) {
         return paramErr;
     }
-    
+
     log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPUnbind: No-op for MacTCP (automatic state management)");
     return noErr;
 }

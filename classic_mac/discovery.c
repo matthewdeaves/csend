@@ -386,14 +386,14 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
 
             if (dataLength > 0) {
                 /* Debug the self-discovery filtering */
-                log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Comparing remoteHost=0x%08lX with myLocalIP=0x%08lX", 
+                log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Comparing remoteHost=0x%08lX with myLocalIP=0x%08lX",
                               (unsigned long)remoteHost, (unsigned long)myLocalIP);
-                
+
                 /* Convert to string format for reliable comparison */
                 char remoteIPStr[INET_ADDRSTRLEN];
                 char localIPStr[INET_ADDRSTRLEN];
                 Boolean isSelfPacket = false;
-                
+
                 if (gNetworkOps->AddressToString) {
                     gNetworkOps->AddressToString(remoteHost, remoteIPStr);
                     gNetworkOps->AddressToString(myLocalIP, localIPStr);
@@ -402,10 +402,10 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
                     /* Fallback: compare raw addresses but ensure same byte order */
                     isSelfPacket = (remoteHost == myLocalIP);
                 }
-                
-                log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Self-packet check: remote='%s' local='%s' isSelf=%s", 
+
+                log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Self-packet check: remote='%s' local='%s' isSelf=%s",
                               remoteIPStr, localIPStr, isSelfPacket ? "true" : "false");
-                
+
                 if (!isSelfPacket) {
                     /* Use the already converted string for consistency */
                     char senderIPStr[INET_ADDRSTRLEN];

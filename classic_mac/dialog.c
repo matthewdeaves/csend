@@ -281,7 +281,7 @@ void UpdateDialogControls(void)
     }
     GetPort(&oldPort);
     SetPort(windowPort);
-    
+
     /* Only update components that have been marked as needing updates */
     if (gMessagesTENeedsUpdate) {
         HandleMessagesTEUpdate(gMainWindow);
@@ -295,7 +295,7 @@ void UpdateDialogControls(void)
         HandlePeerListUpdate(gMainWindow);
         gPeerListNeedsUpdate = false;
     }
-    
+
     SetPort(oldPort);
 }
 

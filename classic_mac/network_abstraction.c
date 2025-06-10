@@ -23,11 +23,11 @@ static Boolean IsOpenTransportAvailable(void)
     NetworkOperations *otOps = GetOpenTransportOperations();
     if (otOps != NULL && otOps->IsAvailable != NULL) {
         Boolean available = otOps->IsAvailable();
-        log_debug_cat(LOG_CAT_NETWORKING, "IsOpenTransportAvailable: OpenTransport availability = %s", 
+        log_debug_cat(LOG_CAT_NETWORKING, "IsOpenTransportAvailable: OpenTransport availability = %s",
                       available ? "true" : "false");
         return available;
     }
-    
+
     log_debug_cat(LOG_CAT_NETWORKING, "IsOpenTransportAvailable: Failed to get OpenTransport operations table");
     return false;
 }

@@ -610,7 +610,7 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
     OSErr err;
     OSErr operationResult;
     void *resultData;
-    
+
     (void)giveTime; /* Unused in current implementation */
 
     if (!gNetworkOps) return;
@@ -694,35 +694,35 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
 
     case TCP_STATE_CLOSING_GRACEFUL:
         /* Wait for graceful close to complete, but add timeout to prevent hanging */
-        {
-            static unsigned long closeStartTime = 0;
-            
-            if (closeStartTime == 0) {
-                closeStartTime = TickCount();
-                log_debug_cat(LOG_CAT_MESSAGING, "Send stream: Graceful close initiated, waiting for completion...");
+    {
+        static unsigned long closeStartTime = 0;
+
+        if (closeStartTime == 0) {
+            closeStartTime = TickCount();
+            log_debug_cat(LOG_CAT_MESSAGING, "Send stream: Graceful close initiated, waiting for completion...");
+        } else {
+            unsigned long elapsedTicks = TickCount() - closeStartTime;
+            if (elapsedTicks > 5 * 60) { /* 5 seconds timeout */
+                log_debug_cat(LOG_CAT_MESSAGING, "Send stream: Graceful close timeout, forcing abort");
+                gNetworkOps->TCPAbort(gTCPSendStream);
+                gTCPSendState = TCP_STATE_IDLE;
+                closeStartTime = 0;
             } else {
-                unsigned long elapsedTicks = TickCount() - closeStartTime;
-                if (elapsedTicks > 5 * 60) { /* 5 seconds timeout */
-                    log_debug_cat(LOG_CAT_MESSAGING, "Send stream: Graceful close timeout, forcing abort");
-                    gNetworkOps->TCPAbort(gTCPSendStream);
-                    gTCPSendState = TCP_STATE_IDLE;
-                    closeStartTime = 0;
-                } else {
-                    /* Check if close completed via notifier events */
-                    /* OpenTransport notifier should have marked connection as closed */
-                    if (gNetworkOps->TCPStatus) {
-                        NetworkTCPInfo tcpInfo;
-                        OSErr statusErr = gNetworkOps->TCPStatus(gTCPSendStream, &tcpInfo);
-                        if (statusErr != noErr || !tcpInfo.isConnected) {
-                            log_debug_cat(LOG_CAT_MESSAGING, "Send stream: Graceful close completed");
-                            gTCPSendState = TCP_STATE_IDLE;
-                            closeStartTime = 0;
-                        }
+                /* Check if close completed via notifier events */
+                /* OpenTransport notifier should have marked connection as closed */
+                if (gNetworkOps->TCPStatus) {
+                    NetworkTCPInfo tcpInfo;
+                    OSErr statusErr = gNetworkOps->TCPStatus(gTCPSendStream, &tcpInfo);
+                    if (statusErr != noErr || !tcpInfo.isConnected) {
+                        log_debug_cat(LOG_CAT_MESSAGING, "Send stream: Graceful close completed");
+                        gTCPSendState = TCP_STATE_IDLE;
+                        closeStartTime = 0;
                     }
                 }
             }
         }
-        break;
+    }
+    break;
 
     case TCP_STATE_IDLE:
         /* Send stream is ready for new connections or operations */
@@ -756,7 +756,7 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
             /* Initiate the send operation */
             int msgLen = strlen(gCurrentSendMessage);
             log_debug_cat(LOG_CAT_MESSAGING, "Initiating send to %s (%d bytes)", gCurrentSendPeerIP, msgLen);
-            
+
             err = gNetworkOps->TCPSendAsync(gTCPSendStream, (Ptr)gCurrentSendMessage,
                                             msgLen, true, &gSendDataHandle);
             if (err == noErr) {
