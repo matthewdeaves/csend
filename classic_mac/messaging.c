@@ -591,9 +591,15 @@ static void HandleSendASREvents(GiveTimePtr giveTime)
     switch (currentEvent.eventCode) {
     case TCPTerminate:
         log_debug_cat(LOG_CAT_MESSAGING, "Send ASR: TCPTerminate. Reason: %u.", currentEvent.termReason);
-        /* Only set to IDLE if we were expecting the termination */
+        /* Transition to RELEASING state to properly unbind the OpenTransport endpoint */
         if (gTCPSendState == TCP_STATE_CLOSING_GRACEFUL ||
-                gTCPSendState == TCP_STATE_IDLE) {
+                gTCPSendState == TCP_STATE_CONNECTING_OUT ||
+                gTCPSendState == TCP_STATE_CONNECTED_OUT ||
+                gTCPSendState == TCP_STATE_SENDING) {
+            log_debug_cat(LOG_CAT_MESSAGING, "Send ASR: Transitioning to RELEASING state for endpoint cleanup");
+            gTCPSendState = TCP_STATE_RELEASING;
+        } else {
+            log_debug_cat(LOG_CAT_MESSAGING, "Send ASR: TCPTerminate in state %d, setting to IDLE", gTCPSendState);
             gTCPSendState = TCP_STATE_IDLE;
         }
         break;
@@ -683,10 +689,11 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
         break;
 
     case TCP_STATE_CLOSING_GRACEFUL:
-        /* Check if close operation completed */
-        /* For now, assume close completes quickly and set to IDLE */
-        /* In a full implementation, we'd check async close status */
-        gTCPSendState = TCP_STATE_IDLE;
+        /* DO NOT set state to IDLE here for OpenTransport.
+           Wait for the T_ORDREL event from the notifier.
+           The notifier will call the ASR, which should set the state to
+           TCP_STATE_RELEASING upon termination. */
+        log_debug_cat(LOG_CAT_MESSAGING, "Send stream: Waiting for graceful close to complete...");
         break;
 
     case TCP_STATE_IDLE:
@@ -694,28 +701,35 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
         /* This is a normal state - no action needed */
         break;
 
+    case TCP_STATE_RELEASING:
+        /* This state is entered after an abort or a completed graceful close.
+           The OpenTransport endpoint must be reset before it can be reused. */
+        if (gNetworkOps && gNetworkOps->TCPUnbind) {
+            log_debug_cat(LOG_CAT_MESSAGING, "Send stream RELEASING: Unbinding endpoint for reuse.");
+
+            /* This function will handle the OT-specific reset to T_UNBND state */
+            OSErr unbindErr = gNetworkOps->TCPUnbind(gTCPSendStream);
+            if (unbindErr != noErr) {
+                log_error_cat(LOG_CAT_MESSAGING, "Failed to unbind send stream endpoint: %d. Forcing IDLE.", unbindErr);
+                gTCPSendState = TCP_STATE_ERROR; /* Or attempt recovery */
+            } else {
+                log_debug_cat(LOG_CAT_MESSAGING, "Send stream endpoint unbound. Transitioning to IDLE.");
+                gTCPSendState = TCP_STATE_IDLE; /* Now it's ready for a new connection */
+            }
+        } else {
+            log_warning_cat(LOG_CAT_MESSAGING, "TCPUnbind not available. Forcing IDLE state.");
+            gTCPSendState = TCP_STATE_IDLE;
+        }
+        break;
+
     case TCP_STATE_UNINITIALIZED:
     case TCP_STATE_LISTENING:
     case TCP_STATE_CONNECTED_IN:
     case TCP_STATE_CONNECTED_OUT:
     case TCP_STATE_ABORTING:
-    case TCP_STATE_RELEASING:
-        /* Handle TCP send stream unbind/reset after connection close */
-        if (gNetworkOps && gNetworkOps->TCPRelease && gNetworkOps->TCPCreate) {
-            log_debug_cat(LOG_CAT_MESSAGING, "Send stream releasing: unbinding endpoint for reuse");
-            
-            /* For OpenTransport, we need to unbind the endpoint to reset it to T_IDLE state */
-            /* This is handled through the network abstraction layer */
-            
-            /* Note: The actual unbind is implementation-specific and handled in the network layer */
-            /* For now, we transition to IDLE to allow reconnection */
-            gTCPSendState = TCP_STATE_IDLE;
-            
-            log_debug_cat(LOG_CAT_MESSAGING, "Send stream reset to IDLE state for reconnection");
-        } else {
-            log_warning_cat(LOG_CAT_MESSAGING, "Send stream releasing: Network operations not available");
-            gTCPSendState = TCP_STATE_IDLE;
-        }
+        /* These states should not occur for send stream during normal operation */
+        log_warning_cat(LOG_CAT_MESSAGING, "Send stream in unexpected state: %d", gTCPSendState);
+        gTCPSendState = TCP_STATE_IDLE; /* Force to idle for recovery */
         break;
 
     case TCP_STATE_ERROR:

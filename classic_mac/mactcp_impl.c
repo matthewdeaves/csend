@@ -112,6 +112,7 @@ static OSErr MacTCPImpl_TCPClose(NetworkStreamRef streamRef, Byte timeout,
                                  NetworkGiveTimeProcPtr giveTime);
 static OSErr MacTCPImpl_TCPAbort(NetworkStreamRef streamRef);
 static OSErr MacTCPImpl_TCPStatus(NetworkStreamRef streamRef, NetworkTCPInfo *info);
+static OSErr MacTCPImpl_TCPUnbind(NetworkStreamRef streamRef);
 
 /* Async TCP operations */
 static OSErr MacTCPImpl_TCPListenAsync(NetworkStreamRef streamRef, tcp_port localPort,
@@ -843,6 +844,20 @@ static OSErr MacTCPImpl_TCPStatus(NetworkStreamRef streamRef, NetworkTCPInfo *in
     return err;
 }
 
+static OSErr MacTCPImpl_TCPUnbind(NetworkStreamRef streamRef)
+{
+    /* MacTCP streams do not require explicit unbinding like OpenTransport endpoints.
+     * MacTCP automatically handles connection state transitions internally.
+     * This function is provided for API compatibility with OpenTransport.
+     */
+    if (streamRef == NULL) {
+        return paramErr;
+    }
+    
+    log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPUnbind: No-op for MacTCP (automatic state management)");
+    return noErr;
+}
+
 /* UDP Operations */
 
 static OSErr MacTCPImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
@@ -1400,6 +1415,7 @@ static NetworkOperations gMacTCPOperations = {
     MacTCPImpl_TCPClose,
     MacTCPImpl_TCPAbort,
     MacTCPImpl_TCPStatus,
+    MacTCPImpl_TCPUnbind,
 
     /* Async TCP operations */
     MacTCPImpl_TCPListenAsync,

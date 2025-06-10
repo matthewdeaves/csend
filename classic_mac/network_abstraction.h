@@ -86,6 +86,7 @@ typedef struct {
                      NetworkGiveTimeProcPtr giveTime);
     OSErr(*TCPAbort)(NetworkStreamRef streamRef);
     OSErr(*TCPStatus)(NetworkStreamRef streamRef, NetworkTCPInfo *info);
+    OSErr(*TCPUnbind)(NetworkStreamRef streamRef);
 
     /* Async TCP operations */
     OSErr(*TCPListenAsync)(NetworkStreamRef streamRef, tcp_port localPort,

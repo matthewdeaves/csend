@@ -1173,6 +1173,43 @@ static OSErr OTImpl_TCPStatus(NetworkStreamRef streamRef, NetworkTCPInfo *info)
     return noErr;
 }
 
+static OSErr OTImpl_TCPUnbind(NetworkStreamRef streamRef)
+{
+    OTTCPEndpoint *tcpEp = (OTTCPEndpoint *)streamRef;
+    OSStatus err;
+    OTResult state;
+    
+    if (tcpEp == NULL) {
+        return paramErr;
+    }
+    
+    /* Check current endpoint state */
+    state = OTGetEndpointState(tcpEp->endpoint);
+    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPUnbind: Current endpoint state: %d", state);
+    
+    /* Only unbind if endpoint is bound or in a connected state */
+    if (state > T_UNBND) {
+        err = OTUnbind(tcpEp->endpoint);
+        if (err != noErr) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPUnbind: OTUnbind failed: %d", err);
+            return err;
+        }
+        
+        /* Reset endpoint flags */
+        tcpEp->isConnected = false;
+        tcpEp->isListening = false;
+        tcpEp->remoteHost = 0;
+        tcpEp->remotePort = 0;
+        tcpEp->localPort = 0;
+        
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPUnbind: Endpoint successfully unbound and reset to T_UNBND state");
+    } else {
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPUnbind: Endpoint already in T_UNBND state, no action needed");
+    }
+    
+    return noErr;
+}
+
 /* Async TCP stubs */
 static OSErr OTImpl_TCPListenAsync(NetworkStreamRef streamRef, tcp_port localPort,
                                    NetworkAsyncHandle *asyncHandle)
@@ -1225,8 +1262,31 @@ static OSErr OTImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remoteHo
         return paramErr;
     }
     
-    /* Check endpoint state and bind if needed (FIX: Missing OTBind for outgoing connections) */
+    /* Check endpoint state and reset if needed for robust reconnection */
     state = OTGetEndpointState(tcpEp->endpoint);
+    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: Current endpoint state: %d", state);
+    
+    /* More robust state check - handle any non-IDLE state */
+    if (state != T_IDLE) {
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: Endpoint in non-IDLE state %d. Attempting reset.", state);
+        if (state > T_IDLE) { /* If bound or connected */
+            OSErr unbindErr = OTUnbind(tcpEp->endpoint);
+            if (unbindErr != noErr) {
+                log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: OTUnbind failed: %d", unbindErr);
+                return unbindErr;
+            }
+            /* Reset endpoint flags after unbind */
+            tcpEp->isConnected = false;
+            tcpEp->isListening = false;
+            tcpEp->remoteHost = 0;
+            tcpEp->remotePort = 0;
+            tcpEp->localPort = 0;
+        }
+        /* After unbind, state will be T_UNBND, and the next block will execute */
+        state = OTGetEndpointState(tcpEp->endpoint);
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: After reset, endpoint state: %d", state);
+    }
+    
     if (state == T_UNBND) {
         InetAddress localAddr;
         TBind reqAddr, retAddr;
@@ -1275,10 +1335,8 @@ static OSErr OTImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remoteHo
         }
         
         log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: Successfully bound endpoint to ephemeral port");
-    } else if (state != T_IDLE) {
-        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: Endpoint in invalid state %d for connect", state);
-        return kOTOutStateErr;
     }
+    /* Note: After our robust state handling above, endpoint should now be in T_IDLE state */
     
     /* Allocate TCP async operation handle (FIX: Use TCP handle pool, not UDP) */
     *asyncHandle = AllocateOTTCPAsyncHandle();
@@ -2112,6 +2170,7 @@ static NetworkOperations gOpenTransportOperations = {
     OTImpl_TCPClose,
     OTImpl_TCPAbort,
     OTImpl_TCPStatus,
+    OTImpl_TCPUnbind,
 
     /* Async TCP operations */
     OTImpl_TCPListenAsync,
