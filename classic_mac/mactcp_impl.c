@@ -4,6 +4,7 @@
 
 #include "mactcp_impl.h"
 #include "network_init.h"
+#include "messaging.h"  /* For ASR handler declarations */
 #include "../shared/logging.h"
 #include <MacTCP.h>
 #include <Devices.h>
@@ -13,6 +14,10 @@
 #include <Events.h>
 #include <string.h>
 #include <stdio.h>
+
+/* External declarations for TCP stream variables */
+extern NetworkStreamRef gTCPListenStream;
+extern NetworkStreamRef gTCPSendStream;
 
 /* Forward declarations */
 /* hostInfo structure for DNR - based on MacTCP Programmer's Guide */
@@ -799,6 +804,7 @@ static OSErr MacTCPImpl_TCPClose(NetworkStreamRef streamRef, Byte timeout,
 static OSErr MacTCPImpl_TCPAbort(NetworkStreamRef streamRef)
 {
     TCPiopb pb;
+    OSErr err;
 
     if (streamRef == NULL) {
         return paramErr;
@@ -811,7 +817,22 @@ static OSErr MacTCPImpl_TCPAbort(NetworkStreamRef streamRef)
     pb.ioCRefNum = gMacTCPRefNum;
 
     /* For abort, we always use sync to ensure immediate effect */
-    return PBControlSync((ParmBlkPtr)&pb);
+    err = PBControlSync((ParmBlkPtr)&pb);
+    
+    /* For MacTCP abort, we need to trigger the appropriate ASR event to match OpenTransport behavior.
+       This ensures proper state machine transitions in the messaging layer. */
+    if (streamRef == gTCPSendStream) {
+        /* This is the send stream - generate TCPTerminate event to trigger RELEASING state */
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPAbort: Triggering TCPTerminate for send stream");
+        TCP_Send_ASR_Handler((StreamPtr)streamRef, TCPTerminate, NULL, 0, NULL);
+    } else if (streamRef == gTCPListenStream) {
+        /* This is the listen stream - generate TCPTerminate event */
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPAbort: Triggering TCPTerminate for listen stream");
+        TCP_Listen_ASR_Handler((StreamPtr)streamRef, TCPTerminate, NULL, 0, NULL);
+    }
+    
+    log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPAbort: Connection aborted");
+    return err;
 }
 
 static OSErr MacTCPImpl_TCPStatus(NetworkStreamRef streamRef, NetworkTCPInfo *info)
