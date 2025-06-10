@@ -148,13 +148,15 @@ void ClearInputText(void)
         if (*gInputTE != NULL) {
             TESetText((Ptr)"", 0, gInputTE);
             TECalText(gInputTE);
+            TESetSelect(0, 0, gInputTE);
         } else {
             log_debug_cat(LOG_CAT_UI, "ClearInputText Error: gInputTE deref failed!");
         }
         HSetState((Handle)gInputTE, teState);
         log_debug_cat(LOG_CAT_UI, "Input field cleared.");
         if (gMainWindow != NULL) {
-            InvalidateInputTE();
+            /* Force immediate visual update of the input field */
+            HandleInputTEUpdate(gMainWindow);
         }
     }
 }
