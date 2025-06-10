@@ -15,6 +15,15 @@
 extern NetworkStreamRef gTCPListenStream;
 extern NetworkStreamRef gTCPSendStream;
 
+/* Global OpenTransport connection buffers - MUST use heap allocation per Apple docs */
+static TCall* gOTRcvConnectCall = NULL;
+static InetAddress* gOTRemoteAddr = NULL;
+static Boolean gOTGlobalBuffersInitialized = false;
+
+/* Forward declarations for buffer management */
+static OSErr InitializeOTGlobalBuffers(void);
+static void CleanupOTGlobalBuffers(void);
+
 /* OpenTransport async operation types for UDP */
 typedef enum {
     OT_ASYNC_UDP_SEND,
@@ -53,8 +62,8 @@ typedef struct {
     unsigned short dataLength;
 } OTTCPAsyncOperation;
 
-#define MAX_OT_ASYNC_OPS 16
-#define MAX_OT_TCP_ASYNC_OPS 8
+#define MAX_OT_ASYNC_OPS 32
+#define MAX_OT_TCP_ASYNC_OPS 16
 static OTAsyncOperation gOTAsyncOps[MAX_OT_ASYNC_OPS];  /* UDP operations */
 static OTTCPAsyncOperation gOTTCPAsyncOps[MAX_OT_TCP_ASYNC_OPS];  /* TCP operations */
 static Boolean gOTAsyncOpsInitialized = false;
@@ -87,6 +96,7 @@ static Boolean gOTInitialized = false;
 static void InitializeOTAsyncOps(void);
 static NetworkAsyncHandle AllocateOTAsyncHandle(void);
 static void FreeOTAsyncHandle(NetworkAsyncHandle handle);
+static void CleanupCompletedAsyncOps(void);
 
 /* Async operation management - TCP */
 static void InitializeOTTCPAsyncOps(void);
@@ -165,6 +175,7 @@ static OSErr OTImpl_UDPReturnBufferAsync(NetworkEndpointRef endpointRef,
                                          NetworkAsyncHandle *asyncHandle);
 static OSErr OTImpl_UDPCheckReturnStatus(NetworkAsyncHandle asyncHandle);
 static void OTImpl_UDPCancelAsync(NetworkAsyncHandle asyncHandle);
+static void OTImpl_FreeAsyncHandle(NetworkAsyncHandle asyncHandle);
 
 /* Utility Operations */
 static OSErr OTImpl_ResolveAddress(const char *hostname, ip_addr *address);
@@ -205,6 +216,20 @@ static NetworkAsyncHandle AllocateOTAsyncHandle(void)
             gOTAsyncOps[i].inUse = true;
             gOTAsyncOps[i].completed = false;
             gOTAsyncOps[i].result = noErr;
+            return (NetworkAsyncHandle)&gOTAsyncOps[i];
+        }
+    }
+    
+    /* Emergency cleanup and retry once */
+    log_debug_cat(LOG_CAT_NETWORKING, "AllocateOTAsyncHandle: No free async operation slots, attempting cleanup");
+    CleanupCompletedAsyncOps();
+    
+    for (i = 0; i < MAX_OT_ASYNC_OPS; i++) {
+        if (!gOTAsyncOps[i].inUse) {
+            gOTAsyncOps[i].inUse = true;
+            gOTAsyncOps[i].completed = false;
+            gOTAsyncOps[i].result = noErr;
+            log_debug_cat(LOG_CAT_NETWORKING, "AllocateOTAsyncHandle: Recovered slot %d after cleanup", i);
             return (NetworkAsyncHandle)&gOTAsyncOps[i];
         }
     }
@@ -299,7 +324,34 @@ static pascal void OTTCPNotifier(void *contextPtr, OTEventCode code, OTResult re
     case T_CONNECT:
         log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: T_CONNECT result=%d", result);
         if (result == kOTNoError) {
-            tcpEp->isConnected = true;
+            /* CRITICAL FIX: Call OTRcvConnect to complete the connection establishment.
+             * This transitions the endpoint from T_OUTCON to T_DATAXFER state.
+             * Without this call, the endpoint remains stuck in T_OUTCON and cannot send data.
+             * APPLE DOCS: "For asynchronous endpoints, the OTRcvConnect function must be called to complete the handshake."
+             */
+            OSStatus rcvErr;
+            
+            /* Use global heap-allocated buffers per Apple documentation.
+             * Stack variables in notifier context cause memory corruption. */
+            if (gOTGlobalBuffersInitialized && gOTRcvConnectCall != NULL) {
+                /* Reset buffer length for reuse */
+                gOTRcvConnectCall->addr.len = 0;
+                gOTRcvConnectCall->opt.len = 0;
+                gOTRcvConnectCall->udata.len = 0;
+                
+                rcvErr = OTRcvConnect(tcpEp->endpoint, gOTRcvConnectCall);
+            } else {
+                log_error_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: Global buffers not initialized, cannot call OTRcvConnect");
+                rcvErr = kOTBadSequenceErr;
+            }
+            if (rcvErr == noErr) {
+                tcpEp->isConnected = true;
+                log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: OTRcvConnect successful, endpoint ready for data transfer");
+            } else {
+                log_error_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: OTRcvConnect failed: %d", rcvErr);
+                tcpEp->isConnected = false;
+                result = rcvErr; /* Propagate the error to async operation */
+            }
         }
         /* Complete any pending connect operations */
         for (i = 0; i < MAX_OT_TCP_ASYNC_OPS; i++) {
@@ -599,14 +651,87 @@ static OSErr OTImpl_Initialize(short *refNum, ip_addr *localIP, char *localIPStr
         *refNum = 1; /* Dummy ref num for OpenTransport */
     }
     
+    /* Initialize global buffers for OTRcvConnect operations */
+    err = InitializeOTGlobalBuffers();
+    if (err != noErr) {
+        log_error_cat(LOG_CAT_NETWORKING, "OTImpl_Initialize: Failed to initialize global buffers: %d", err);
+        return err;
+    }
+    
     log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_Initialize: OpenTransport initialized");
     return noErr;
+}
+
+/* Initialize global OTRcvConnect buffers using heap allocation per Apple docs */
+static OSErr InitializeOTGlobalBuffers(void)
+{
+    if (gOTGlobalBuffersInitialized) {
+        return noErr; /* Already initialized */
+    }
+    
+    /* Allocate TCall structure using OTAllocMem for notifier safety */
+    gOTRcvConnectCall = (TCall*)OTAllocMem(sizeof(TCall));
+    if (gOTRcvConnectCall == NULL) {
+        log_error_cat(LOG_CAT_NETWORKING, "InitializeOTGlobalBuffers: Failed to allocate TCall structure");
+        return memFullErr;
+    }
+    
+    /* Allocate InetAddress buffer using OTAllocMem for notifier safety */
+    gOTRemoteAddr = (InetAddress*)OTAllocMem(sizeof(InetAddress));
+    if (gOTRemoteAddr == NULL) {
+        log_error_cat(LOG_CAT_NETWORKING, "InitializeOTGlobalBuffers: Failed to allocate InetAddress buffer");
+        OTFreeMem(gOTRcvConnectCall);
+        gOTRcvConnectCall = NULL;
+        return memFullErr;
+    }
+    
+    /* Initialize TCall structure with proper buffer pointers */
+    gOTRcvConnectCall->addr.buf = (UInt8*)gOTRemoteAddr;
+    gOTRcvConnectCall->addr.maxlen = sizeof(InetAddress);
+    gOTRcvConnectCall->addr.len = 0;
+    
+    /* No options or user data for TCP connections per Apple docs */
+    gOTRcvConnectCall->opt.buf = NULL;
+    gOTRcvConnectCall->opt.maxlen = 0;
+    gOTRcvConnectCall->opt.len = 0;
+    
+    gOTRcvConnectCall->udata.buf = NULL;    /* TCP doesn't support user data during connect */
+    gOTRcvConnectCall->udata.maxlen = 0;    /* Must be 0 for TCP per OpenTransport spec */
+    gOTRcvConnectCall->udata.len = 0;
+    
+    gOTGlobalBuffersInitialized = true;
+    log_debug_cat(LOG_CAT_NETWORKING, "InitializeOTGlobalBuffers: Global OTRcvConnect buffers initialized using OTAllocMem");
+    return noErr;
+}
+
+/* Cleanup global OTRcvConnect buffers */
+static void CleanupOTGlobalBuffers(void)
+{
+    if (!gOTGlobalBuffersInitialized) {
+        return; /* Not initialized */
+    }
+    
+    if (gOTRemoteAddr != NULL) {
+        OTFreeMem(gOTRemoteAddr);
+        gOTRemoteAddr = NULL;
+    }
+    
+    if (gOTRcvConnectCall != NULL) {
+        OTFreeMem(gOTRcvConnectCall);
+        gOTRcvConnectCall = NULL;
+    }
+    
+    gOTGlobalBuffersInitialized = false;
+    log_debug_cat(LOG_CAT_NETWORKING, "CleanupOTGlobalBuffers: Global OTRcvConnect buffers cleaned up");
 }
 
 static void OTImpl_Shutdown(short refNum)
 {
     (void)refNum; /* Unused */
     log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_Shutdown: OpenTransport shutdown requested");
+    
+    /* Cleanup global buffers before shutdown */
+    CleanupOTGlobalBuffers();
     
     /* Actually shutdown OpenTransport */
     ShutdownOpenTransport();
@@ -1275,14 +1400,46 @@ static OSErr OTImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remoteHo
     state = OTGetEndpointState(tcpEp->endpoint);
     log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: Current endpoint state: %d", state);
     
-    /* More robust state check - handle any non-IDLE state */
+    /* FIXED STATE MANAGEMENT: Handle each state according to OpenTransport documentation */
     if (state != T_IDLE) {
-        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: Endpoint in non-IDLE state %d. Attempting reset.", state);
-        if (state > T_IDLE) { /* If bound or connected */
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: Endpoint in non-IDLE state %d. Applying proper state transition.", state);
+        
+        switch (state) {
+        case T_OUTCON:
+            /* T_OUTCON means previous connection attempt stuck - need to abort cleanly */
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: Endpoint stuck in T_OUTCON, sending disconnect to reset");
+            OTSndDisconnect(tcpEp->endpoint, NULL);
+            /* Wait for T_DISCONNECT event and call OTRcvDisconnect, or just continue to unbind */
+            break;
+            
+        case T_DATAXFER:
+        case T_OUTREL:
+        case T_INREL:
+            /* Connected states - need orderly or abortive disconnect */
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: Endpoint in connected state %d, disconnecting", state);
+            OTSndDisconnect(tcpEp->endpoint, NULL);
+            break;
+            
+        case T_INCON:
+            /* Incoming connection pending - reject it */
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: Endpoint has pending incoming connection, rejecting");
+            OTSndDisconnect(tcpEp->endpoint, NULL);
+            break;
+            
+        default:
+            /* For other states, continue to unbind attempt */
+            break;
+        }
+        
+        /* Now try to unbind - but only if state allows it */
+        state = OTGetEndpointState(tcpEp->endpoint);
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: State after disconnect: %d", state);
+        
+        if (state >= T_IDLE) { /* T_IDLE or higher can be unbound */
             OSErr unbindErr = OTUnbind(tcpEp->endpoint);
             if (unbindErr != noErr) {
                 log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: OTUnbind failed: %d", unbindErr);
-                return unbindErr;
+                /* Don't return error - continue with current state */
             }
             /* Reset endpoint flags after unbind */
             tcpEp->isConnected = false;
@@ -1291,9 +1448,10 @@ static OSErr OTImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remoteHo
             tcpEp->remotePort = 0;
             tcpEp->localPort = 0;
         }
-        /* After unbind, state will be T_UNBND, and the next block will execute */
+        
+        /* Get final state after cleanup */
         state = OTGetEndpointState(tcpEp->endpoint);
-        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: After reset, endpoint state: %d", state);
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPConnectAsync: Final state after reset: %d", state);
     }
     
     if (state == T_UNBND) {
@@ -1407,7 +1565,14 @@ static OSErr OTImpl_TCPSendAsync(NetworkStreamRef streamRef, Ptr data, unsigned 
         OTResult endpointState = OTGetEndpointState(tcpEp->endpoint);
         if (endpointState != T_DATAXFER) {
             log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPSendAsync: Endpoint not in T_DATAXFER state (current: %d)", endpointState);
-            return connectionDoesntExist;
+            /* Return specific OpenTransport error instead of generic connectionDoesntExist */
+            if (endpointState == T_OUTCON) {
+                return kOTOutStateErr; /* Connection still establishing */
+            } else if (endpointState == T_UNBND || endpointState == T_IDLE) {
+                return connectionDoesntExist; /* Not connected */
+            } else {
+                return kOTOutStateErr; /* Wrong state for data transfer */
+            }
         }
     }
     
@@ -1504,6 +1669,22 @@ static OSErr OTImpl_TCPCheckAsyncStatus(NetworkAsyncHandle asyncHandle,
     
     if (resultData != NULL) {
         *resultData = asyncOp->userData;
+    }
+    
+    /* For connect operations, validate that endpoint is actually ready for data transfer */
+    if (asyncOp->opType == OT_ASYNC_TCP_CONNECT && asyncOp->result == noErr) {
+        OTTCPEndpoint *tcpEp = (OTTCPEndpoint *)asyncOp->stream;
+        if (tcpEp != NULL) {
+            OTResult endpointState = OTGetEndpointState(tcpEp->endpoint);
+            if (endpointState != T_DATAXFER) {
+                log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPCheckAsyncStatus: Connect completed but endpoint not in T_DATAXFER state (%d), connection not ready", endpointState);
+                if (operationResult != NULL) {
+                    *operationResult = kOTOutStateErr; /* Override result to indicate not ready */
+                }
+            } else {
+                log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPCheckAsyncStatus: Connection fully established and ready for data transfer");
+            }
+        }
     }
     
     log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPCheckAsyncStatus: TCP operation completed with result %d", asyncOp->result);
@@ -2070,6 +2251,50 @@ static void OTImpl_UDPCancelAsync(NetworkAsyncHandle asyncHandle)
     FreeOTAsyncHandle(asyncHandle);
 }
 
+static void OTImpl_FreeAsyncHandle(NetworkAsyncHandle asyncHandle)
+{
+    /* This function frees an async handle without canceling the operation */
+    /* Use this when an operation has completed and you want to free the handle */
+    if (asyncHandle != NULL) {
+        FreeOTAsyncHandle(asyncHandle);
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_FreeAsyncHandle: Handle freed");
+    }
+}
+
+/* Emergency cleanup function to recover from handle exhaustion */
+static void CleanupCompletedAsyncOps(void)
+{
+    int i, cleanedCount = 0;
+    
+    InitializeOTAsyncOps();
+    
+    for (i = 0; i < MAX_OT_ASYNC_OPS; i++) {
+        if (gOTAsyncOps[i].inUse && gOTAsyncOps[i].completed) {
+            /* Free completed operations that weren't properly cleaned up */
+            gOTAsyncOps[i].inUse = false;
+            gOTAsyncOps[i].endpoint = kOTInvalidEndpointRef;
+            gOTAsyncOps[i].completed = false;
+            gOTAsyncOps[i].result = noErr;
+            gOTAsyncOps[i].userData = NULL;
+            cleanedCount++;
+        }
+    }
+    
+    /* Count current pool status */
+    int inUse = 0, completed = 0;
+    for (i = 0; i < MAX_OT_ASYNC_OPS; i++) {
+        if (gOTAsyncOps[i].inUse) {
+            inUse++;
+            if (gOTAsyncOps[i].completed) completed++;
+        }
+    }
+    
+    if (cleanedCount > 0) {
+        log_debug_cat(LOG_CAT_NETWORKING, "CleanupCompletedAsyncOps: Recovered %d stale handles, pool status: %d/%d in use (%d completed)", 
+                     cleanedCount, inUse, MAX_OT_ASYNC_OPS, completed);
+    }
+}
+
 /* Utility functions */
 static OSErr OTImpl_ResolveAddress(const char *hostname, ip_addr *address)
 {
@@ -2217,6 +2442,7 @@ static NetworkOperations gOpenTransportOperations = {
     OTImpl_UDPReturnBufferAsync,
     OTImpl_UDPCheckReturnStatus,
     OTImpl_UDPCancelAsync,
+    OTImpl_FreeAsyncHandle,
 
     /* Utility operations */
     OTImpl_ResolveAddress,

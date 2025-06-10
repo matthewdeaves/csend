@@ -86,7 +86,7 @@ typedef struct {
     short rdsCount;
 } TCPAsyncOp;
 
-#define MAX_ASYNC_OPS 4
+#define MAX_ASYNC_OPS 16
 #define MAX_TCP_ASYNC_OPS 8
 static MacTCPAsyncOp gAsyncOps[MAX_ASYNC_OPS];
 static TCPAsyncOp gTCPAsyncOps[MAX_TCP_ASYNC_OPS];
@@ -157,6 +157,7 @@ static OSErr MacTCPImpl_UDPReturnBufferAsync(NetworkEndpointRef endpointRef,
         NetworkAsyncHandle *asyncHandle);
 static OSErr MacTCPImpl_UDPCheckReturnStatus(NetworkAsyncHandle asyncHandle);
 static void MacTCPImpl_UDPCancelAsync(NetworkAsyncHandle asyncHandle);
+static void MacTCPImpl_FreeAsyncHandle(NetworkAsyncHandle asyncHandle);
 static OSErr MacTCPImpl_ResolveAddress(const char *hostname, ip_addr *address);
 static OSErr MacTCPImpl_AddressToString(ip_addr address, char *addressStr);
 static const char *MacTCPImpl_GetImplementationName(void);
@@ -1291,6 +1292,16 @@ static void MacTCPImpl_UDPCancelAsync(NetworkAsyncHandle asyncHandle)
     }
 }
 
+static void MacTCPImpl_FreeAsyncHandle(NetworkAsyncHandle asyncHandle)
+{
+    /* This function frees an async handle without canceling the operation */
+    /* Use this when an operation has completed and you want to free the handle */
+    if (asyncHandle != NULL) {
+        FreeAsyncHandle(asyncHandle);
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_FreeAsyncHandle: Handle freed");
+    }
+}
+
 static OSErr MacTCPImpl_ResolveAddress(const char *hostname, ip_addr *address)
 {
     /* For now, just try to parse as IP address */
@@ -1461,6 +1472,7 @@ static NetworkOperations gMacTCPOperations = {
     MacTCPImpl_UDPReturnBufferAsync,
     MacTCPImpl_UDPCheckReturnStatus,
     MacTCPImpl_UDPCancelAsync,
+    MacTCPImpl_FreeAsyncHandle,
 
     /* Utility operations */
     MacTCPImpl_ResolveAddress,

@@ -134,6 +134,7 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 7. **Machine Mode Threading**: JSON output is thread-safe with proper synchronization
 8. **AI Integration**: Claude Haiku chatbot with configurable behavior and rate limiting
 9. **Cross-Platform Time**: `time()` (POSIX) vs `TickCount()` (Classic Mac) abstraction
+10. **OpenTransport TCP Issues**: Critical networking bugs documented in `OPENTRANSPORT_TCP_FIXES.md`
 
 ## Key Files to Understand
 
@@ -149,6 +150,7 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 - **UI Factory**: `posix/ui_factory.c` - Strategy pattern for UI creation
 - **Python Integration**: `csend_client.py`, `csend_chatbot.py` - AI chatbot and automation
 - **Logging**: `shared/logging.c` - Centralized logging with categories and levels
+- **OpenTransport TCP Fixes**: `OPENTRANSPORT_TCP_FIXES.md` - Detailed bug tracking and fix documentation
 
 ## Retro68 Development Resources
 
@@ -262,3 +264,44 @@ For CI/CD pipelines, add these checks:
 make clean && make                         # POSIX build
 make -f Makefile.retro68                   # Classic Mac (requires Retro68)
 ```
+
+## OpenTransport TCP Debugging Protocol
+
+**CRITICAL for Claude Code**: When working on OpenTransport networking issues, follow this systematic approach:
+
+### 1. Log Analysis Priority
+```bash
+# Check for specific OpenTransport errors first
+grep -E "(OTRcvConnect|kOTBufferOverflowErr|-3160|-3155)" *.log
+
+# Monitor TCP state transitions  
+grep -E "(T_CONNECT|T_DATAXFER|T_ORDREL|TCPTerminate)" *.log
+
+# Connection lifecycle tracking
+grep -A 5 -B 5 "Listen ASR\|Send ASR" *.log
+```
+
+### 2. Common OpenTransport Issues & Solutions
+- **Error -3160**: Buffer too small for OTRcvConnect → Allocate proper InetAddress buffer
+- **Error -3155**: Wrong endpoint state → Call OTGetEndpointState() and reset via OTUnbind()
+- **Connection stuck**: Missing OTRcvConnect() call in T_CONNECT event handler
+- **Listen restart fails**: Check `gListenStreamNeedsReset` flag and TCP_STREAM_RESET_DELAY_TICKS timing
+
+### 3. Key Files for OpenTransport Debugging
+- `classic_mac/opentransport_impl.c`: Core OpenTransport implementation
+- `classic_mac/messaging.c`: TCP dual-stream state machine 
+- `classic_mac/tcp_state_handlers.c`: Listen stream reset logic
+- `OPENTRANSPORT_TCP_FIXES.md`: Current bug status and solutions
+
+### 4. Testing Methodology
+1. **Start with logs**: Always analyze Mac and POSIX logs together
+2. **Test bidirectional**: Verify both POSIX→Mac and Mac→POSIX message flows
+3. **Check timing**: OpenTransport has async delays (1-second listen restart)
+4. **Validate states**: Use OTGetEndpointState() to verify endpoint progression
+5. **Reference docs**: Consult `Books/NetworkingOpenTransport.txt` for Apple's specifications
+
+### 5. Documentation Requirements
+- **ALWAYS update** `OPENTRANSPORT_TCP_FIXES.md` with findings
+- **Document error codes** and their root causes
+- **Track fixes** with before/after code snippets
+- **Note test results** for future debugging sessions

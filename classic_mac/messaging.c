@@ -68,7 +68,6 @@ static int gQueueHead = 0;
 static int gQueueTail = 0;
 
 /* Timeout constants */
-#define TCP_CLOSE_ULP_TIMEOUT_S 5
 #define TCP_RECEIVE_CMD_TIMEOUT_S 1
 
 /* Forward declarations */
@@ -616,6 +615,8 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
     OSErr err;
     OSErr operationResult;
     void *resultData;
+    
+    (void)giveTime; /* Unused in current implementation */
 
     if (!gNetworkOps) return;
 
@@ -641,9 +642,21 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
                     if (err != noErr) {
                         log_app_event("Error: Async send to %s failed to start: %d",
                                       gCurrentSendPeerIP, err);
-                        gNetworkOps->TCPAbort(gTCPSendStream);
-                        gTCPSendState = TCP_STATE_IDLE;
+                        /* Check if it's a temporary state error that might resolve */
+                        if (err == kOTOutStateErr || err == -23008) {
+                            log_debug_cat(LOG_CAT_MESSAGING, "Connection not ready for send, will retry");
+                            gTCPSendState = TCP_STATE_CONNECTED_OUT; /* Retry on next poll */
+                        } else {
+                            /* Use graceful close instead of abort for proper connection termination */
+                            gNetworkOps->TCPClose(gTCPSendStream, 5, NULL);
+                            gTCPSendState = TCP_STATE_CLOSING_GRACEFUL;
+                        }
                     }
+                } else if (err == noErr && operationResult == kOTOutStateErr) {
+                    /* Connection completed but endpoint not ready for data transfer yet */
+                    log_debug_cat(LOG_CAT_MESSAGING, "Connection to %s completed but not ready for data transfer, will retry", gCurrentSendPeerIP);
+                    /* Don't restart connection, just wait for endpoint to reach T_DATAXFER state */
+                    gTCPSendState = TCP_STATE_CONNECTED_OUT; /* Move to connected state and try sending */
                 } else {
                     log_app_event("Error: Connection to %s failed: %d",
                                   gCurrentSendPeerIP, operationResult);
@@ -660,35 +673,60 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
             if (err != 1) { /* Not pending anymore */
                 gSendDataHandle = NULL;
 
-                if (err == noErr && operationResult == noErr) {
-                    log_debug_cat(LOG_CAT_MESSAGING, "Message sent successfully");
+                if (err == noErr && operationResult >= 0) {
+                    /* FIXED: operationResult contains bytes sent, not error code.
+                     * Positive values indicate successful send, negative values are errors. */
+                    log_debug_cat(LOG_CAT_MESSAGING, "Message sent successfully (%d bytes)", operationResult);
 
                     /*
-                     * FIX: Use abortive close for all transient send connections.
-                     * This works for both MacTCP and OpenTransport implementations:
-                     * - MacTCP: TCPAbort immediately terminates and can transition to IDLE
-                     * - OpenTransport: Avoids T_ORDREL dependency that can cause hangs
-                     * Both network abstractions handle TCPAbort through the same interface.
+                     * Use graceful close for proper connection termination.
+                     * This prevents "Connection reset by peer" errors on the receiving side.
+                     * OpenTransport handles orderly disconnect properly via OTSndOrderlyDisconnect.
                      */
-                    log_debug_cat(LOG_CAT_MESSAGING, "Using abort for immediate close of send stream.");
-                    gNetworkOps->TCPAbort(gTCPSendStream);
-                    gTCPSendState = TCP_STATE_ABORTING;
+                    log_debug_cat(LOG_CAT_MESSAGING, "Using graceful close for proper connection termination");
+                    gNetworkOps->TCPClose(gTCPSendStream, 5, NULL);
+                    gTCPSendState = TCP_STATE_CLOSING_GRACEFUL;
                 } else {
                     log_app_event("Error: Send to %s failed: %d",
                                   gCurrentSendPeerIP, operationResult);
-                    gNetworkOps->TCPAbort(gTCPSendStream);
-                    gTCPSendState = TCP_STATE_IDLE;
+                    /* Use graceful close even on error to avoid connection reset */
+                    gNetworkOps->TCPClose(gTCPSendStream, 5, NULL);
+                    gTCPSendState = TCP_STATE_CLOSING_GRACEFUL;
                 }
             }
         }
         break;
 
     case TCP_STATE_CLOSING_GRACEFUL:
-        /* DO NOT set state to IDLE here for OpenTransport.
-           Wait for the T_ORDREL event from the notifier.
-           The notifier will call the ASR, which should set the state to
-           TCP_STATE_RELEASING upon termination. */
-        log_debug_cat(LOG_CAT_MESSAGING, "Send stream: Waiting for graceful close to complete...");
+        /* Wait for graceful close to complete, but add timeout to prevent hanging */
+        {
+            static unsigned long closeStartTime = 0;
+            
+            if (closeStartTime == 0) {
+                closeStartTime = TickCount();
+                log_debug_cat(LOG_CAT_MESSAGING, "Send stream: Graceful close initiated, waiting for completion...");
+            } else {
+                unsigned long elapsedTicks = TickCount() - closeStartTime;
+                if (elapsedTicks > 5 * 60) { /* 5 seconds timeout */
+                    log_debug_cat(LOG_CAT_MESSAGING, "Send stream: Graceful close timeout, forcing abort");
+                    gNetworkOps->TCPAbort(gTCPSendStream);
+                    gTCPSendState = TCP_STATE_IDLE;
+                    closeStartTime = 0;
+                } else {
+                    /* Check if close completed via notifier events */
+                    /* OpenTransport notifier should have marked connection as closed */
+                    if (gNetworkOps->TCPStatus) {
+                        NetworkTCPInfo tcpInfo;
+                        OSErr statusErr = gNetworkOps->TCPStatus(gTCPSendStream, &tcpInfo);
+                        if (statusErr != noErr || !tcpInfo.isConnected) {
+                            log_debug_cat(LOG_CAT_MESSAGING, "Send stream: Graceful close completed");
+                            gTCPSendState = TCP_STATE_IDLE;
+                            closeStartTime = 0;
+                        }
+                    }
+                }
+            }
+        }
         break;
 
     case TCP_STATE_IDLE:
@@ -717,10 +755,33 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
         }
         break;
 
+    case TCP_STATE_CONNECTED_OUT:
+        /* Connection established, ready to send data */
+        if (gCurrentSendMessage[0] != '\0') {
+            /* Initiate the send operation */
+            int msgLen = strlen(gCurrentSendMessage);
+            log_debug_cat(LOG_CAT_MESSAGING, "Initiating send to %s (%d bytes)", gCurrentSendPeerIP, msgLen);
+            
+            err = gNetworkOps->TCPSendAsync(gTCPSendStream, (Ptr)gCurrentSendMessage,
+                                            msgLen, true, &gSendDataHandle);
+            if (err == noErr) {
+                gTCPSendState = TCP_STATE_SENDING;
+            } else if (err == kOTOutStateErr || err == -23008) {
+                /* Endpoint still not ready, stay in CONNECTED_OUT state to retry */
+                log_debug_cat(LOG_CAT_MESSAGING, "Connection not ready for send (err=%d), will retry", err);
+                /* Stay in TCP_STATE_CONNECTED_OUT to retry on next poll */
+            } else {
+                log_app_event("Error: Async send to %s failed to start: %d", gCurrentSendPeerIP, err);
+                /* Use graceful close for connection termination */
+                gNetworkOps->TCPClose(gTCPSendStream, 5, NULL);
+                gTCPSendState = TCP_STATE_CLOSING_GRACEFUL;
+            }
+        }
+        break;
+
     case TCP_STATE_UNINITIALIZED:
     case TCP_STATE_LISTENING:
     case TCP_STATE_CONNECTED_IN:
-    case TCP_STATE_CONNECTED_OUT:
     case TCP_STATE_ABORTING:
         /* These states should not occur for send stream during normal operation */
         log_warning_cat(LOG_CAT_MESSAGING, "Send stream in unexpected state: %d", gTCPSendState);

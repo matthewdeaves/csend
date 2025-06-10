@@ -129,6 +129,7 @@ typedef struct {
                                  NetworkAsyncHandle *asyncHandle);
     OSErr(*UDPCheckReturnStatus)(NetworkAsyncHandle asyncHandle);
     void (*UDPCancelAsync)(NetworkAsyncHandle asyncHandle);
+    void (*FreeAsyncHandle)(NetworkAsyncHandle asyncHandle);
 
     /* Utility operations */
     OSErr(*ResolveAddress)(const char *hostname, ip_addr *address);

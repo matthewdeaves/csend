@@ -379,6 +379,9 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
             /* Still pending, nothing to do */
         } else if (status == noErr) {
             /* Read completed successfully */
+            if (gNetworkOps->FreeAsyncHandle) {
+                gNetworkOps->FreeAsyncHandle(gUDPReadHandle);
+            }
             gUDPReadHandle = NULL;
 
             if (dataLength > 0) {
@@ -429,6 +432,9 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
             }
         } else {
             /* Error occurred */
+            if (gNetworkOps->FreeAsyncHandle) {
+                gNetworkOps->FreeAsyncHandle(gUDPReadHandle);
+            }
             gUDPReadHandle = NULL;
             log_error_cat(LOG_CAT_DISCOVERY, "Error (PollUDPListener): Async UDP read completed with error: %d", status);
 
@@ -447,6 +453,9 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
             /* Still pending */
         } else if (status == noErr) {
             /* Return completed successfully */
+            if (gNetworkOps->FreeAsyncHandle) {
+                gNetworkOps->FreeAsyncHandle(gUDPReturnHandle);
+            }
             gUDPReturnHandle = NULL;
             log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Async buffer return completed successfully.");
 
@@ -456,6 +465,9 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
             }
         } else {
             /* Error occurred */
+            if (gNetworkOps->FreeAsyncHandle) {
+                gNetworkOps->FreeAsyncHandle(gUDPReturnHandle);
+            }
             gUDPReturnHandle = NULL;
             log_error_cat(LOG_CAT_DISCOVERY, "CRITICAL Error: Async buffer return completed with error: %d.", status);
         }
@@ -469,10 +481,16 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
             /* Still pending */
         } else if (status == noErr) {
             /* Send completed successfully */
+            if (gNetworkOps->FreeAsyncHandle) {
+                gNetworkOps->FreeAsyncHandle(gUDPSendHandle);
+            }
             gUDPSendHandle = NULL;
             log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: UDP send completed successfully");
         } else {
             /* Error occurred */
+            if (gNetworkOps->FreeAsyncHandle) {
+                gNetworkOps->FreeAsyncHandle(gUDPSendHandle);
+            }
             gUDPSendHandle = NULL;
             log_error_cat(LOG_CAT_DISCOVERY, "PollUDPListener: UDP send completed with error: %d", status);
         }
