@@ -23,6 +23,11 @@
 DialogPtr gMainWindow = NULL;
 Boolean gDialogTEInitialized = false;
 Boolean gDialogListInitialized = false;
+
+/* Update tracking to reduce excessive redraws */
+Boolean gInputTENeedsUpdate = false;
+Boolean gMessagesTENeedsUpdate = false;
+Boolean gPeerListNeedsUpdate = false;
 Boolean InitDialog(void)
 {
     Boolean messagesOk = false;
@@ -84,6 +89,10 @@ Boolean InitDialog(void)
     UpdatePeerDisplayList(true);
     log_debug_cat(LOG_CAT_UI, "Setting focus to input field (item %d)...", kInputTextEdit);
     ActivateInputTE(true);
+    /* Mark all components for initial update */
+    gInputTENeedsUpdate = true;
+    gMessagesTENeedsUpdate = true;
+    gPeerListNeedsUpdate = true;
     UpdateDialogControls();
     log_debug_cat(LOG_CAT_UI, "Initial UpdateDialogControls() called from InitDialog.");
     SetPort(oldPort);
@@ -272,8 +281,36 @@ void UpdateDialogControls(void)
     }
     GetPort(&oldPort);
     SetPort(windowPort);
-    HandleMessagesTEUpdate(gMainWindow);
-    HandleInputTEUpdate(gMainWindow);
-    HandlePeerListUpdate(gMainWindow);
+    
+    /* Only update components that have been marked as needing updates */
+    if (gMessagesTENeedsUpdate) {
+        HandleMessagesTEUpdate(gMainWindow);
+        gMessagesTENeedsUpdate = false;
+    }
+    if (gInputTENeedsUpdate) {
+        HandleInputTEUpdate(gMainWindow);
+        gInputTENeedsUpdate = false;
+    }
+    if (gPeerListNeedsUpdate) {
+        HandlePeerListUpdate(gMainWindow);
+        gPeerListNeedsUpdate = false;
+    }
+    
     SetPort(oldPort);
+}
+
+/* Invalidation functions to mark components for update */
+void InvalidateInputTE(void)
+{
+    gInputTENeedsUpdate = true;
+}
+
+void InvalidateMessagesTE(void)
+{
+    gMessagesTENeedsUpdate = true;
+}
+
+void InvalidatePeerList(void)
+{
+    gPeerListNeedsUpdate = true;
 }

@@ -210,6 +210,7 @@ void UpdatePeerDisplayList(Boolean forceRedraw)
             }
             HSetState((Handle)gPeerListHandle, listState);
             SetPort(oldPortForDrawing);
+            InvalidatePeerList(); /* Mark for update on next dialog refresh */
             log_debug_cat(LOG_CAT_UI, "Peer list updated. Active peers: %d. Invalidating list rect.", activePeerCount);
         } else {
             log_debug_cat(LOG_CAT_UI, "Peer list updated, but cannot invalidate rect (window port is NULL).");

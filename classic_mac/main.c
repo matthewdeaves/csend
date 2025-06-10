@@ -263,10 +263,16 @@ void MainEventLoop(void)
 {
     EventRecord event;
     Boolean gotEvent;
-    long sleepTime = 1L;
+    long sleepTime = 15L; /* 15 ticks = 250ms, optimal for TextEdit per Inside Macintosh */
+    static unsigned long lastIdleTime = 0;
     while (!gDone) {
-        if (gMessagesTE != NULL) TEIdle(gMessagesTE);
-        IdleInputTE();
+        /* Only call TEIdle at cursor blink rate (15 ticks) to reduce updates */
+        unsigned long currentTime = TickCount();
+        if (currentTime - lastIdleTime >= 15) {
+            if (gMessagesTE != NULL) TEIdle(gMessagesTE);
+            IdleInputTE();
+            lastIdleTime = currentTime;
+        }
         HandleIdleTasks();
         gotEvent = WaitNextEvent(everyEvent, &event, sleepTime, NULL);
         if (gotEvent) {
@@ -448,7 +454,13 @@ void HandleEvent(EventRecord *event)
         BeginUpdate(whichWindow);
         if (whichWindow == (WindowPtr)gMainWindow) {
             DrawDialog(whichWindow);
-            UpdateDialogControls();
+            /* Throttle dialog control updates to reduce excessive redraws */
+            static unsigned long lastUpdateTime = 0;
+            unsigned long currentTime = TickCount();
+            if (currentTime - lastUpdateTime >= 6) { /* ~100ms throttle */
+                UpdateDialogControls();
+                lastUpdateTime = currentTime;
+            }
         } else {
         }
         EndUpdate(whichWindow);
