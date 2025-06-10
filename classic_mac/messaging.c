@@ -595,7 +595,8 @@ static void HandleSendASREvents(GiveTimePtr giveTime)
         if (gTCPSendState == TCP_STATE_CLOSING_GRACEFUL ||
                 gTCPSendState == TCP_STATE_CONNECTING_OUT ||
                 gTCPSendState == TCP_STATE_CONNECTED_OUT ||
-                gTCPSendState == TCP_STATE_SENDING) {
+                gTCPSendState == TCP_STATE_SENDING ||
+                gTCPSendState == TCP_STATE_ABORTING) {
             log_debug_cat(LOG_CAT_MESSAGING, "Send ASR: Transitioning to RELEASING state for endpoint cleanup");
             gTCPSendState = TCP_STATE_RELEASING;
         } else {
@@ -662,22 +663,16 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
                 if (err == noErr && operationResult == noErr) {
                     log_debug_cat(LOG_CAT_MESSAGING, "Message sent successfully");
 
-                    /* Close connection */
-                    if (strcmp(gCurrentSendMsgType, MSG_QUIT) == 0) {
-                        log_debug_cat(LOG_CAT_MESSAGING, "Sending QUIT - using abort for immediate close");
-                        gNetworkOps->TCPAbort(gTCPSendStream);
-                        gTCPSendState = TCP_STATE_IDLE;
-                    } else {
-                        log_debug_cat(LOG_CAT_MESSAGING, "Attempting graceful close...");
-                        gTCPSendState = TCP_STATE_CLOSING_GRACEFUL;
-                        err = gNetworkOps->TCPClose(gTCPSendStream, TCP_CLOSE_ULP_TIMEOUT_S, giveTime);
-                        if (err != noErr) {
-                            log_warning_cat(LOG_CAT_MESSAGING, "Graceful close failed (%d), using abort", err);
-                            gNetworkOps->TCPAbort(gTCPSendStream);
-                            gTCPSendState = TCP_STATE_RELEASING;
-                        }
-                        /* Don't set IDLE here - wait for close to complete */
-                    }
+                    /*
+                     * FIX: Use abortive close for all transient send connections.
+                     * This works for both MacTCP and OpenTransport implementations:
+                     * - MacTCP: TCPAbort immediately terminates and can transition to IDLE
+                     * - OpenTransport: Avoids T_ORDREL dependency that can cause hangs
+                     * Both network abstractions handle TCPAbort through the same interface.
+                     */
+                    log_debug_cat(LOG_CAT_MESSAGING, "Using abort for immediate close of send stream.");
+                    gNetworkOps->TCPAbort(gTCPSendStream);
+                    gTCPSendState = TCP_STATE_ABORTING;
                 } else {
                     log_app_event("Error: Send to %s failed: %d",
                                   gCurrentSendPeerIP, operationResult);
