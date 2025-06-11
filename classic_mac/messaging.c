@@ -29,6 +29,8 @@
 NetworkStreamRef gTCPListenStream = NULL;
 NetworkStreamRef gTCPSendStream = NULL;
 
+static NetworkStreamRef gTCPActiveDataStream = NULL;
+
 /* Separate buffers for each stream */
 static Ptr gTCPListenRcvBuffer = NULL;
 static Ptr gTCPSendRcvBuffer = NULL;
@@ -498,21 +500,23 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
         if (gTCPListenState == TCP_STATE_CONNECTED_IN) {
             if (gListenNoCopyRdsPendingReturn) {
                 log_app_event("Listen ASR: TCPDataArrival while RDS buffers still pending return!");
-                gNetworkOps->TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, giveTime);
+                NetworkStreamRef activeStream = gTCPActiveDataStream ? gTCPActiveDataStream : gTCPListenStream;
+                gNetworkOps->TCPReturnBuffer(activeStream, (Ptr)gListenNoCopyRDS, giveTime);
                 gListenNoCopyRdsPendingReturn = false;
             }
-
+NetworkStreamRef activeStream = gTCPActiveDataStream ? gTCPActiveDataStream : gTCPListenStream;
+            
             NetworkTCPInfo tcpInfo;
-            if (gNetworkOps->TCPStatus(gTCPListenStream, &tcpInfo) != noErr) {
+            if (gNetworkOps->TCPStatus(activeStream, &tcpInfo) != noErr) {
                 log_error_cat(LOG_CAT_MESSAGING, "Listen ASR: TCPDataArrival, but GetStatus failed.");
-                gNetworkOps->TCPAbort(gTCPListenStream);
-                gTCPListenState = TCP_STATE_IDLE;
-                /* REMOVED: Reset logic - listen endpoint stays ready for next connection */
+                gNetworkOps->TCPAbort(activeStream);
+                gTCPListenState = TCP_STATE_LISTENING; /* GEMINI'S FIX: Return to listening, not idle */
+                gTCPActiveDataStream = NULL; /* Clear active data stream reference */
                 break;
             }
 
             Boolean urgentFlag, markFlag;
-            OSErr rcvErr = gNetworkOps->TCPReceiveNoCopy(gTCPListenStream, (Ptr)gListenNoCopyRDS,
+            OSErr rcvErr = gNetworkOps->TCPReceiveNoCopy(activeStream, (Ptr)gListenNoCopyRDS,
                            MAX_RDS_ENTRIES, TCP_RECEIVE_CMD_TIMEOUT_S,
                            &urgentFlag, &markFlag, giveTime);
 
@@ -522,25 +526,26 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
                     ProcessIncomingTCPData(gListenNoCopyRDS, tcpInfo.remoteHost, tcpInfo.remotePort);
                     gListenNoCopyRdsPendingReturn = true;
 
-                    OSErr bfrReturnErr = gNetworkOps->TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, giveTime);
+                    OSErr bfrReturnErr = gNetworkOps->TCPReturnBuffer(activeStream, (Ptr)gListenNoCopyRDS, giveTime);
                     if (bfrReturnErr == noErr) {
                         gListenNoCopyRdsPendingReturn = false;
                     } else {
                         log_app_event("CRITICAL: Listen TCPBfrReturn FAILED: %d", bfrReturnErr);
-                        gTCPListenState = TCP_STATE_ERROR;
-                        gNetworkOps->TCPAbort(gTCPListenStream);
+                        gTCPListenState = TCP_STATE_LISTENING; /* GEMINI'S FIX: Return to listening even on error */
+                        gNetworkOps->TCPAbort(activeStream);
+                        gTCPActiveDataStream = NULL; /* Clear active data stream reference */
                     }
                 }
             } else if (rcvErr == connectionClosing) {
                 log_app_event("Listen connection closing by peer.");
-                gNetworkOps->TCPAbort(gTCPListenStream);
-                gTCPListenState = TCP_STATE_IDLE;
-                /* REMOVED: Reset logic - listen endpoint immediately ready for next connection */
+                gNetworkOps->TCPAbort(activeStream);
+                gTCPListenState = TCP_STATE_LISTENING; /* GEMINI'S FIX: Return to listening, not idle */
+                gTCPActiveDataStream = NULL; /* Clear active data stream reference */
             } else if (rcvErr != commandTimeout) {
                 log_app_event("Error during Listen TCPNoCopyRcv: %d", rcvErr);
-                gNetworkOps->TCPAbort(gTCPListenStream);
-                gTCPListenState = TCP_STATE_IDLE;
-                /* REMOVED: Reset logic - listen endpoint immediately ready for next connection */
+                gNetworkOps->TCPAbort(activeStream);
+                gTCPListenState = TCP_STATE_LISTENING; /* GEMINI'S FIX: Return to listening, not idle */
+                gTCPActiveDataStream = NULL; /* Clear active data stream reference */
             }
         }
         break;
@@ -548,20 +553,24 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
     case TCPTerminate:
         log_app_event("Listen ASR: TCPTerminate. Reason: %u.", currentEvent.termReason);
         if (gListenNoCopyRdsPendingReturn) {
-            gNetworkOps->TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, giveTime);
+            NetworkStreamRef activeStream = gTCPActiveDataStream ? gTCPActiveDataStream : gTCPListenStream;
+            gNetworkOps->TCPReturnBuffer(activeStream, (Ptr)gListenNoCopyRDS, giveTime);
             gListenNoCopyRdsPendingReturn = false;
         }
         gListenAsyncOperationInProgress = false;
-        gTCPListenState = TCP_STATE_IDLE;
-        /* REMOVED: Reset logic - per Apple docs, listen endpoint should remain persistent
-         * and immediately return to T_IDLE state ready for next connection */
+        gTCPListenState = TCP_STATE_LISTENING; /* GEMINI'S FIX: Return to listening, not idle */
+        gTCPActiveDataStream = NULL; /* Clear active data stream reference */
         break;
 
     case TCPClosing:
         log_app_event("Listen ASR: Remote peer closed connection.");
-        gNetworkOps->TCPAbort(gTCPListenStream);
-        gTCPListenState = TCP_STATE_IDLE;
-        /* REMOVED: Reset logic - listen endpoint immediately ready for next connection */
+        if (gTCPActiveDataStream) {
+            gNetworkOps->TCPAbort(gTCPActiveDataStream);
+            gTCPActiveDataStream = NULL;
+        } else {
+            gNetworkOps->TCPAbort(gTCPListenStream);
+        }
+        gTCPListenState = TCP_STATE_LISTENING; /* GEMINI'S FIX: Return to listening, not idle */
         break;
 
     default:
@@ -693,36 +702,10 @@ static void ProcessSendStateMachine(GiveTimePtr giveTime)
         break;
 
     case TCP_STATE_CLOSING_GRACEFUL:
-        /* Wait for graceful close to complete, but add timeout to prevent hanging */
-    {
-        static unsigned long closeStartTime = 0;
-
-        if (closeStartTime == 0) {
-            closeStartTime = TickCount();
-            log_debug_cat(LOG_CAT_MESSAGING, "Send stream: Graceful close initiated, waiting for completion...");
-        } else {
-            unsigned long elapsedTicks = TickCount() - closeStartTime;
-            if (elapsedTicks > 5 * 60) { /* 5 seconds timeout */
-                log_debug_cat(LOG_CAT_MESSAGING, "Send stream: Graceful close timeout, forcing abort");
-                gNetworkOps->TCPAbort(gTCPSendStream);
-                gTCPSendState = TCP_STATE_IDLE;
-                closeStartTime = 0;
-            } else {
-                /* Check if close completed via notifier events */
-                /* OpenTransport notifier should have marked connection as closed */
-                if (gNetworkOps->TCPStatus) {
-                    NetworkTCPInfo tcpInfo;
-                    OSErr statusErr = gNetworkOps->TCPStatus(gTCPSendStream, &tcpInfo);
-                    if (statusErr != noErr || !tcpInfo.isConnected) {
-                        log_debug_cat(LOG_CAT_MESSAGING, "Send stream: Graceful close completed");
-                        gTCPSendState = TCP_STATE_IDLE;
-                        closeStartTime = 0;
-                    }
-                }
-            }
-        }
-    }
-    break;
+        /* GEMINI'S BUG 2 FIX: Eliminate polling logic - rely on TCPTerminate event */
+        log_debug_cat(LOG_CAT_MESSAGING, "Send stream: Graceful close in progress, waiting for TCPTerminate event");
+        /* Do nothing - wait for TCPTerminate ASR event to transition to RELEASING state */
+        break;
 
     case TCP_STATE_IDLE:
         /* Send stream is ready for new connections or operations */
@@ -915,5 +898,24 @@ static OSErr StartAsyncSend(const char *peerIPStr, const char *message_content, 
 
     log_debug_cat(LOG_CAT_MESSAGING, "Async connect initiated");
     return noErr;
+}
+
+/* GEMINI'S ARCHITECTURAL FIX: Handoff mechanism for OpenTransport factory */
+void Messaging_SetActiveDataStream(NetworkStreamRef dataStreamRef)
+{
+    log_debug_cat(LOG_CAT_MESSAGING, "Messaging_SetActiveDataStream: Setting active data stream to 0x%p", dataStreamRef);
+    
+    /* Set the active data stream */
+    gTCPActiveDataStream = dataStreamRef;
+    
+    /* Transition listen state machine to connected state */
+    gTCPListenState = TCP_STATE_CONNECTED_IN;
+    
+    /* Trigger TCPDataArrival event for message processing */
+    gListenAsrEvent.eventPending = true;
+    gListenAsrEvent.eventCode = TCPDataArrival;
+    gListenAsrEvent.termReason = 0;
+    
+    log_debug_cat(LOG_CAT_MESSAGING, "Messaging_SetActiveDataStream: Listen state -> TCP_STATE_CONNECTED_IN, TCPDataArrival event triggered");
 }
 

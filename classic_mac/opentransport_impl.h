@@ -26,4 +26,7 @@ const char *GetOpenTransportErrorString(OSStatus err);
 OSStatus InitializeOpenTransport(void);
 void ShutdownOpenTransport(void);
 
+/* APPLE COMPLIANCE: Main loop processing helper */
+void OTImpl_ProcessPendingConnections(void);
+
 #endif /* OPENTRANSPORT_IMPL_H */

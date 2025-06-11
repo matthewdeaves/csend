@@ -21,6 +21,7 @@
 #include "../shared/protocol.h"
 #include "logging.h"
 #include "network_init.h"
+#include "opentransport_impl.h"
 #include "discovery.h"
 #include "messaging.h"
 #include "dialog.h"
@@ -390,6 +391,9 @@ void HandleIdleTasks(void)
     PollUDPListener(gMacTCPRefNum, gMyLocalIP);
     ProcessTCPStateMachine(YieldTimeToSystem);
     CheckSendBroadcast(gMacTCPRefNum, gMyUsername, gMyLocalIPStr);
+    
+    /* APPLE COMPLIANCE: Process OpenTransport connections from main loop (not notifier context) */
+    OTImpl_ProcessPendingConnections();
     if (gLastPeerListUpdateTime == 0 ||
             (currentTimeTicks < gLastPeerListUpdateTime) ||
             (currentTimeTicks - gLastPeerListUpdateTime) >= kPeerListUpdateIntervalTicks) {

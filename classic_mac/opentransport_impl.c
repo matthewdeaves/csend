@@ -26,6 +26,13 @@ static OTNotifyUPP gOTNotifierUPP = NULL;
 static OTNotifyUPP gOTPersistentListenerUPP = NULL;
 static OTNotifyUPP gOTDataEndpointUPP = NULL;
 
+/* APPLE COMPLIANCE: Singleton configuration templates for performance optimization */
+static OTConfigurationRef gTCPConfigTemplate = NULL;
+static OTConfigurationRef gUDPConfigTemplate = NULL;
+
+/* APPLE COMPLIANCE: Flag to signal main loop to process connections (not in notifier context) */
+static Boolean gPendingConnectionsNeedProcessing = false;
+
 /**
  * @brief The application's global OpenTransport notifier procedure.
  *
@@ -118,6 +125,9 @@ static short gActiveDataEndpoints = 0;
 static Boolean gPersistentListenerInitialized = false;
 static Boolean gFactoryInitialized = false;
 static tcp_port gListenPort = 0;
+
+/* APPLE COMPLIANCE: Internet Services Provider for DNS resolution */
+static InetSvcRef gInetServicesRef = kOTInvalidProviderRef;
 
 /* Forward declarations for buffer management */
 static OSErr InitializeOTGlobalBuffers(void);
@@ -298,6 +308,9 @@ static OSErr OTImpl_ResolveAddress(const char *hostname, ip_addr *address);
 static OSErr OTImpl_AddressToString(ip_addr address, char *addressStr);
 static const char *OTImpl_GetImplementationName(void);
 static Boolean OTImpl_IsAvailable(void);
+
+/* APPLE COMPLIANCE: Main loop helper to process connections outside notifier context */
+void OTImpl_ProcessPendingConnections(void);
 
 /* Implementation functions */
 
@@ -509,6 +522,16 @@ static pascal void OTTCPNotifier(void *contextPtr, OTEventCode code, OTResult re
 
     case T_DISCONNECT:
         log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: T_DISCONNECT");
+        /* APPLE COMPLIANCE: Must call OTRcvDisconnect to complete disconnect handshake */
+        {
+            TDiscon discon;
+            OSStatus rcvErr = OTRcvDisconnect(tcpEp->endpoint, &discon);
+            if (rcvErr == noErr) {
+                log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: OTRcvDisconnect successful, reason=%d", discon.reason);
+            } else {
+                log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: OTRcvDisconnect failed: %d", rcvErr);
+            }
+        }
         tcpEp->isConnected = false;
         break;
 
@@ -523,12 +546,17 @@ static pascal void OTTCPNotifier(void *contextPtr, OTEventCode code, OTResult re
             if (rcvDisconnErr == noErr) {
                 log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: Acknowledged peer's orderly release");
 
-                /* Send our own orderly release to complete the handshake */
-                sndDisconnErr = OTSndOrderlyDisconnect(tcpEp->endpoint);
-                if (sndDisconnErr == noErr) {
-                    log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: Sent orderly release to peer");
+                /* APPLE COMPLIANCE: Validate endpoint state before OTSndOrderlyDisconnect */
+                OTResult state = OTGetEndpointState(tcpEp->endpoint);
+                if (state == T_DATAXFER || state == T_OUTCON || state == T_INCON) {
+                    sndDisconnErr = OTSndOrderlyDisconnect(tcpEp->endpoint);
+                    if (sndDisconnErr == noErr) {
+                        log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: Sent orderly release to peer");
+                    } else {
+                        log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: Failed to send orderly release: %d", sndDisconnErr);
+                    }
                 } else {
-                    log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: Failed to send orderly release: %d", sndDisconnErr);
+                    log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: Cannot send orderly disconnect in state %d", state);
                 }
             } else {
                 log_debug_cat(LOG_CAT_NETWORKING, "OTTCPNotifier: Failed to acknowledge orderly release: %d", rcvDisconnErr);
@@ -604,42 +632,58 @@ static pascal void OTPersistentListenerNotifier(void *contextPtr, OTEventCode co
     case T_LISTEN:
         log_debug_cat(LOG_CAT_NETWORKING, "OTPersistentListenerNotifier: T_LISTEN - incoming connection");
         {
-            /* Asynchronous Factory Pattern: Queue connection and process asynchronously */
-            TCall call;
-            InetAddress clientAddr;
+            /* APPLE COMPLIANCE: Use heap allocation for OpenTransport structures in notifiers */
+            TCall *call = (TCall *)OTAllocMem(sizeof(TCall));
+            InetAddress *clientAddr = (InetAddress *)OTAllocMem(sizeof(InetAddress));
             OSStatus listenErr;
 
+            if (!call || !clientAddr) {
+                log_error_cat(LOG_CAT_NETWORKING, "OTAllocMem failed in T_LISTEN notifier");
+                if (call) OTFreeMem(call);
+                if (clientAddr) OTFreeMem(clientAddr);
+                break;
+            }
+
             /* Set up call structure to receive connection details */
-            call.addr.buf = (UInt8 *)&clientAddr;
-            call.addr.maxlen = sizeof(clientAddr);
-            call.opt.buf = NULL;
-            call.opt.maxlen = 0;
-            call.udata.buf = NULL;
-            call.udata.maxlen = 0;
+            call->addr.buf = (UInt8 *)clientAddr;
+            call->addr.maxlen = sizeof(InetAddress);
+            call->opt.buf = NULL;
+            call->opt.maxlen = 0;
+            call->udata.buf = NULL;
+            call->udata.maxlen = 0;
 
             /* Get the connection request details from persistent listener */
-            listenErr = OTListen(gPersistentListener, &call);
+            listenErr = OTListen(gPersistentListener, call);
             if (listenErr == noErr) {
                 /* CRITICAL FIX: Queue connection instead of creating endpoint synchronously */
-                OSErr queueErr = QueuePendingConnection(&call);
+                OSErr queueErr = QueuePendingConnection(call);
                 if (queueErr == noErr) {
                     log_info_cat(LOG_CAT_NETWORKING, "OTPersistentListenerNotifier: Queued connection from %d.%d.%d.%d:%d",
-                                 (clientAddr.fHost >> 24) & 0xFF,
-                                 (clientAddr.fHost >> 16) & 0xFF,
-                                 (clientAddr.fHost >> 8) & 0xFF,
-                                 clientAddr.fHost & 0xFF,
-                                 clientAddr.fPort);
+                                 (clientAddr->fHost >> 24) & 0xFF,
+                                 (clientAddr->fHost >> 16) & 0xFF,
+                                 (clientAddr->fHost >> 8) & 0xFF,
+                                 clientAddr->fHost & 0xFF,
+                                 clientAddr->fPort);
 
-                    /* Process pending connections asynchronously */
-                    ProcessPendingConnections();
+                    /* APPLE COMPLIANCE: Signal main loop to process connections (not in notifier context) */
+                    gPendingConnectionsNeedProcessing = true;
                 } else {
                     log_error_cat(LOG_CAT_NETWORKING, "OTPersistentListenerNotifier: Failed to queue connection: %d", queueErr);
-                    /* Reject connection if queue is full */
-                    OTSndDisconnect(gPersistentListener, &call);
+                    /* APPLE COMPLIANCE: Validate endpoint state before OTSndDisconnect */
+                    OTResult listenerState = OTGetEndpointState(gPersistentListener);
+                    if (listenerState == T_DATAXFER || listenerState == T_OUTCON || listenerState == T_INCON) {
+                        OTSndDisconnect(gPersistentListener, call);
+                    } else {
+                        log_debug_cat(LOG_CAT_NETWORKING, "Cannot disconnect listener in state %d", listenerState);
+                    }
                 }
             } else {
                 log_error_cat(LOG_CAT_NETWORKING, "OTPersistentListenerNotifier: OTListen failed: %d", listenErr);
             }
+
+            /* APPLE COMPLIANCE: Free heap-allocated OpenTransport structures */
+            OTFreeMem(call);
+            OTFreeMem(clientAddr);
 
             /* Timeout old connections periodically */
             TimeoutOldConnections();
@@ -657,8 +701,14 @@ static pascal void OTPersistentListenerNotifier(void *contextPtr, OTEventCode co
 /* Asynchronous Factory Pattern: Data Endpoint Notifier */
 static pascal void OTDataEndpointNotifier(void *contextPtr, OTEventCode code, OTResult result, void *cookie)
 {
-    short slotIndex = (short)(long)cookie; /* Slot index passed during OTAsyncOpenEndpoint */
+    short slotIndex = (short)cookie; /* Slot index passed during OTAsyncOpenEndpoint */
     (void)contextPtr; /* Unused */
+
+    /* Validate slot index early to catch cookie corruption */
+    if (slotIndex < 0 || slotIndex >= MAX_DATA_ENDPOINTS) {
+        log_error_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Corrupted slot index %d (valid range: 0-%d)", slotIndex, MAX_DATA_ENDPOINTS-1);
+        return;
+    }
 
     switch (code) {
     case T_OPENCOMPLETE:
@@ -689,19 +739,15 @@ static pascal void OTDataEndpointNotifier(void *contextPtr, OTEventCode code, OT
                         if (acceptErr == noErr) {
                             log_info_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Connection accepted on slot %d", slotIndex);
 
-                            /* Generate Listen ASR event to signal connection availability */
+                            /* GEMINI'S ARCHITECTURAL FIX: Replace endpoint swapping hack with proper handoff */
                             if (gTCPListenStream != NULL) {
-                                OTTCPEndpoint *listenerEp = (OTTCPEndpoint *)gTCPListenStream;
-                                /* Update endpoint reference for legacy compatibility */
-                                EndpointRef oldEndpoint = listenerEp->endpoint;
-                                listenerEp->endpoint = slot->endpoint;
-                                listenerEp->isConnected = true;
-
-                                /* Signal connection arrival to messaging layer */
-                                TCP_Listen_ASR_Handler((StreamPtr)listenerEp, TCPDataArrival, NULL, 0, NULL);
-
-                                /* Restore listener endpoint for future operations */
-                                listenerEp->endpoint = oldEndpoint;
+                                /* Create new NetworkStreamRef for the data connection */
+                                NetworkStreamRef dataStreamRef = (NetworkStreamRef)slot->endpoint;
+                                
+                                /* Hand off the data stream to messaging layer - no more endpoint swapping! */
+                                Messaging_SetActiveDataStream(dataStreamRef);
+                                
+                                log_info_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Data stream handed off to messaging layer (slot %d)", slotIndex);
                             }
                         } else if (acceptErr != kOTNoDataErr) {
                             log_error_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Failed to accept connection on slot %d: %d", slotIndex, acceptErr);
@@ -750,11 +796,18 @@ static pascal void OTDataEndpointNotifier(void *contextPtr, OTEventCode code, OT
                 OSErr rcvDisconnErr = OTRcvOrderlyDisconnect(slot->endpoint);
                 if (rcvDisconnErr == noErr) {
                     log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Acknowledged peer's orderly release on slot %d", slotIndex);
-                    OSErr sndDisconnErr = OTSndOrderlyDisconnect(slot->endpoint);
-                    if (sndDisconnErr == noErr) {
-                        log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Sent orderly release to peer on slot %d", slotIndex);
+                    
+                    /* APPLE COMPLIANCE: Validate endpoint state before OTSndOrderlyDisconnect */
+                    OTResult state = OTGetEndpointState(slot->endpoint);
+                    if (state == T_DATAXFER || state == T_OUTCON || state == T_INCON) {
+                        OSErr sndDisconnErr = OTSndOrderlyDisconnect(slot->endpoint);
+                        if (sndDisconnErr == noErr) {
+                            log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Sent orderly release to peer on slot %d", slotIndex);
+                        } else {
+                            log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Failed to send orderly release on slot %d: %d", slotIndex, sndDisconnErr);
+                        }
                     } else {
-                        log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Failed to send orderly release on slot %d: %d", slotIndex, sndDisconnErr);
+                        log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Cannot send orderly disconnect in state %d on slot %d", state, slotIndex);
                     }
                 } else {
                     log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Failed to acknowledge orderly release on slot %d: %d", slotIndex, rcvDisconnErr);
@@ -784,8 +837,34 @@ static pascal void OTDataEndpointNotifier(void *contextPtr, OTEventCode code, OT
 
     case T_DISCONNECT:
         log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: T_DISCONNECT on slot %d", slotIndex);
+        /* APPLE COMPLIANCE: Must call OTRcvDisconnect to complete disconnect handshake */
         if (slotIndex >= 0 && slotIndex < MAX_DATA_ENDPOINTS) {
+            DataEndpointSlot *slot = &gDataEndpoints[slotIndex];
+            if (slot->endpoint != kOTInvalidEndpointRef) {
+                TDiscon discon;
+                OSStatus rcvErr = OTRcvDisconnect(slot->endpoint, &discon);
+                if (rcvErr == noErr) {
+                    log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: OTRcvDisconnect successful on slot %d, reason=%d", slotIndex, discon.reason);
+                } else {
+                    log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: OTRcvDisconnect failed on slot %d: %d", slotIndex, rcvErr);
+                }
+            }
             CleanupDataEndpointSlot(slotIndex);
+        }
+        break;
+
+    case T_ACCEPTCOMPLETE:
+        log_debug_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: T_ACCEPTCOMPLETE - connection accepted on slot %d", slotIndex);
+        if (slotIndex >= 0 && slotIndex < MAX_DATA_ENDPOINTS) {
+            DataEndpointSlot *slot = &gDataEndpoints[slotIndex];
+            slot->state = FACTORY_STATE_READY;
+            slot->isConnected = true;
+            slot->stateTimestamp = TickCount();
+            
+            /* APPLE COMPLIANCE: Notify messaging layer of new connection */
+            log_info_cat(LOG_CAT_NETWORKING, "OTDataEndpointNotifier: Data stream handed off to messaging layer (slot %d)", slotIndex);
+            NetworkStreamRef dataStreamRef = (NetworkStreamRef)slot->endpoint;
+            Messaging_SetActiveDataStream(dataStreamRef);
         }
         break;
 
@@ -866,7 +945,38 @@ OSStatus InitializeOpenTransport(void)
     InitializeOTAsyncOps();
     InitializeOTTCPAsyncOps();
 
-    log_info_cat(LOG_CAT_NETWORKING, "OT: Notifier UPPs created successfully. OpenTransport is ready.");
+    /* APPLE COMPLIANCE: Create configuration templates for performance optimization */
+    if (gTCPConfigTemplate == NULL) {
+        gTCPConfigTemplate = OTCreateConfiguration(kTCPName);
+        if (gTCPConfigTemplate == kOTInvalidConfigurationPtr || gTCPConfigTemplate == NULL) {
+            log_error_cat(LOG_CAT_NETWORKING, "FATAL: Failed to create TCP configuration template");
+            return kOTBadConfigurationErr;
+        }
+        log_debug_cat(LOG_CAT_NETWORKING, "OT: TCP configuration template created successfully");
+    }
+
+    if (gUDPConfigTemplate == NULL) {
+        gUDPConfigTemplate = OTCreateConfiguration(kUDPName);
+        if (gUDPConfigTemplate == kOTInvalidConfigurationPtr || gUDPConfigTemplate == NULL) {
+            log_error_cat(LOG_CAT_NETWORKING, "FATAL: Failed to create UDP configuration template");
+            return kOTBadConfigurationErr;
+        }
+        log_debug_cat(LOG_CAT_NETWORKING, "OT: UDP configuration template created successfully");
+    }
+
+    /* APPLE COMPLIANCE: Initialize Internet Services for DNS resolution */
+    if (gInetServicesRef == kOTInvalidProviderRef) {
+        gInetServicesRef = OTOpenInternetServices(kDefaultInternetServicesPath, 0, &err);
+        if (gInetServicesRef == kOTInvalidProviderRef || err != kOTNoError) {
+            log_warning_cat(LOG_CAT_NETWORKING, "OT: Failed to open Internet Services (DNS unavailable): %d", err);
+            /* Continue without DNS - direct IP addresses will still work */
+            gInetServicesRef = kOTInvalidProviderRef;
+        } else {
+            log_debug_cat(LOG_CAT_NETWORKING, "OT: Internet Services opened successfully for DNS resolution");
+        }
+    }
+
+    log_info_cat(LOG_CAT_NETWORKING, "OT: Notifier UPPs and configuration templates created successfully. OpenTransport is ready.");
     return kOTNoError;
 }
 
@@ -919,6 +1029,26 @@ void ShutdownOpenTransport(void)
             gOTNotifierUPP = NULL;
         }
 
+        /* APPLE COMPLIANCE: Clean up configuration templates */
+        if (gTCPConfigTemplate != NULL) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OT: Disposing TCP configuration template...");
+            OTDestroyConfiguration(gTCPConfigTemplate);
+            gTCPConfigTemplate = NULL;
+        }
+
+        if (gUDPConfigTemplate != NULL) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OT: Disposing UDP configuration template...");
+            OTDestroyConfiguration(gUDPConfigTemplate);
+            gUDPConfigTemplate = NULL;
+        }
+
+        /* APPLE COMPLIANCE: Close Internet Services for DNS resolution */
+        if (gInetServicesRef != kOTInvalidProviderRef) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OT: Closing Internet Services...");
+            OTCloseProvider(gInetServicesRef);
+            gInetServicesRef = kOTInvalidProviderRef;
+        }
+
         /* Finally, close the OpenTransport library itself. */
         log_debug_cat(LOG_CAT_NETWORKING, "OT: Calling CloseOpenTransport()...");
         CloseOpenTransport();
@@ -950,8 +1080,8 @@ static OSErr OTImpl_Initialize(short *refNum, ip_addr *localIP, char *localIPStr
     if (err != noErr || info.fAddress == 0) {
         log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_Initialize: First OTInetGetInterfaceInfo failed (%d) or returned 0.0.0.0, forcing TCP/IP stack load", err);
 
-        /* Force TCP/IP stack loading by creating a dummy endpoint */
-        OTConfigurationRef config = OTCreateConfiguration(kTCPName);
+        /* APPLE COMPLIANCE: Force TCP/IP stack loading using configuration template */
+        OTConfigurationRef config = OTCloneConfiguration(gTCPConfigTemplate);
         if (config != kOTInvalidConfigurationPtr && config != kOTNoMemoryConfigurationPtr && config != NULL) {
             TEndpointInfo endpointInfo;
             OSStatus dummyErr;
@@ -1072,26 +1202,52 @@ static void CleanupOTGlobalBuffers(void)
 static OSErr InitializePersistentListener(tcp_port localPort)
 {
     OSStatus err;
-    InetAddress addr;
-    TBind reqAddr, retAddr;
-    TCall call;
+    /* APPLE COMPLIANCE: Use heap allocation for OpenTransport structures */
+    InetAddress *addr = (InetAddress *)OTAllocMem(sizeof(InetAddress));
+    TBind *reqAddr = (TBind *)OTAllocMem(sizeof(TBind));
+    TBind *retAddr = (TBind *)OTAllocMem(sizeof(TBind));
+    TCall *call = (TCall *)OTAllocMem(sizeof(TCall));
+
+    if (!addr || !reqAddr || !retAddr || !call) {
+        log_error_cat(LOG_CAT_NETWORKING, "InitializePersistentListener: OTAllocMem failed");
+        if (addr) OTFreeMem(addr);
+        if (reqAddr) OTFreeMem(reqAddr);
+        if (retAddr) OTFreeMem(retAddr);
+        if (call) OTFreeMem(call);
+        return kOTOutOfMemoryErr;
+    }
 
     if (gPersistentListenerInitialized) {
         log_debug_cat(LOG_CAT_NETWORKING, "InitializePersistentListener: Already initialized");
+        /* Cleanup allocated memory before early return */
+        OTFreeMem(addr);
+        OTFreeMem(reqAddr);
+        OTFreeMem(retAddr);
+        OTFreeMem(call);
         return noErr;
     }
 
     /* Create TCP endpoint for persistent listener */
     {
-        OTConfigurationRef config = OTCreateConfiguration(kTCPName);
+        OTConfigurationRef config = OTCloneConfiguration(gTCPConfigTemplate);
         if (config == kOTInvalidConfigurationPtr || config == kOTNoMemoryConfigurationPtr || config == NULL) {
             log_debug_cat(LOG_CAT_NETWORKING, "InitializePersistentListener: Failed to create TCP configuration");
+            /* Cleanup allocated memory before return */
+            OTFreeMem(addr);
+            OTFreeMem(reqAddr);
+            OTFreeMem(retAddr);
+            OTFreeMem(call);
             return kOTBadConfigurationErr;
         }
 
         gPersistentListener = OTOpenEndpoint(config, 0, NULL, &err);
         if (err != noErr) {
             log_debug_cat(LOG_CAT_NETWORKING, "InitializePersistentListener: OTOpenEndpoint failed: %d", err);
+            /* Cleanup allocated memory before return */
+            OTFreeMem(addr);
+            OTFreeMem(reqAddr);
+            OTFreeMem(retAddr);
+            OTFreeMem(call);
             return err;
         }
     }
@@ -1102,6 +1258,11 @@ static OSErr InitializePersistentListener(tcp_port localPort)
         log_debug_cat(LOG_CAT_NETWORKING, "InitializePersistentListener: OTInstallNotifier failed: %d", err);
         OTCloseProvider(gPersistentListener);
         gPersistentListener = kOTInvalidEndpointRef;
+        /* Cleanup allocated memory before return */
+        OTFreeMem(addr);
+        OTFreeMem(reqAddr);
+        OTFreeMem(retAddr);
+        OTFreeMem(call);
         return err;
     }
 
@@ -1111,44 +1272,65 @@ static OSErr InitializePersistentListener(tcp_port localPort)
         log_debug_cat(LOG_CAT_NETWORKING, "InitializePersistentListener: OTSetAsynchronous failed: %d", err);
         OTCloseProvider(gPersistentListener);
         gPersistentListener = kOTInvalidEndpointRef;
+        /* Cleanup allocated memory before return */
+        OTFreeMem(addr);
+        OTFreeMem(reqAddr);
+        OTFreeMem(retAddr);
+        OTFreeMem(call);
         return err;
     }
 
     /* Set up local address for binding */
-    OTInitInetAddress(&addr, localPort, kOTAnyInetAddress);
+    OTInitInetAddress(addr, localPort, kOTAnyInetAddress);
 
     /* Set up bind request */
-    reqAddr.addr.buf = (UInt8 *)&addr;
-    reqAddr.addr.len = sizeof(addr);
-    reqAddr.qlen = 1; /* Listen queue length */
+    reqAddr->addr.buf = (UInt8 *)addr;
+    reqAddr->addr.len = sizeof(InetAddress);
+    reqAddr->qlen = 1; /* Listen queue length */
 
-    retAddr.addr.buf = (UInt8 *)&addr;
-    retAddr.addr.maxlen = sizeof(addr);
+    retAddr->addr.buf = (UInt8 *)addr;
+    retAddr->addr.maxlen = sizeof(InetAddress);
 
     /* Bind persistent listener to local address */
-    err = OTBind(gPersistentListener, &reqAddr, &retAddr);
+    err = OTBind(gPersistentListener, reqAddr, retAddr);
     if (err != noErr) {
         log_debug_cat(LOG_CAT_NETWORKING, "InitializePersistentListener: OTBind failed: %d", err);
         OTCloseProvider(gPersistentListener);
         gPersistentListener = kOTInvalidEndpointRef;
+        /* Cleanup allocated memory before return */
+        OTFreeMem(addr);
+        OTFreeMem(reqAddr);
+        OTFreeMem(retAddr);
+        OTFreeMem(call);
         return err;
     }
 
     /* Set up call structure for OTListen */
-    call.addr.buf = (UInt8 *)&addr;
-    call.addr.maxlen = sizeof(addr);
-    call.opt.buf = NULL;
-    call.opt.maxlen = 0;
-    call.udata.buf = NULL;
-    call.udata.maxlen = 0;
+    call->addr.buf = (UInt8 *)addr;
+    call->addr.maxlen = sizeof(InetAddress);
+    call->opt.buf = NULL;
+    call->opt.maxlen = 0;
+    call->udata.buf = NULL;
+    call->udata.maxlen = 0;
 
     /* Start persistent listening - this endpoint will NEVER be destroyed */
-    err = OTListen(gPersistentListener, &call);
+    err = OTListen(gPersistentListener, call);
     if (err != noErr && err != kOTNoDataErr) {
         log_debug_cat(LOG_CAT_NETWORKING, "InitializePersistentListener: OTListen failed: %d", err);
-        OTUnbind(gPersistentListener);
+        /* APPLE COMPLIANCE: Validate endpoint state before OTUnbind */
+        OTResult listenerState = OTGetEndpointState(gPersistentListener);
+        if (listenerState >= T_IDLE) {
+            OTUnbind(gPersistentListener);
+        } else {
+            log_debug_cat(LOG_CAT_NETWORKING, "Cannot unbind listener in state %d", listenerState);
+        }
         OTCloseProvider(gPersistentListener);
         gPersistentListener = kOTInvalidEndpointRef;
+        /* Cleanup allocated memory before return */
+        OTFreeMem(addr);
+        OTFreeMem(reqAddr);
+        OTFreeMem(retAddr);
+        OTFreeMem(call);
         return err;
     }
 
@@ -1160,8 +1342,19 @@ static OSErr InitializePersistentListener(tcp_port localPort)
     if (factoryErr != noErr) {
         log_error_cat(LOG_CAT_NETWORKING, "InitializePersistentListener: Failed to initialize async factory: %d", factoryErr);
         CleanupPersistentListener();
+        /* Cleanup allocated memory before return */
+        OTFreeMem(addr);
+        OTFreeMem(reqAddr);
+        OTFreeMem(retAddr);
+        OTFreeMem(call);
         return factoryErr;
     }
+
+    /* APPLE COMPLIANCE: Free heap-allocated structures used only for initialization */
+    OTFreeMem(addr);
+    OTFreeMem(reqAddr);
+    OTFreeMem(retAddr);
+    OTFreeMem(call);
 
     log_debug_cat(LOG_CAT_NETWORKING, "InitializePersistentListener: Persistent listener created and listening on port %d", localPort);
     return noErr;
@@ -1276,9 +1469,9 @@ static OSErr CreateDataEndpointAsync(short slotIndex)
     slot->state = FACTORY_STATE_CREATING_ENDPOINT;
     slot->stateTimestamp = TickCount();
 
-    /* Create TCP configuration */
+    /* APPLE COMPLIANCE: Clone TCP configuration from template */
     {
-        OTConfigurationRef config = OTCreateConfiguration(kTCPName);
+        OTConfigurationRef config = OTCloneConfiguration(gTCPConfigTemplate);
         if (config == kOTInvalidConfigurationPtr || config == kOTNoMemoryConfigurationPtr || config == NULL) {
             log_debug_cat(LOG_CAT_NETWORKING, "CreateDataEndpointAsync: Failed to create TCP configuration for slot %d", slotIndex);
                           slot->isInUse = false;
@@ -1288,7 +1481,7 @@ static OSErr CreateDataEndpointAsync(short slotIndex)
 
         /* CRITICAL: Use OTAsyncOpenEndpoint instead of synchronous OTOpenEndpoint */
         /* This is the key fix - no more synchronous calls in notifier context! */
-        err = OTAsyncOpenEndpoint(config, 0, NULL, gOTDataEndpointUPP, (void *)(long)slotIndex);
+        err = OTAsyncOpenEndpoint(config, 0, NULL, gOTDataEndpointUPP, (void *)slotIndex);
         if (err != noErr) {
             log_debug_cat(LOG_CAT_NETWORKING, "CreateDataEndpointAsync: OTAsyncOpenEndpoint failed for slot %d: %d", slotIndex, err);
             slot->isInUse = false;
@@ -1519,8 +1712,13 @@ static void CleanupPersistentListener(void)
     CleanupAsyncFactory();
 
     if (gPersistentListener != kOTInvalidEndpointRef) {
-        /* Shutdown the persistent listener */
-        OTUnbind(gPersistentListener);
+        /* APPLE COMPLIANCE: Validate endpoint state before OTUnbind */
+        OTResult listenerState = OTGetEndpointState(gPersistentListener);
+        if (listenerState >= T_IDLE) {
+            OTUnbind(gPersistentListener);
+        } else {
+            log_debug_cat(LOG_CAT_NETWORKING, "Cannot unbind listener in state %d during cleanup", listenerState);
+        }
         OTCloseProvider(gPersistentListener);
         gPersistentListener = kOTInvalidEndpointRef;
 
@@ -1563,9 +1761,9 @@ static OSErr OTImpl_TCPCreate(short refNum, NetworkStreamRef *streamRef,
         return paramErr;
     }
 
-    /* Create TCP endpoint */
+    /* APPLE COMPLIANCE: Clone TCP endpoint from template */
     {
-        OTConfigurationRef config = OTCreateConfiguration(kTCPName);
+        OTConfigurationRef config = OTCloneConfiguration(gTCPConfigTemplate);
         if (config == kOTInvalidConfigurationPtr) {
             log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPCreate: Invalid TCP configuration");
             return kOTBadConfigurationErr;
@@ -1586,8 +1784,8 @@ static OSErr OTImpl_TCPCreate(short refNum, NetworkStreamRef *streamRef,
         }
     }
 
-    /* Allocate TCP endpoint structure */
-    tcpEp = (OTTCPEndpoint *)NewPtr(sizeof(OTTCPEndpoint));
+    /* APPLE COMPLIANCE: Use OTAllocMem for notifier-context structures */
+    tcpEp = (OTTCPEndpoint *)OTAllocMem(sizeof(OTTCPEndpoint));
     if (tcpEp == NULL) {
         OTCloseProvider(endpoint);
         return memFullErr;
@@ -1607,7 +1805,7 @@ static OSErr OTImpl_TCPCreate(short refNum, NetworkStreamRef *streamRef,
     err = OTInstallNotifier(endpoint, OTTCPNotifier, tcpEp);
     if (err != noErr) {
         log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPCreate: OTInstallNotifier failed: %d", err);
-        DisposePtr((Ptr)tcpEp);
+        OTFreeMem(tcpEp);
         OTCloseProvider(endpoint);
         return err;
     }
@@ -1617,7 +1815,7 @@ static OSErr OTImpl_TCPCreate(short refNum, NetworkStreamRef *streamRef,
     err = OTSetAsynchronous(endpoint);
     if (err != noErr) {
         log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPCreate: OTSetAsynchronous failed: %d", err);
-        DisposePtr((Ptr)tcpEp);
+        OTFreeMem(tcpEp);
         OTCloseProvider(endpoint);
         return err;
     }
@@ -1646,8 +1844,8 @@ static OSErr OTImpl_TCPRelease(short refNum, NetworkStreamRef streamRef)
         }
     }
 
-    /* Free the endpoint structure */
-    DisposePtr((Ptr)tcpEp);
+    /* APPLE COMPLIANCE: Free the endpoint structure using OTFreeMem */
+    OTFreeMem(tcpEp);
 
     log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPRelease: TCP endpoint released");
     return err;
@@ -2053,12 +2251,24 @@ static OSErr OTImpl_TCPClose(NetworkStreamRef streamRef, Byte timeout,
         return connectionDoesntExist;
     }
 
-    /* Initiate orderly disconnect */
-    err = OTSndOrderlyDisconnect(tcpEp->endpoint);
-    if (err != noErr) {
-        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPClose: OTSndOrderlyDisconnect failed: %d", err);
-        /* Try abortive close */
-        err = OTSndDisconnect(tcpEp->endpoint, NULL);
+    /* APPLE COMPLIANCE: Validate endpoint state before OTSndOrderlyDisconnect */
+    OTResult state = OTGetEndpointState(tcpEp->endpoint);
+    if (state == T_DATAXFER || state == T_OUTCON || state == T_INCON) {
+        /* Initiate orderly disconnect */
+        err = OTSndOrderlyDisconnect(tcpEp->endpoint);
+        if (err != noErr) {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPClose: OTSndOrderlyDisconnect failed: %d", err);
+            /* Fallback to abortive disconnect if orderly fails */
+            err = OTSndDisconnect(tcpEp->endpoint, NULL);
+        }
+    } else {
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_TCPClose: Cannot send orderly disconnect in state %d", state);
+        /* For non-connected states, try abortive disconnect if appropriate */
+        if (state >= T_IDLE) {
+            err = OTSndDisconnect(tcpEp->endpoint, NULL);
+        } else {
+            err = kOTStateChangeErr;
+        }
     }
 
     tcpEp->isConnected = false;
@@ -2600,9 +2810,9 @@ static OSErr OTImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
     {
         OTConfigurationRef config;
 
-        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: About to call OTCreateConfiguration with kUDPName");
-        config = OTCreateConfiguration(kUDPName);
-        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: OTCreateConfiguration returned 0x%08lX", (unsigned long)config);
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: About to clone UDP configuration from template");
+        config = OTCloneConfiguration(gUDPConfigTemplate);
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: OTCloneConfiguration returned 0x%08lX", (unsigned long)config);
 
         if (config == kOTInvalidConfigurationPtr) {
             log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: Invalid UDP configuration");
@@ -2628,9 +2838,9 @@ static OSErr OTImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
         }
     }
 
-    /* Allocate UDP endpoint structure */
+    /* APPLE COMPLIANCE: Use OTAllocMem for notifier-context structures */
     log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: Allocating UDP endpoint structure (%ld bytes)", (long)sizeof(OTUDPEndpoint));
-    udpEp = (OTUDPEndpoint *)NewPtr(sizeof(OTUDPEndpoint));
+    udpEp = (OTUDPEndpoint *)OTAllocMem(sizeof(OTUDPEndpoint));
     if (udpEp == NULL) {
         log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: Failed to allocate UDP endpoint structure");
         OTCloseProvider(endpoint);
@@ -2650,7 +2860,7 @@ static OSErr OTImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
     err = OTInstallNotifier(endpoint, OTUDPNotifier, udpEp);
     if (err != noErr) {
         log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: OTInstallNotifier failed: %d", err);
-        DisposePtr((Ptr)udpEp);
+        OTFreeMem(udpEp);
         OTCloseProvider(endpoint);
         return err;
     }
@@ -2684,7 +2894,7 @@ static OSErr OTImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
         if (err != noErr || option.status != T_SUCCESS) {
             log_error_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: Failed to set IP_BROADCAST option. Err: %d, Status: %d",
                           err, option.status);
-            DisposePtr((Ptr)udpEp);
+            OTFreeMem(udpEp);
             OTCloseProvider(endpoint);
             return (err != noErr) ? err : kOTBadOptionErr;
         }
@@ -2695,7 +2905,7 @@ static OSErr OTImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
     err = OTSetAsynchronous(endpoint);
     if (err != noErr) {
         log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: OTSetAsynchronous failed: %d", err);
-        DisposePtr((Ptr)udpEp);
+        OTFreeMem(udpEp);
         OTCloseProvider(endpoint);
         return err;
     }
@@ -2714,7 +2924,7 @@ static OSErr OTImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
         err = OTBind(endpoint, &reqAddr, &retAddr);
         if (err != noErr) {
             log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPCreate: OTBind failed: %d", err);
-            DisposePtr((Ptr)udpEp);
+            OTFreeMem(udpEp);
             OTCloseProvider(endpoint);
             return err;
         }
@@ -2744,8 +2954,8 @@ static OSErr OTImpl_UDPRelease(short refNum, NetworkEndpointRef endpointRef)
         }
     }
 
-    /* Free the endpoint structure */
-    DisposePtr((Ptr)udpEp);
+    /* APPLE COMPLIANCE: Free the endpoint structure using OTFreeMem */
+    OTFreeMem(udpEp);
 
     log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_UDPRelease: UDP endpoint released");
     return err;
@@ -3162,24 +3372,45 @@ static void CleanupCompletedAsyncOps(void)
 static OSErr OTImpl_ResolveAddress(const char *hostname, ip_addr *address)
 {
     OSStatus err;
+    InetHostInfo hostInfo;
 
     if (hostname == NULL || address == NULL) {
         return paramErr;
     }
 
-    /* Try to parse as IP address first */
+    /* Try to parse as IP address first (fast path) */
     err = OTInetStringToHost(hostname, (InetHost *)address);
     if (err == noErr) {
-        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_ResolveAddress: %s resolved to %08lX (direct)", hostname, *address);
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_ResolveAddress: %s resolved to %08lX (direct IP)", hostname, *address);
         return noErr;
     }
 
-    /* For now, just return error for hostname resolution */
-    /* Full DNS resolution would require more complex OpenTransport setup */
-    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_ResolveAddress: DNS lookup not implemented for %s", hostname);
-    return unimpErr;
-    log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_ResolveAddress: %s resolved to %08lX", hostname, *address);
-    return noErr;
+    /* APPLE COMPLIANCE: Use OpenTransport DNS resolution for hostnames */
+    if (gInetServicesRef == kOTInvalidProviderRef) {
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_ResolveAddress: Internet Services not available for DNS lookup of %s", hostname);
+        return networkErr; /* DNS not available */
+    }
+
+    /* Initialize InetHostInfo structure */
+    memset(&hostInfo, 0, sizeof(hostInfo));
+    
+    /* Use OTInetStringToAddress for DNS resolution (synchronous mode) */
+    err = OTInetStringToAddress(gInetServicesRef, (char *)hostname, &hostInfo);
+    if (err == noErr) {
+        /* DNS resolution successful - use first address */
+        if (hostInfo.addrs[0] != 0) {
+            *address = hostInfo.addrs[0];
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_ResolveAddress: %s resolved to %08lX via DNS (canonical: %s)", 
+                         hostname, *address, hostInfo.name);
+            return noErr;
+        } else {
+            log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_ResolveAddress: DNS lookup for %s returned no addresses", hostname);
+            return kOTNotFoundErr;
+        }
+    } else {
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_ResolveAddress: DNS lookup failed for %s: %d", hostname, err);
+        return err;
+    }
 }
 
 static OSErr OTImpl_AddressToString(ip_addr address, char *addressStr)
@@ -3238,20 +3469,71 @@ static Boolean OTImpl_IsAvailable(void)
     }
 }
 
+/* APPLE COMPLIANCE: Process pending connections from main event loop (not notifier context) */
+void OTImpl_ProcessPendingConnections(void)
+{
+    if (gPendingConnectionsNeedProcessing) {
+        log_debug_cat(LOG_CAT_NETWORKING, "OTImpl_ProcessPendingConnections: Processing queued connections from main loop");
+        ProcessPendingConnections();
+        gPendingConnectionsNeedProcessing = false;
+    }
+}
+
 /* Error translation */
 NetworkError TranslateOTErrToNetworkError(OSStatus err)
 {
-    /* TODO: Implement proper OpenTransport error translation */
+    /* APPLE COMPLIANCE: Comprehensive OpenTransport error translation */
     switch (err) {
     case noErr:
         return NETWORK_SUCCESS;
+        
+    /* Connection-related errors */
+    case kOTLookErr:
     case kOTNoDataErr:
         return NETWORK_ERROR_TIMEOUT;
+    case kOTOutStateErr:
+    case kOTBadSequenceErr:
+        return NETWORK_ERROR_CONNECTION_FAILED;
+    case kOTProviderMismatchErr:
+    case kOTResQLenErr:
+    case kOTResAddressErr:
+        return NETWORK_ERROR_CONNECTION_FAILED;
+        
+    /* Memory and resource errors */
     case kOTOutOfMemoryErr:
+    case kOTSysErrorErr:
         return NETWORK_ERROR_NO_MEMORY;
+        
+    /* Parameter validation errors */
     case kOTBadNameErr:
     case kOTBadOptionErr:
+    case kOTBadAddressErr:
+    case kOTBadFlagErr:
+    case kOTBadDataErr:
         return NETWORK_ERROR_INVALID_PARAM;
+        
+    /* Network availability errors */
+    case kOTNotSupportedErr:
+    case kOTBadConfigurationErr:
+        return NETWORK_ERROR_NOT_SUPPORTED;
+        
+    /* Busy/resource unavailable errors */
+    case kOTFlowErr:
+    case kOTBufferOverflowErr:
+    case kOTNoDisconnectErr:
+    case kOTNoReleaseErr:
+        return NETWORK_ERROR_BUSY;
+        
+    /* Connection closed/terminated errors */
+    case kOTCanceledErr:
+    case kOTNoAddressErr:
+        return NETWORK_ERROR_CONNECTION_CLOSED;
+        
+    /* DNS and address resolution errors */
+    case kOTNotFoundErr:
+    case kOTBadReferenceErr:
+        return NETWORK_ERROR_INVALID_PARAM;
+        
     default:
         return NETWORK_ERROR_UNKNOWN;
     }
@@ -3259,18 +3541,77 @@ NetworkError TranslateOTErrToNetworkError(OSStatus err)
 
 const char *GetOpenTransportErrorString(OSStatus err)
 {
-    /* TODO: Add comprehensive OpenTransport error strings */
+    /* APPLE COMPLIANCE: Comprehensive OpenTransport error descriptions */
     switch (err) {
     case noErr:
         return "Success";
+        
+    /* Connection-related errors */
+    case kOTLookErr:
+        return "Look error - event pending on endpoint";
     case kOTNoDataErr:
         return "No data available";
+    case kOTOutStateErr:
+        return "Endpoint is in wrong state for operation";
+    case kOTBadSequenceErr:
+        return "Invalid sequence number in connection";
+    case kOTProviderMismatchErr:
+        return "Provider type mismatch";
+    case kOTResQLenErr:
+        return "Invalid address or options length";
+    case kOTResAddressErr:
+        return "Invalid address format";
+        
+    /* Memory and resource errors */
     case kOTOutOfMemoryErr:
-        return "Out of memory";
+        return "Insufficient memory for operation";
+    case kOTSysErrorErr:
+        return "System error occurred";
+        
+    /* Parameter validation errors */
     case kOTBadNameErr:
-        return "Bad name";
+        return "Invalid provider name";
     case kOTBadOptionErr:
-        return "Bad option";
+        return "Invalid option specified";
+    case kOTBadAddressErr:
+        return "Invalid address format";
+    case kOTBadFlagErr:
+        return "Invalid flags specified";
+    case kOTBadDataErr:
+        return "Invalid data format";
+        
+    /* Network availability errors */
+    case kOTNotSupportedErr:
+        return "Operation not supported by provider";
+    case kOTBadConfigurationErr:
+        return "Invalid provider configuration";
+        
+    /* Flow control and buffer errors */
+    case kOTFlowErr:
+        return "Provider is flow controlled";
+    case kOTBufferOverflowErr:
+        return "Buffer too small for data";
+    case kOTNoDisconnectErr:
+        return "No disconnect indication available";
+    case kOTNoReleaseErr:
+        return "No orderly release indication";
+        
+    /* Connection state errors */
+    case kOTCanceledErr:
+        return "Operation was cancelled";
+    case kOTNoAddressErr:
+        return "No address bound to endpoint";
+    case kOTNotFoundErr:
+        return "Address or name not found";
+    case kOTBadReferenceErr:
+        return "Invalid endpoint reference";
+        
+    /* Additional OpenTransport-specific errors */
+    case kOTStateChangeErr:
+        return "Endpoint state changed during operation";
+    case kOTNoStructureTypeErr:
+        return "Structure type not supported";
+        
     default:
         return "Unknown OpenTransport error";
     }
