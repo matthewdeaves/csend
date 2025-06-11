@@ -190,6 +190,30 @@ int GetQueuedMessageCount(void)
     return count;
 }
 
+/* GEMINI'S ARCHITECTURAL FIX: Handoff function for OpenTransport factory */
+void Messaging_SetActiveDataStream(NetworkStreamRef dataStreamRef)
+{
+    if (dataStreamRef == NULL) {
+        log_error_cat(LOG_CAT_NETWORKING, "Messaging_SetActiveDataStream: NULL dataStreamRef provided");
+        return;
+    }
+
+    log_info_cat(LOG_CAT_NETWORKING, "Messaging_SetActiveDataStream: Setting new active data stream (handoff from OT factory)");
+    
+    /* Set the new active data stream for receiving */
+    gTCPActiveDataStream = dataStreamRef;
+    
+    /* Transition listen state to connected */
+    gTCPListenState = TCP_STATE_CONNECTED_IN;
+    
+    /* Trigger data arrival processing */
+    gListenAsrEvent.eventPending = true;
+    gListenAsrEvent.eventCode = TCPDataArrival;
+    gListenAsrEvent.termReason = 0;
+    
+    log_debug_cat(LOG_CAT_NETWORKING, "Messaging_SetActiveDataStream: Active data stream set, state transitioned to CONNECTED_IN");
+}
+
 OSErr MacTCP_QueueMessage(const char *peerIPStr, const char *message_content, const char *msg_type)
 {
     if (peerIPStr == NULL || msg_type == NULL) {
@@ -379,6 +403,13 @@ void CleanupTCP(short macTCPRefNum)
     memset(gMessageQueue, 0, sizeof(gMessageQueue));
     gQueueHead = 0;
     gQueueTail = 0;
+
+    /* Clean up active data stream if set by OpenTransport factory */
+    if (gTCPActiveDataStream != NULL) {
+        log_debug_cat(LOG_CAT_MESSAGING, "Cleaning up active data stream from OpenTransport factory");
+        gNetworkOps->TCPRelease(macTCPRefNum, gTCPActiveDataStream);
+        gTCPActiveDataStream = NULL;
+    }
 
     /* Clean up listen stream */
     if (gListenAsyncOperationInProgress && gTCPListenStream != NULL) {
@@ -900,22 +931,6 @@ static OSErr StartAsyncSend(const char *peerIPStr, const char *message_content, 
     return noErr;
 }
 
-/* GEMINI'S ARCHITECTURAL FIX: Handoff mechanism for OpenTransport factory */
-void Messaging_SetActiveDataStream(NetworkStreamRef dataStreamRef)
-{
-    log_debug_cat(LOG_CAT_MESSAGING, "Messaging_SetActiveDataStream: Setting active data stream to 0x%p", dataStreamRef);
-    
-    /* Set the active data stream */
-    gTCPActiveDataStream = dataStreamRef;
-    
-    /* Transition listen state machine to connected state */
-    gTCPListenState = TCP_STATE_CONNECTED_IN;
-    
-    /* Trigger TCPDataArrival event for message processing */
-    gListenAsrEvent.eventPending = true;
-    gListenAsrEvent.eventCode = TCPDataArrival;
-    gListenAsrEvent.termReason = 0;
-    
-    log_debug_cat(LOG_CAT_MESSAGING, "Messaging_SetActiveDataStream: Listen state -> TCP_STATE_CONNECTED_IN, TCPDataArrival event triggered");
-}
+
+/* Network implementation abstraction - avoids OpenTransport header conflicts */
 

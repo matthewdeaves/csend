@@ -1,4 +1,5 @@
 #include <MacTypes.h>
+
 #include <Quickdraw.h>
 #include <Fonts.h>
 #include <Events.h>
@@ -21,7 +22,6 @@
 #include "../shared/protocol.h"
 #include "logging.h"
 #include "network_init.h"
-#include "opentransport_impl.h"
 #include "discovery.h"
 #include "messaging.h"
 #include "dialog.h"
@@ -392,8 +392,13 @@ void HandleIdleTasks(void)
     ProcessTCPStateMachine(YieldTimeToSystem);
     CheckSendBroadcast(gMacTCPRefNum, gMyUsername, gMyLocalIPStr);
     
-    /* APPLE COMPLIANCE: Process OpenTransport connections from main loop (not notifier context) */
-    OTImpl_ProcessPendingConnections();
+    /* Process network connections - abstracted to avoid header conflicts */
+    ProcessNetworkConnections();
+    
+    /* Process OpenTransport factory connections */
+    if (gNetworkOps != NULL && gNetworkOps->ProcessConnections != NULL) {
+        gNetworkOps->ProcessConnections();
+    }
     if (gLastPeerListUpdateTime == 0 ||
             (currentTimeTicks < gLastPeerListUpdateTime) ||
             (currentTimeTicks - gLastPeerListUpdateTime) >= kPeerListUpdateIntervalTicks) {

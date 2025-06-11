@@ -137,6 +137,9 @@ typedef struct {
     OSErr(*ResolveAddress)(const char *hostname, ip_addr *address);
     OSErr(*AddressToString)(ip_addr address, char *addressStr);
 
+    /* Network processing */
+    void (*ProcessConnections)(void);
+
     /* Implementation info */
     const char *(*GetImplementationName)(void);
     Boolean(*IsAvailable)(void);
@@ -151,6 +154,9 @@ OSErr InitNetworkAbstraction(void);
 void ShutdownNetworkAbstraction(void);
 NetworkImplementation GetCurrentNetworkImplementation(void);
 const char *GetNetworkImplementationName(void);
+
+/* Network processing */
+void ProcessNetworkConnections(void);
 
 /* Error translation and handling */
 NetworkError TranslateOSErrToNetworkError(OSErr err);

@@ -291,3 +291,11 @@ void LogNetworkError(const char *context, OSErr err)
         log_app_event("%s: %s (MacTCP error %d)", context, errStr, err);
     }
 }
+
+/* Process network connections through abstraction layer */
+void ProcessNetworkConnections(void)
+{
+    if (gNetworkOps != NULL && gNetworkOps->ProcessConnections != NULL) {
+        gNetworkOps->ProcessConnections();
+    }
+}

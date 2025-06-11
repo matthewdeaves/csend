@@ -162,6 +162,9 @@ static void MacTCPImpl_UDPCancelAsync(NetworkAsyncHandle asyncHandle);
 static void MacTCPImpl_FreeAsyncHandle(NetworkAsyncHandle asyncHandle);
 static OSErr MacTCPImpl_ResolveAddress(const char *hostname, ip_addr *address);
 static OSErr MacTCPImpl_AddressToString(ip_addr address, char *addressStr);
+/* Network processing */
+static void MacTCPImpl_ProcessConnections(void);
+
 static const char *MacTCPImpl_GetImplementationName(void);
 static Boolean MacTCPImpl_IsAvailable(void);
 
@@ -1331,6 +1334,12 @@ static OSErr MacTCPImpl_AddressToString(ip_addr address, char *addressStr)
     return AddrToStr(address, addressStr);
 }
 
+/* Network processing - MacTCP doesn't need connection processing */
+static void MacTCPImpl_ProcessConnections(void)
+{
+    /* MacTCP handles all networking through ASR callbacks - no polling needed */
+}
+
 static const char *MacTCPImpl_GetImplementationName(void)
 {
     return "MacTCP";
@@ -1494,6 +1503,9 @@ static NetworkOperations gMacTCPOperations = {
     /* Utility operations */
     MacTCPImpl_ResolveAddress,
     MacTCPImpl_AddressToString,
+
+    /* Network processing */
+    MacTCPImpl_ProcessConnections,
 
     /* Implementation info */
     MacTCPImpl_GetImplementationName,
