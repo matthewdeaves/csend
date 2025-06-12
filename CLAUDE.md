@@ -13,6 +13,11 @@ The project uses a **shared core** design with platform-specific implementations
 - **`shared/`** - Platform-independent protocol handling, peer management, discovery, and messaging logic
 - **`posix/`** - POSIX-specific implementation (multi-threaded, terminal UI)
 - **`classic_mac/`** - Classic Mac implementation (event-driven GUI, MacTCP networking)
+- **`tools/`** - Python client libraries and automation scripts
+- **`scripts/`** - Shell scripts for building, testing, and code quality
+- **`docs/`** - Documentation files and project images
+- **`resources/`** - External resources (Apple documentation, MPW interfaces)
+- **`.finf/`** - SheepShaver metadata folders (preserve Mac resource/data forks)
 
 ### Key Architectural Patterns
 
@@ -36,7 +41,7 @@ make
 ```bash
 make -f Makefile.retro68
 # Output: build/classic_mac/csend-mac.{APPL,bin,dsk}
-# Requires Retro68 cross-compiler (use setup_retro68.sh)
+# Requires Retro68 cross-compiler (use scripts/setup_retro68.sh)
 ```
 
 ### Running the Application
@@ -49,14 +54,14 @@ make -f Makefile.retro68
 
 **Docker Testing** (multiple instances):
 ```bash
-./docker.sh start   # Start 3 containers
-./docker.sh exec 0  # Connect to container
-./docker.sh stop    # Stop all containers
+scripts/docker.sh start   # Start 3 containers
+scripts/docker.sh exec 0  # Connect to container
+scripts/docker.sh stop    # Stop all containers
 ```
 
 **Machine Mode** (JSON-based programmatic interaction):
 ```bash
-./run_machine_mode.sh
+scripts/run_machine_mode.sh
 # Or: ./build/posix/csend_posix <username> --machine-mode
 ```
 
@@ -66,41 +71,41 @@ make -f Makefile.retro68
 export ANTHROPIC_API_KEY="your-api-key-here"
 
 # Run Claude chatbot
-./run_machine_mode.sh --chatbot
+scripts/run_machine_mode.sh --chatbot
 ```
 
 ## Development Tools
 
 ### Code Formatting
 ```bash
-./format_code.sh  # Uses astyle with K&R style, 4-space indentation
+scripts/format_code.sh  # Uses astyle with K&R style, 4-space indentation
 ```
 
 ### Duplicate Code Detection
 ```bash
-./cpd_check.sh    # Uses PMD's CPD tool (requires Java)
+scripts/cpd_check.sh    # Uses PMD's CPD tool (requires Java)
 ```
 
 ### Complexity Analysis
 ```bash
 # Install: pip install lizard
-./complexity_check.sh         # Basic analysis with all functions
-./complexity_check.sh warnings # Show only complex functions
-./complexity_check.sh detailed # Generate HTML and CSV reports
+scripts/complexity_check.sh         # Basic analysis with all functions
+scripts/complexity_check.sh warnings # Show only complex functions
+scripts/complexity_check.sh detailed # Generate HTML and CSV reports
 # Thresholds: CCN=10, Length=60 lines, Parameters=5
 ```
 
 ### Dead Code Detection
 ```bash
-./deadcode_check.sh       # Full analysis (all phases)
-./deadcode_check.sh warnings # Only compiler warnings
-./deadcode_check.sh symbols  # Symbol analysis
-./deadcode_check.sh sections # Section-based analysis
+scripts/deadcode_check.sh       # Full analysis (all phases)
+scripts/deadcode_check.sh warnings # Only compiler warnings
+scripts/deadcode_check.sh symbols  # Symbol analysis
+scripts/deadcode_check.sh sections # Section-based analysis
 
 # Platform-specific analysis:
-./deadcode_check.sh -p posix     # POSIX only
-./deadcode_check.sh -p classic   # Classic Mac only
-./deadcode_check.sh -p all       # All platforms (default)
+scripts/deadcode_check.sh -p posix     # POSIX only
+scripts/deadcode_check.sh -p classic   # Classic Mac only
+scripts/deadcode_check.sh -p all       # All platforms (default)
 
 # Uses GCC flags: -Wunused-*, -ffunction-sections, --gc-sections
 # Optional: Install cppcheck for additional analysis
@@ -108,7 +113,7 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 
 ### Log Filtering
 ```bash
-./filter_logs.sh <log_file> [categories]  # Filter logs by category
+scripts/filter_logs.sh <log_file> [categories]  # Filter logs by category
 # Categories: NETWORK, DISCOVERY, MESSAGING, UI, APP_EVENT, ERROR, DEBUG
 ```
 
@@ -116,8 +121,8 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 
 - **Unit Testing**: No formal test framework currently in use (contributions welcome)
 - **Integration Testing**: Use Docker setup for multi-peer testing scenarios
-- **Machine Mode Testing**: `test_machine_mode.py` for automated JSON API testing
-- **AI Integration Testing**: Python client library (`csend_client.py`) for chatbot testing
+- **Machine Mode Testing**: `tools/test_machine_mode.py` for automated JSON API testing
+- **AI Integration Testing**: Python client library (`tools/csend_client.py`) for chatbot testing
 - **Logging**: Enable debug mode (`/debug` command) and check log files:
   - POSIX: `csend_posix.log`
   - Classic Mac: `csend_classic_mac.log`
@@ -130,10 +135,11 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 3. **Message Queue (Classic Mac)**: Broadcast messages queued when send stream busy
 4. **Timeout Handling**: Peers pruned after `PEER_TIMEOUT` (30 seconds) of inactivity
 5. **Protocol Endianness**: Magic number uses network byte order (`htonl`/`ntohl`)
-6. **Logging System**: Uses categorized logging (see LOGGING.md) with levels ERROR, WARNING, INFO, DEBUG
+6. **Logging System**: Uses categorized logging (see docs/LOGGING.md) with levels ERROR, WARNING, INFO, DEBUG
 7. **Machine Mode Threading**: JSON output is thread-safe with proper synchronization
 8. **AI Integration**: Claude Haiku chatbot with configurable behavior and rate limiting
 9. **Cross-Platform Time**: `time()` (POSIX) vs `TickCount()` (Classic Mac) abstraction
+10. **Resource Fork Preservation**: `.finf` folders maintain Mac resource/data fork metadata for ResEdit-modified files
 
 ## Key Files to Understand
 
@@ -145,7 +151,7 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 - **Network Abstraction**: `classic_mac/network_abstraction.h` - Network interface design
 - **Machine Mode UI**: `posix/ui_terminal_machine.c` - JSON-based interface implementation
 - **UI Factory**: `posix/ui_factory.c` - Strategy pattern for UI creation
-- **Python Integration**: `csend_client.py`, `csend_chatbot.py` - AI chatbot and automation
+- **Python Integration**: `tools/csend_client.py`, `tools/csend_chatbot.py` - AI chatbot and automation
 - **Logging**: `shared/logging.c` - Centralized logging with categories and levels
 
 ## Code Quality Commands
@@ -154,16 +160,16 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 
 ```bash
 # Format code (required before commits)
-./format_code.sh
+scripts/format_code.sh
 
 # Check for code duplication
-./cpd_check.sh
+scripts/cpd_check.sh
 
 # Check complexity warnings
-./complexity_check.sh warnings
+scripts/complexity_check.sh warnings
 
 # Check for dead code
-./deadcode_check.sh warnings
+scripts/deadcode_check.sh warnings
 ```
 
 ## CI/CD Integration
@@ -171,10 +177,10 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 For CI/CD pipelines, add these checks:
 ```bash
 # Code quality checks
-./format_code.sh && git diff --exit-code  # Verify formatting
-./cpd_check.sh                             # Duplicate detection
-./complexity_check.sh warnings             # Complexity warnings
-./deadcode_check.sh warnings               # Dead code warnings
+scripts/format_code.sh && git diff --exit-code  # Verify formatting
+scripts/cpd_check.sh                             # Duplicate detection
+scripts/complexity_check.sh warnings             # Complexity warnings
+scripts/deadcode_check.sh warnings               # Dead code warnings
 
 # Platform-specific builds
 make clean && make                         # POSIX build

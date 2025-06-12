@@ -65,7 +65,7 @@ while [[ $# -gt 0 ]]; do
         --test)
             echo "Running CSend machine mode tests..."
             setup_venv
-            python3 test_machine_mode.py
+            python3 ../tools/test_machine_mode.py
             exit $?
             ;;
         --interactive)
@@ -91,7 +91,7 @@ while [[ $# -gt 0 ]]; do
             fi
             echo "Starting Claude Haiku chatbot..."
             setup_venv
-            python3 csend_chatbot.py "$USERNAME"
+            python3 ../tools/csend_chatbot.py "$USERNAME"
             exit $?
             ;;
         --debug)

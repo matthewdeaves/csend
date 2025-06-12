@@ -3,7 +3,7 @@
 # Script to download, build, and install the Retro68 toolchain on Ubuntu,
 # OR update an existing installation and rebuild.
 # Clears the Retro68 source tree's InterfacesAndLibraries folder and then
-# extracts 'misc/MPW_Interfaces.zip' (containing Apple's Universal
+# extracts 'resources/misc/MPW_Interfaces.zip' (containing Apple's Universal
 # Interfaces + added MacTCP headers) into it before building the toolchain.
 #
 # Installs prerequisites, clones/updates the repo, builds/rebuilds the
@@ -36,7 +36,7 @@ MPW_ZIP_FILE="MPW_Interfaces.zip"
 # Use BASH_SOURCE[0] which is the standard way to get the script's path
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 # Full path to the MPW interfaces zip file
-MPW_ZIP_PATH="${SCRIPT_DIR}/misc/${MPW_ZIP_FILE}"
+MPW_ZIP_PATH="${SCRIPT_DIR}/../resources/misc/${MPW_ZIP_FILE}"
 
 # --- Flags / Options ---
 MODE="install" # Default mode

@@ -1,8 +1,8 @@
 # 🌐 CSend - Cross-Platform P2P Terminal Chat
 
 <p align="center">
-  <img src="images/system7.png" alt="CSend on Classic Mac OS" width="400"/>
-  <img src="images/ubuntu.png" alt="CSend on Ubuntu" width="400"/>
+  <img src="docs/images/system7.png" alt="CSend on Classic Mac OS" width="400"/>
+  <img src="docs/images/ubuntu.png" alt="CSend on Ubuntu" width="400"/>
 </p>
 
 **CSend** is a cross-platform peer-to-peer chat application written in C, supporting both modern POSIX systems and Classic Macintosh (System 7.x). It demonstrates network programming across different eras of computing, from modern multi-threaded applications to single-threaded GUI applications.
@@ -83,13 +83,13 @@ make
 #### Docker Testing (Recommended)
 ```bash
 # Start multiple peer containers
-./docker.sh start
+scripts/docker.sh start
 
 # Check container status
-./docker.sh status
+scripts/docker.sh status
 
 # Stop all containers
-./docker.sh stop
+scripts/docker.sh stop
 ```
 
 #### Machine Mode with AI Chatbot
@@ -98,7 +98,7 @@ make
 export ANTHROPIC_API_KEY="your-api-key-here"
 
 # Run Claude chatbot
-./run_machine_mode.sh --chatbot
+scripts/run_machine_mode.sh --chatbot
 ```
 
 ### Classic Mac Version
@@ -110,7 +110,7 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 #### Build
 ```bash
 # Quick setup for Retro68
-./setup_retro68.sh
+scripts/setup_retro68.sh
 
 # Build Classic Mac version
 make -f Makefile.retro68
@@ -157,7 +157,7 @@ make -f Makefile.retro68
 /status --id=3
 ```
 
-See [Machine Mode Documentation](MACHINE_MODE.md) for full API reference.
+See [Machine Mode Documentation](docs/MACHINE_MODE.md) for full API reference.
 
 ## 🛠️ Development
 
@@ -165,29 +165,29 @@ See [Machine Mode Documentation](MACHINE_MODE.md) for full API reference.
 
 **Format code** (required before commits):
 ```bash
-./format_code.sh
+scripts/format_code.sh
 ```
 
 **Check for duplicated code**:
 ```bash
-./cpd_check.sh
+scripts/cpd_check.sh
 ```
 
 **Analyze complexity**:
 ```bash
-./complexity_check.sh warnings    # Show only complex functions
-./complexity_check.sh detailed    # Generate HTML reports
+scripts/complexity_check.sh warnings    # Show only complex functions
+scripts/complexity_check.sh detailed    # Generate HTML reports
 ```
 
 **Detect dead code**:
 ```bash
-./deadcode_check.sh warnings      # Show compiler warnings
-./deadcode_check.sh               # Full analysis
+scripts/deadcode_check.sh warnings      # Show compiler warnings
+scripts/deadcode_check.sh               # Full analysis
 ```
 
 **Filter logs**:
 ```bash
-./filter_logs.sh csend_posix.log NETWORK DISCOVERY
+scripts/filter_logs.sh csend_posix.log NETWORK DISCOVERY
 ```
 
 ### Build Verification
@@ -199,13 +199,13 @@ make clean && make
 make -f Makefile.retro68
 
 # Docker multi-peer test
-./docker.sh start
+scripts/docker.sh start
 ```
 
 ### Testing
 - **Unit Testing**: No formal framework (contributions welcome)
 - **Integration Testing**: Use Docker setup for multi-peer scenarios
-- **Machine Mode Testing**: `test_machine_mode.py` for automated testing
+- **Machine Mode Testing**: `tools/test_machine_mode.py` for automated testing
 - **Logging**: Enable debug mode and check log files
 
 ### Code Style
@@ -219,10 +219,10 @@ make -f Makefile.retro68
 | File | Description |
 |------|-------------|
 | [CLAUDE.md](CLAUDE.md) | Development guidelines for AI assistants |
-| [MACHINE_MODE.md](MACHINE_MODE.md) | Complete machine mode API reference |
-| [LOGGING.md](LOGGING.md) | Logging system documentation |
-| [TAGS.md](TAGS.md) | Development milestone history |
-| [resedit.md](resedit.md) | ResEdit and resource conversion guide |
+| [MACHINE_MODE.md](docs/MACHINE_MODE.md) | Complete machine mode API reference |
+| [LOGGING.md](docs/LOGGING.md) | Logging system documentation |
+| [TAGS.md](docs/TAGS.md) | Development milestone history |
+| [resedit.md](docs/resedit.md) | ResEdit and resource conversion guide |
 
 ## 🔧 Project Structure
 
@@ -232,13 +232,21 @@ csend/
 ├── classic_mac/        # Classic Mac source code
 ├── shared/             # Platform-independent core logic
 ├── MPW_resources/      # Classic Mac GUI resources
-├── tools/              # Development and analysis tools
-├── images/             # Screenshot assets
+├── tools/              # Python tools and client libraries
+├── scripts/            # Shell scripts for building and testing
+├── docs/               # Documentation and images
+├── resources/          # External resources (Books, MPW interfaces)
+├── logs/               # Log files (generated)
+├── reports/            # Analysis reports (generated)
 ├── build/              # Compiled binaries (generated)
+├── doxygen_docs/       # Generated documentation (if built)
+├── .finf/              # SheepShaver metadata (preserves Mac resource forks)
 ├── Makefile           # POSIX build configuration
 ├── Makefile.retro68   # Classic Mac build configuration
 ├── Dockerfile         # Docker container setup
-└── docker-compose.yml # Multi-container orchestration
+├── docker-compose.yml # Multi-container orchestration
+├── README.md          # This file
+└── CLAUDE.md          # AI assistant development guidelines
 ```
 
 ## 🌟 Advanced Features
@@ -265,7 +273,7 @@ csend/
 
 ## 🤝 Contributing
 
-1. **Format your code**: Run `./format_code.sh` before committing
+1. **Format your code**: Run `scripts/format_code.sh` before committing
 2. **Check complexity**: Keep functions under complexity thresholds
 3. **Test thoroughly**: Use Docker setup for multi-peer testing
 4. **Document changes**: Update relevant documentation files
@@ -281,8 +289,9 @@ csend/
 
 ### For Classic Mac Development
 - [Retro68](https://github.com/autc04/Retro68) cross-compiler
-- Classic Mac OS environment for testing
+- Classic Mac OS environment for testing (SheepShaver recommended)
 - ResEdit for GUI resource editing (optional)
+- **Note**: `.finf` folders preserve Mac resource/data forks when transferring files from emulator
 
 ### For Docker Testing
 - Docker Engine

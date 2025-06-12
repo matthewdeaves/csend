@@ -203,6 +203,9 @@ All responses follow this structure:
 
 ### Basic Usage
 ```python
+# Add tools directory to path first
+import sys
+sys.path.append('./tools')
 from csend_client import CSendClient
 import asyncio
 
@@ -238,7 +241,7 @@ If you need to install packages manually:
 1. **Automatic Setup (Recommended)**:
    ```bash
    # The launcher script handles everything
-   ./run_machine_mode.sh --chatbot
+   scripts/run_machine_mode.sh --chatbot
    ```
    This will:
    - Create a virtual environment (`csend_venv`)
@@ -293,10 +296,10 @@ With the API key set, you can run the chatbot:
 
 ```bash
 # Using the launcher script (recommended)
-./run_machine_mode.sh --chatbot
+scripts/run_machine_mode.sh --chatbot
 
 # Or run directly
-python3 csend_chatbot.py Claude
+python3 tools/csend_chatbot.py Claude
 ```
 
 ### Python Example
