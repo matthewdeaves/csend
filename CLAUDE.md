@@ -134,6 +134,7 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 7. **Machine Mode Threading**: JSON output is thread-safe with proper synchronization
 8. **AI Integration**: Claude Haiku chatbot with configurable behavior and rate limiting
 9. **Cross-Platform Time**: `time()` (POSIX) vs `TickCount()` (Classic Mac) abstraction
+10. **OpenTransport TCP Issues**: Critical networking bugs documented in `OPENTRANSPORT_TCP_FIXES.md`
 
 ## Key Files to Understand
 
@@ -143,10 +144,93 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 - **POSIX Main Loop**: `posix/main.c` - Thread management and initialization
 - **Classic Mac Event Loop**: `classic_mac/main.c` - WaitNextEvent handling
 - **Network Abstraction**: `classic_mac/network_abstraction.h` - Network interface design
+- **MacTCP Implementation**: `classic_mac/mactcp_impl.c` - MacTCP-specific networking
+- **OpenTransport Implementation**: `classic_mac/opentransport_impl.c` - OpenTransport networking framework
 - **Machine Mode UI**: `posix/ui_terminal_machine.c` - JSON-based interface implementation
 - **UI Factory**: `posix/ui_factory.c` - Strategy pattern for UI creation
 - **Python Integration**: `csend_client.py`, `csend_chatbot.py` - AI chatbot and automation
 - **Logging**: `shared/logging.c` - Centralized logging with categories and levels
+- **OpenTransport TCP Fixes**: `OPENTRANSPORT_TCP_FIXES.md` - Detailed bug tracking and fix documentation
+
+## Retro68 Development Resources
+
+**IMPORTANT**: If the `Retro68Reference/` directory is present, it contains the complete Retro68 Interfaces&Libraries collection, providing comprehensive Classic Mac development resources including full OpenTransport support. This directory should be:
+- Used for reference when implementing Classic Mac features  
+- Ignored by git (development reference only)
+- Consulted for available headers, libraries, and documentation
+
+**Retro68 OpenTransport Support**: Retro68 includes comprehensive OpenTransport support in the toolchain:
+- Headers: `OpenTransport.h`, `OpenTptInternet.h`, `OpenTptClient.h`, etc.
+- Libraries: `OpenTransport.o`, `OpenTptInet.o`, `OpenTptUtils.o` (68K), plus PowerPC versions
+- **CSend always builds with BOTH MacTCP and OpenTransport support**
+- **Runtime Detection**: At startup, CSend detects available networking and prefers OpenTransport when available
+- **Automatic Fallback**: Falls back to MacTCP on older systems without OpenTransport
+
+**Retro68Reference/ Directory**: Contains reference copies of Retro68 interfaces for development assistance - used by Claude Code for implementing Classic Mac features, not part of the build process.
+
+## Classic Mac Programming Documentation
+
+**CRITICAL**: When working with Classic Mac networking implementations, ALWAYS consult the authoritative Apple documentation available in the `Books/` directory. These books contain the definitive specifications, examples, and best practices for Classic Mac programming.
+
+### Primary References for Network Programming
+
+**OpenTransport Programming** (`Books/NetworkingOpenTransport.txt`):
+- **Inside Macintosh: Networking With Open Transport** (Version 1.3, November 1997)
+- Comprehensive guide to OpenTransport programming on Classic Mac
+- Use for: OpenTransport initialization, endpoint management, async operations, TCP/IP services
+- Covers: Provider architecture, XTI compatibility, option management, error handling
+- Essential for implementing `classic_mac/opentransport_impl.c` functionality
+
+**MacTCP Programming** (`Books/MacTCP_Programmers_Guide_1989.txt` and `Books/MacTCP_programming.txt`):
+- Official MacTCP programmer's documentation
+- Use for: MacTCP driver interface, parameter blocks, async operations, DNS resolution
+- Covers: TCPiopb/UDPiopb structures, callback procedures, stream management
+- Essential for maintaining `classic_mac/mactcp_impl.c` implementation
+
+**Inside Macintosh Volumes** (Complete collection available):
+- `Books/Inside Macintosh Volume I, II, III - 1985.txt` - Toolbox fundamentals
+- `Books/Inside_Macintosh_Volume_IV_1986.txt` - Additional Toolbox managers
+- `Books/Inside_Macintosh_Volume_V_1986.txt` - More Toolbox extensions
+- `Books/Inside_Macintosh_Volume_VI_1991.txt` - System 7 features and updates
+- `Books/Inside Macintosh - Text.txt` - Comprehensive text reference
+
+### Documentation Usage Guidelines
+
+**When implementing network features:**
+1. **ALWAYS check the appropriate book first** before writing network code
+2. **Use exact parameter block structures** as documented in the books
+3. **Follow Apple's recommended async patterns** for non-blocking operations
+4. **Implement proper error handling** using documented error codes
+5. **Use correct calling conventions** (Pascal vs C) as specified
+
+**When debugging network issues:**
+1. **Consult error code appendices** in the networking books
+2. **Check parameter validation** against documented requirements
+3. **Verify async operation patterns** match Apple's examples
+4. **Review memory management** for parameter blocks and buffers
+
+**When adding new networking functionality:**
+1. **Research the feature** in OpenTransport book first, then MacTCP if needed
+2. **Follow established patterns** from existing implementations
+3. **Implement both sync and async variants** when available
+4. **Add comprehensive error translation** between OS errors and network abstraction
+
+**Example Research Workflow:**
+```
+1. Identify networking requirement (e.g., "implement UDP broadcast")
+2. Search Books/NetworkingOpenTransport.txt for OpenTransport approach
+3. Search Books/MacTCP_programming.txt for MacTCP equivalent
+4. Compare approaches and identify common abstractions
+5. Implement in network_abstraction.h interface
+6. Create implementation-specific code in mactcp_impl.c and opentransport_impl.c
+```
+
+**Code Comments Reference Style:**
+When implementing network functions, include references to the documentation:
+```c
+/* Implements TCP passive open as documented in MacTCP Programmer's Guide */
+/* See OpenTransport book Chapter 5 for equivalent OT implementation */
+```
 
 ## Code Quality Commands
 
@@ -180,3 +264,44 @@ For CI/CD pipelines, add these checks:
 make clean && make                         # POSIX build
 make -f Makefile.retro68                   # Classic Mac (requires Retro68)
 ```
+
+## OpenTransport TCP Debugging Protocol
+
+**CRITICAL for Claude Code**: When working on OpenTransport networking issues, follow this systematic approach:
+
+### 1. Log Analysis Priority
+```bash
+# Check for specific OpenTransport errors first
+grep -E "(OTRcvConnect|kOTBufferOverflowErr|-3160|-3155)" *.log
+
+# Monitor TCP state transitions  
+grep -E "(T_CONNECT|T_DATAXFER|T_ORDREL|TCPTerminate)" *.log
+
+# Connection lifecycle tracking
+grep -A 5 -B 5 "Listen ASR\|Send ASR" *.log
+```
+
+### 2. Common OpenTransport Issues & Solutions
+- **Error -3160**: Buffer too small for OTRcvConnect → Allocate proper InetAddress buffer
+- **Error -3155**: Wrong endpoint state → Call OTGetEndpointState() and reset via OTUnbind()
+- **Connection stuck**: Missing OTRcvConnect() call in T_CONNECT event handler
+- **Listen restart fails**: Check `gListenStreamNeedsReset` flag and TCP_STREAM_RESET_DELAY_TICKS timing
+
+### 3. Key Files for OpenTransport Debugging
+- `classic_mac/opentransport_impl.c`: Core OpenTransport implementation
+- `classic_mac/messaging.c`: TCP dual-stream state machine 
+- `classic_mac/tcp_state_handlers.c`: Listen stream reset logic
+- `OPENTRANSPORT_TCP_FIXES.md`: Current bug status and solutions
+
+### 4. Testing Methodology
+1. **Start with logs**: Always analyze Mac and POSIX logs together
+2. **Test bidirectional**: Verify both POSIX→Mac and Mac→POSIX message flows
+3. **Check timing**: OpenTransport has async delays (1-second listen restart)
+4. **Validate states**: Use OTGetEndpointState() to verify endpoint progression
+5. **Reference docs**: Consult `Books/NetworkingOpenTransport.txt` for Apple's specifications
+
+### 5. Documentation Requirements
+- **ALWAYS update** `OPENTRANSPORT_TCP_FIXES.md` with findings
+- **Document error codes** and their root causes
+- **Track fixes** with before/after code snippets
+- **Note test results** for future debugging sessions

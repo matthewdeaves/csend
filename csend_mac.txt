@@ -1,0 +1,315 @@
+
+--- [1925-06-11 10:57:38] Log Session Started ---
+1925-06-11 10:57:39 [DEBUG][UI] Menu bar initialized and drawn.
+1925-06-11 10:57:39 [DEBUG][SYSTEM] InstallAppleEventHandlers: Entry.
+1925-06-11 10:57:39 [DEBUG][SYSTEM] InstallAppleEventHandlers: kAEQuitApplication handler installed.
+1925-06-11 10:57:39 [DEBUG][SYSTEM] InstallAppleEventHandlers: Exit.
+1925-06-11 10:57:39 Starting Classic Mac P2P Messenger...
+1925-06-11 10:57:39 [DEBUG][SYSTEM] MaxApplZone called. Toolbox Initialized.
+1925-06-11 10:57:39 [INFO][NETWORKING] InitializeNetworking: Starting network initialization
+1925-06-11 10:57:39 [INFO][NETWORKING] InitNetworkAbstraction: Starting network abstraction initialization
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_IsAvailable: OpenTransport detected via Gestalt (flags 0x0000003F)
+1925-06-11 10:57:39 [DEBUG][NETWORKING] IsOpenTransportAvailable: OpenTransport availability = true
+1925-06-11 10:57:39 [INFO][NETWORKING] InitNetworkAbstraction: OpenTransport detected, using OpenTransport implementation
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_IsAvailable: OpenTransport detected via Gestalt (flags 0x0000003F)
+1925-06-11 10:57:39 Network abstraction initialized with OpenTransport
+1925-06-11 10:57:39 [INFO][NETWORKING] InitializeNetworking: Network abstraction initialized with OpenTransport
+1925-06-11 10:57:39 [INFO][NETWORKING] OT: Initializing OpenTransport stack...
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OT: InitOpenTransport() successful.
+1925-06-11 10:57:39 [INFO][NETWORKING] OT: Notifier UPPs created successfully. OpenTransport is ready.
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_Initialize: Successfully got local IP: 0x0ABC0166
+1925-06-11 10:57:39 [DEBUG][NETWORKING] InitializeOTGlobalBuffers: Global OTRcvConnect buffers initialized using OTAllocMem
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_Initialize: OpenTransport initialized
+1925-06-11 10:57:39 [INFO][DISCOVERY] Initializing UDP Discovery Endpoint using network abstraction...
+1925-06-11 10:57:39 [DEBUG][DISCOVERY] Allocated 2048 bytes for UDP receive buffer at 0x29B7720.
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_UDPCreate: Entry - port=8081, buffer=0x029B7720, size=2048
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_UDPCreate: About to call OTCreateConfiguration with kUDPName
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_UDPCreate: OTCreateConfiguration returned 0x002AFFDC
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_UDPCreate: About to call OTOpenEndpoint
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_UDPCreate: OTOpenEndpoint returned endpoint=0x029B76F4, err=0
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_UDPCreate: Configuration automatically disposed by OTOpenEndpoint
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_UDPCreate: Allocating UDP endpoint structure (14 bytes)
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_UDPCreate: UDP endpoint structure allocated at 0x029B7F30
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_UDPCreate: Installing notifier
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_UDPCreate: Notifier installed successfully
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_UDPCreate: IP_BROADCAST option set successfully
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTUDPNotifier: Unhandled event 0x20000001
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_UDPCreate: UDP endpoint created on port 8081
+1925-06-11 10:57:39 [INFO][DISCOVERY] UDP Endpoint created successfully using network abstraction on port 8081.
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_UDPReceiveAsync: Async receive initiated, waiting for incoming UDP data
+1925-06-11 10:57:39 [DEBUG][DISCOVERY] StartAsyncUDPRead: Async UDP read initiated.
+1925-06-11 10:57:39 [DEBUG][DISCOVERY] Initial asynchronous UDP read started.
+1925-06-11 10:57:39 [INFO][DISCOVERY] UDP Discovery Endpoint Initialized.
+1925-06-11 10:57:39 [DEBUG][NETWORKING] Initializing TCP with stream receive buffer size: 16384 bytes.
+1925-06-11 10:57:39 [DEBUG][NETWORKING] TCP Listen ASR UPP created at 0x29D0132.
+1925-06-11 10:57:39 [DEBUG][NETWORKING] TCP Send ASR UPP created at 0x29D01B0.
+1925-06-11 10:57:39 [INFO][MESSAGING] Initializing TCP Messaging Subsystem with dual streams...
+1925-06-11 10:57:39 [DEBUG][MESSAGING] Allocated TCP stream receive buffers: 16384 bytes each
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_TCPCreate: TCP endpoint created successfully
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_TCPCreate: TCP endpoint created successfully
+1925-06-11 10:57:39 [INFO][MESSAGING] TCP Streams created successfully using network abstraction.
+1925-06-11 10:57:39 [DEBUG][MESSAGING] Attempting asynchronous TCPListenAsync on port 8080...
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTPersistentListenerNotifier: Unhandled event 0x20000001
+1925-06-11 10:57:39 [INFO][NETWORKING] Asynchronous Factory Pattern initialized successfully
+1925-06-11 10:57:39 [DEBUG][NETWORKING] InitializePersistentListener: Persistent listener created and listening on port 8080
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_TCPListen: Factory pattern listening active on port 8080
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_TCPListenAsync: Async listen initiated on port 8080
+1925-06-11 10:57:39 [DEBUG][MESSAGING] TCPListenAsync successfully initiated.
+1925-06-11 10:57:39 [INFO][MESSAGING] TCP Messaging Subsystem initialized with dual streams.
+1925-06-11 10:57:39 [INFO][MESSAGING] TCP Messaging Initialized with dual streams.
+1925-06-11 10:57:39 Networking initialization complete. Local IP: 10.188.1.102 using OpenTransport
+1925-06-11 10:57:39 [INFO][NETWORKING] Networking stack initialized.
+1925-06-11 10:57:39 [DEBUG][PEER_MGMT] Peer list data structure initialized.
+1925-06-11 10:57:39 [DEBUG][UI] Loading dialog resource ID 128...
+1925-06-11 10:57:39 [INFO][UI] Dialog loaded successfully (gMainWindow: 0x29E1540).
+1925-06-11 10:57:39 [DEBUG][UI] Initializing Messages TE...
+1925-06-11 10:57:39 [DEBUG][UI] TENew succeeded for Messages TE. Handle: 0x29E17D0
+1925-06-11 10:57:39 [DEBUG][UI] Initializing Messages Scrollbar...
+1925-06-11 10:57:39 [DEBUG][UI] Scrollbar handle obtained: 0x29E17E4 (ItemType was 7).
+1925-06-11 10:57:39 [DEBUG][UI] Initializing Input TE (as UserItem)...
+1925-06-11 10:57:39 [DEBUG][UI] TENew succeeded for Input TE. Handle: 0x29E17C4. ViewRect for TE: (341,214,377,608)
+1925-06-11 10:57:39 [DEBUG][UI] Initializing Peer List Control...
+1925-06-11 10:57:39 [DEBUG][UI] Item 1 is UserItem. Rect: (7,6,414,186)
+1925-06-11 10:57:39 [DEBUG][UI] Calling LNew for Peer List (Cell Size: H180, V16)...
+1925-06-11 10:57:39 [DEBUG][UI] LNew succeeded for Peer List. Handle: 0x29E17B8
+1925-06-11 10:57:39 [DEBUG][UI] Debug checkbox (Item 7) initialized to: OFF
+1925-06-11 10:57:39 [DEBUG][UI] Broadcast checkbox (Item 5) initialized to: OFF
+1925-06-11 10:57:39 [DEBUG][UI] DialogPeerList_GetSelectedPeer Warning: Selected row 0 is out of bounds or peer became inactive (current active peers: 0).
+1925-06-11 10:57:39 [DEBUG][UI] UpdatePeerDisplayList: gLastSelectedCell.v was -1, but DialogPeerList_GetSelectedPeer failed. No specific peer to preserve.
+1925-06-11 10:57:39 [DEBUG][UI] Peer list updated. Active peers: 0. Invalidating list rect.
+1925-06-11 10:57:39 [DEBUG][UI] Setting focus to input field (item 3)...
+1925-06-11 10:57:39 [DEBUG][UI] ActivateInputTE: Activating Input TE.
+1925-06-11 10:57:39 [DEBUG][UI] Initial UpdateDialogControls() called from InitDialog.
+1925-06-11 10:57:39 [INFO][UI] InitDialog finished successfully.
+1925-06-11 10:57:39 [INFO][UI] Dialog initialized. Entering main event loop...
+1925-06-11 10:57:39 [DEBUG][DISCOVERY] CheckSendBroadcast: Interval elapsed. Sending broadcast.
+1925-06-11 10:57:39 [DEBUG][DISCOVERY] Sending Discovery Broadcast...
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTUDPNotifier: T_DATA - datagram available, result=0
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTUDPNotifier: Marked async receive operation 0 as completed
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_UDPSendAsync: Async UDP send completed
+1925-06-11 10:57:39 [DEBUG][DISCOVERY] Broadcast send initiated asynchronously
+1925-06-11 10:57:39 [DEBUG][UI] UpdatePeerDisplayList: No prior selection (gLastSelectedCell.v = -1).
+1925-06-11 10:57:39 [DEBUG][UI] UpdatePeerDisplayList: No significant change detected for redraw. Active: 0, OldRows: 0.
+1925-06-11 10:57:39 [DEBUG][UI] ActivateInputTE: Activating Input TE.
+1925-06-11 10:57:39 [DEBUG][UI] ActivatePeerList: List 0x29E17B8 activated.
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_UDPCheckAsyncStatus: Received 35 bytes from 0ABC0166:8081
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_FreeAsyncHandle: Handle freed
+1925-06-11 10:57:39 [DEBUG][DISCOVERY] PollUDPListener: Comparing remoteHost=0x0ABC0166 with myLocalIP=0x0ABC0166
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_AddressToString: Converting 0ABC0166 to string
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_AddressToString: 0ABC0166 -> 10.188.1.102
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_AddressToString: Converting 0ABC0166 to string
+1925-06-11 10:57:39 [DEBUG][NETWORKING] OTImpl_AddressToString: 0ABC0166 -> 10.188.1.102
+1925-06-11 10:57:40 [DEBUG][DISCOVERY] PollUDPListener: Self-packet check: remote='10.188.1.102' local='10.188.1.102' isSelf=true
+1925-06-11 10:57:40 [DEBUG][DISCOVERY] PollUDPListener: Ignored UDP packet from self (10.188.1.102).
+1925-06-11 10:57:40 [DEBUG][NETWORKING] OTImpl_UDPReturnBufferAsync: Async buffer return completed
+1925-06-11 10:57:40 [DEBUG][DISCOVERY] ReturnUDPBufferAsync: Async buffer return initiated for buffer 0x29B7720.
+1925-06-11 10:57:40 [DEBUG][DISCOVERY] PollUDPListener: Initiated return for buffer 0x29B7720.
+1925-06-11 10:57:40 [DEBUG][NETWORKING] OTImpl_UDPCheckReturnStatus: Return completed with result 0
+1925-06-11 10:57:40 [DEBUG][NETWORKING] OTImpl_FreeAsyncHandle: Handle freed
+1925-06-11 10:57:40 [DEBUG][DISCOVERY] PollUDPListener: Async buffer return completed successfully.
+1925-06-11 10:57:40 [DEBUG][NETWORKING] OTImpl_UDPReceiveAsync: Async receive initiated, waiting for incoming UDP data
+1925-06-11 10:57:40 [DEBUG][DISCOVERY] StartAsyncUDPRead: Async UDP read initiated.
+1925-06-11 10:57:40 [DEBUG][NETWORKING] OTImpl_UDPCheckSendStatus: Send completed with result 0
+1925-06-11 10:57:40 [DEBUG][NETWORKING] OTImpl_FreeAsyncHandle: Handle freed
+1925-06-11 10:57:40 [DEBUG][DISCOVERY] PollUDPListener: UDP send completed successfully
+1925-06-11 10:57:45 [DEBUG][UI] UpdatePeerDisplayList: No prior selection (gLastSelectedCell.v = -1).
+1925-06-11 10:57:45 [DEBUG][UI] UpdatePeerDisplayList: No significant change detected for redraw. Active: 0, OldRows: 0.
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] CheckSendBroadcast: Interval elapsed. Sending broadcast.
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] Sending Discovery Broadcast...
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTUDPNotifier: T_DATA - datagram available, result=0
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTUDPNotifier: Marked async receive operation 0 as completed
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_UDPSendAsync: Async UDP send completed
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] Broadcast send initiated asynchronously
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_UDPCheckAsyncStatus: Received 35 bytes from 0ABC0166:8081
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_FreeAsyncHandle: Handle freed
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] PollUDPListener: Comparing remoteHost=0x0ABC0166 with myLocalIP=0x0ABC0166
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_AddressToString: Converting 0ABC0166 to string
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_AddressToString: 0ABC0166 -> 10.188.1.102
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_AddressToString: Converting 0ABC0166 to string
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_AddressToString: 0ABC0166 -> 10.188.1.102
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] PollUDPListener: Self-packet check: remote='10.188.1.102' local='10.188.1.102' isSelf=true
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] PollUDPListener: Ignored UDP packet from self (10.188.1.102).
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_UDPReturnBufferAsync: Async buffer return completed
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] ReturnUDPBufferAsync: Async buffer return initiated for buffer 0x29B7720.
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] PollUDPListener: Initiated return for buffer 0x29B7720.
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_UDPCheckReturnStatus: Return completed with result 0
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_FreeAsyncHandle: Handle freed
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] PollUDPListener: Async buffer return completed successfully.
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_UDPReceiveAsync: Async receive initiated, waiting for incoming UDP data
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] StartAsyncUDPRead: Async UDP read initiated.
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_UDPCheckSendStatus: Send completed with result 0
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_FreeAsyncHandle: Handle freed
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] PollUDPListener: UDP send completed successfully
+1925-06-11 10:57:50 [DEBUG][UI] UpdatePeerDisplayList: No prior selection (gLastSelectedCell.v = -1).
+1925-06-11 10:57:50 [DEBUG][UI] UpdatePeerDisplayList: No significant change detected for redraw. Active: 0, OldRows: 0.
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTUDPNotifier: T_DATA - datagram available, result=0
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTUDPNotifier: Marked async receive operation 0 as completed
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_UDPCheckAsyncStatus: Received 33 bytes from 0ABC0113:8081
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_FreeAsyncHandle: Handle freed
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] PollUDPListener: Comparing remoteHost=0x0ABC0113 with myLocalIP=0x0ABC0166
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_AddressToString: Converting 0ABC0113 to string
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_AddressToString: 0ABC0113 -> 10.188.1.19
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_AddressToString: Converting 0ABC0166 to string
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_AddressToString: 0ABC0166 -> 10.188.1.102
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] PollUDPListener: Self-packet check: remote='10.188.1.19' local='10.188.1.102' isSelf=false
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] Received DISCOVERY from ubuntu@10.188.1.19
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] Sending Discovery Response to IP 0xABC0113:8081...
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_UDPSendAsync: Async UDP send completed
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] Response send initiated asynchronously
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_AddressToString: Converting 0ABC0113 to string
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_AddressToString: 0ABC0113 -> 10.188.1.19
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] Sent DISCOVERY_RESPONSE to 10.188.1.19:8081
+1925-06-11 10:57:50 [INFO][PEER_MGMT] Added new peer ubuntu@10.188.1.19 at slot 0 (total active peers: 1)
+1925-06-11 10:57:50 [INFO][DISCOVERY] New peer added via DISCOVERY: ubuntu@10.188.1.19
+1925-06-11 10:57:50 [DEBUG][UI] UpdatePeerDisplayList: No prior selection (gLastSelectedCell.v = -1).
+1925-06-11 10:57:50 [DEBUG][UI] Peer list updated. Active peers: 1. Invalidating list rect.
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_UDPReturnBufferAsync: Async buffer return completed
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] ReturnUDPBufferAsync: Async buffer return initiated for buffer 0x29B7720.
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] PollUDPListener: Initiated return for buffer 0x29B7720.
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_UDPCheckReturnStatus: Return completed with result 0
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_FreeAsyncHandle: Handle freed
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] PollUDPListener: Async buffer return completed successfully.
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_UDPReceiveAsync: Async receive initiated, waiting for incoming UDP data
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] StartAsyncUDPRead: Async UDP read initiated.
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_UDPCheckSendStatus: Send completed with result 0
+1925-06-11 10:57:50 [DEBUG][NETWORKING] OTImpl_FreeAsyncHandle: Handle freed
+1925-06-11 10:57:50 [DEBUG][DISCOVERY] PollUDPListener: UDP send completed successfully
+1925-06-11 10:57:55 [DEBUG][UI] UpdatePeerDisplayList: No prior selection (gLastSelectedCell.v = -1).
+1925-06-11 10:57:55 [DEBUG][UI] UpdatePeerDisplayList: Deleted 1 rows from List Manager.
+1925-06-11 10:57:55 [DEBUG][UI] UpdatePeerDisplayList: No significant change detected for redraw. Active: 1, OldRows: 1.
+1925-06-11 10:58:00 [DEBUG][DISCOVERY] CheckSendBroadcast: Interval elapsed. Sending broadcast.
+1925-06-11 10:58:00 [DEBUG][DISCOVERY] Sending Discovery Broadcast...
+1925-06-11 10:58:00 [DEBUG][NETWORKING] OTUDPNotifier: T_DATA - datagram available, result=0
+1925-06-11 10:58:00 [DEBUG][NETWORKING] OTUDPNotifier: Marked async receive operation 1 as completed
+1925-06-11 10:58:00 [DEBUG][NETWORKING] OTImpl_UDPSendAsync: Async UDP send completed
+1925-06-11 10:58:00 [DEBUG][DISCOVERY] Broadcast send initiated asynchronously
+1925-06-11 10:58:00 [DEBUG][NETWORKING] OTImpl_UDPCheckAsyncStatus: Received 35 bytes from 0ABC0166:8081
+1925-06-11 10:58:00 [DEBUG][NETWORKING] OTImpl_FreeAsyncHandle: Handle freed
+1925-06-11 10:58:00 [DEBUG][DISCOVERY] PollUDPListener: Comparing remoteHost=0x0ABC0166 with myLocalIP=0x0ABC0166
+1925-06-11 10:58:00 [DEBUG][NETWORKING] OTImpl_AddressToString: Converting 0ABC0166 to string
+1925-06-11 10:58:00 [DEBUG][NETWORKING] OTImpl_AddressToString: 0ABC0166 -> 10.188.1.102
+1925-06-11 10:58:00 [DEBUG][NETWORKING] OTImpl_AddressToString: Converting 0ABC0166 to string
+1925-06-11 10:58:00 [DEBUG][NETWORKING] OTImpl_AddressToString: 0ABC0166 -> 10.188.1.102
+1925-06-11 10:58:00 [DEBUG][DISCOVERY] PollUDPListener: Self-packet check: remote='10.188.1.102' local='10.188.1.102' isSelf=true
+1925-06-11 10:58:00 [DEBUG][DISCOVERY] PollUDPListener: Ignored UDP packet from self (10.188.1.102).
+1925-06-11 10:58:00 [DEBUG][NETWORKING] OTImpl_UDPReturnBufferAsync: Async buffer return completed
+1925-06-11 10:58:00 [DEBUG][DISCOVERY] ReturnUDPBufferAsync: Async buffer return initiated for buffer 0x29B7720.
+1925-06-11 10:58:00 [DEBUG][DISCOVERY] PollUDPListener: Initiated return for buffer 0x29B7720.
+1925-06-11 10:58:00 [DEBUG][NETWORKING] OTImpl_UDPCheckReturnStatus: Return completed with result 0
+1925-06-11 10:58:00 [DEBUG][NETWORKING] OTImpl_FreeAsyncHandle: Handle freed
+1925-06-11 10:58:00 [DEBUG][DISCOVERY] PollUDPListener: Async buffer return completed successfully.
+1925-06-11 10:58:00 [DEBUG][NETWORKING] OTImpl_UDPReceiveAsync: Async receive initiated, waiting for incoming UDP data
+1925-06-11 10:58:00 [DEBUG][DISCOVERY] StartAsyncUDPRead: Async UDP read initiated.
+1925-06-11 10:58:00 [DEBUG][NETWORKING] OTImpl_UDPCheckSendStatus: Send completed with result 0
+1925-06-11 10:58:00 [DEBUG][NETWORKING] OTImpl_FreeAsyncHandle: Handle freed
+1925-06-11 10:58:00 [DEBUG][DISCOVERY] PollUDPListener: UDP send completed successfully
+1925-06-11 10:58:00 [DEBUG][NETWORKING] OTPersistentListenerNotifier: T_LISTEN - incoming connection
+1925-06-11 10:58:00 [DEBUG][NETWORKING] QueuePendingConnection: Queued connection from 10.188.1.19:47266 at slot 0
+1925-06-11 10:58:00 [INFO][NETWORKING] OTPersistentListenerNotifier: Queued connection from 10.188.1.19:47266
+1925-06-11 10:58:00 [DEBUG][NETWORKING] CreateDataEndpointAsync: Initiated async endpoint creation for slot 0
+1925-06-11 10:58:00 [DEBUG][NETWORKING] CreateDataEndpointAsync: Initiated async endpoint creation for slot 1
+1925-06-11 10:58:00 [DEBUG][NETWORKING] CreateDataEndpointAsync: Initiated async endpoint creation for slot 2
+1925-06-11 10:58:00 [DEBUG][NETWORKING] CreateDataEndpointAsync: Initiated async endpoint creation for slot 3
+1925-06-11 10:58:00 [ERROR][NETWORKING] OTDataEndpointNotifier: Corrupted slot index 30324 (valid range: 0-3)
+1925-06-11 10:58:00 [ERROR][NETWORKING] OTDataEndpointNotifier: Corrupted slot index 30244 (valid range: 0-3)
+1925-06-11 10:58:00 [ERROR][NETWORKING] OTDataEndpointNotifier: Corrupted slot index 30164 (valid range: 0-3)
+1925-06-11 10:58:00 [ERROR][NETWORKING] OTDataEndpointNotifier: Corrupted slot index 30084 (valid range: 0-3)
+1925-06-11 10:58:00 [DEBUG][UI] UpdatePeerDisplayList: No prior selection (gLastSelectedCell.v = -1).
+1925-06-11 10:58:00 [DEBUG][UI] UpdatePeerDisplayList: Deleted 1 rows from List Manager.
+1925-06-11 10:58:00 [DEBUG][UI] UpdatePeerDisplayList: No significant change detected for redraw. Active: 1, OldRows: 1.
+1925-06-11 10:58:05 [DEBUG][UI] UpdatePeerDisplayList: No prior selection (gLastSelectedCell.v = -1).
+1925-06-11 10:58:05 [DEBUG][UI] UpdatePeerDisplayList: Deleted 1 rows from List Manager.
+1925-06-11 10:58:05 [DEBUG][UI] UpdatePeerDisplayList: No significant change detected for redraw. Active: 1, OldRows: 1.
+1925-06-11 10:58:10 [DEBUG][DISCOVERY] CheckSendBroadcast: Interval elapsed. Sending broadcast.
+1925-06-11 10:58:10 [DEBUG][DISCOVERY] Sending Discovery Broadcast...
+1925-06-11 10:58:10 [DEBUG][NETWORKING] OTImpl_UDPSendAsync: Async UDP send completed
+1925-06-11 10:58:10 [DEBUG][DISCOVERY] Broadcast send initiated asynchronously
+1925-06-11 10:58:10 [DEBUG][NETWORKING] OTImpl_UDPCheckSendStatus: Send completed with result 0
+1925-06-11 10:58:10 [DEBUG][NETWORKING] OTImpl_FreeAsyncHandle: Handle freed
+1925-06-11 10:58:10 [DEBUG][DISCOVERY] PollUDPListener: UDP send completed successfully
+1925-06-11 10:58:10 [DEBUG][UI] UpdatePeerDisplayList: No prior selection (gLastSelectedCell.v = -1).
+1925-06-11 10:58:10 [DEBUG][UI] UpdatePeerDisplayList: Deleted 1 rows from List Manager.
+1925-06-11 10:58:10 [DEBUG][UI] UpdatePeerDisplayList: No significant change detected for redraw. Active: 1, OldRows: 1.
+1925-06-11 10:58:14 [DEBUG][UI] MouseDown: Click potentially in Peer List user item.
+1925-06-11 10:58:14 [DEBUG][UI] HandlePeerListClick: Click inside Peer List view rect. Calling LClick.
+1925-06-11 10:58:14 [DEBUG][UI] HandlePeerListClick: LLastClick cell (0,0) IS selected. Unchecking broadcast.
+1925-06-11 10:58:15 [DEBUG][UI] DialogPeerList_GetSelectedPeer: Found selected peer 'ubuntu'@'10.188.1.19' at display row 0 (data index 0).
+1925-06-11 10:58:15 [DEBUG][UI] UpdatePeerDisplayList: Attempting to preserve selection for peer ubuntu@10.188.1.19 (was display row 0).
+1925-06-11 10:58:16 [DEBUG][UI] UpdatePeerDisplayList: Deleted 1 rows from List Manager.
+1925-06-11 10:58:16 [DEBUG][UI] UpdatePeerDisplayList: Reselected peer 'ubuntu@10.188.1.19' at new display row 0.
+1925-06-11 10:58:16 [DEBUG][UI] Peer list updated. Active peers: 1. Invalidating list rect.
+1925-06-11 10:58:20 [DEBUG][DISCOVERY] CheckSendBroadcast: Interval elapsed. Sending broadcast.
+1925-06-11 10:58:20 [DEBUG][DISCOVERY] Sending Discovery Broadcast...
+1925-06-11 10:58:20 [DEBUG][NETWORKING] OTImpl_UDPSendAsync: Async UDP send completed
+1925-06-11 10:58:20 [DEBUG][DISCOVERY] Broadcast send initiated asynchronously
+1925-06-11 10:58:20 [DEBUG][NETWORKING] OTImpl_UDPCheckSendStatus: Send completed with result 0
+1925-06-11 10:58:20 [DEBUG][NETWORKING] OTImpl_FreeAsyncHandle: Handle freed
+1925-06-11 10:58:20 [DEBUG][DISCOVERY] PollUDPListener: UDP send completed successfully
+1925-06-11 10:58:21 [INFO][PEER_MGMT] Peer ubuntu@10.188.1.19 timed out.
+1925-06-11 10:58:21 [INFO][PEER_MGMT] Pruned 1 timed-out peer(s).
+1925-06-11 10:58:21 [DEBUG][UI] DialogPeerList_GetSelectedPeer Warning: Selected row 0 is out of bounds or peer became inactive (current active peers: 0).
+1925-06-11 10:58:21 [DEBUG][UI] UpdatePeerDisplayList: gLastSelectedCell.v was -1, but DialogPeerList_GetSelectedPeer failed. No specific peer to preserve.
+1925-06-11 10:58:21 [DEBUG][UI] UpdatePeerDisplayList: Deleted 1 rows from List Manager.
+1925-06-11 10:58:21 [DEBUG][UI] Peer list updated. Active peers: 0. Invalidating list rect.
+1925-06-11 10:58:23 [DEBUG][UI] Broadcast checkbox state: Unchecked
+1925-06-11 10:58:23 [DEBUG][UI] DialogPeerList_GetSelectedPeer: No peer selected (gLastSelectedCell.v = -1).
+1925-06-11 10:58:23 [ERROR][UI] Error: Cannot send, no peer selected in the list or selection invalid.
+1925-06-11 10:58:23 [DEBUG][UI] ActivateInputTE: Activating Input TE.
+1925-06-11 10:58:25 [DEBUG][UI] MainEventLoop: MouseDown inMenuBar.
+1925-06-11 10:58:26 [DEBUG][UI] HandleMenuChoice: menuID=128, menuItem=1
+1925-06-11 10:58:26 HandleMenuChoice: File->Quit selected by user. Setting gDone=true.
+1925-06-11 10:58:26 [DEBUG][SYSTEM] Exited main event loop.
+1925-06-11 10:58:26 Initiating shutdown sequence...
+1925-06-11 10:58:26 No active peers to send QUIT messages to.
+1925-06-11 10:58:26 [DEBUG][UI] Cleaning up Dialog...
+1925-06-11 10:58:26 [DEBUG][UI] Cleaning up Peer List Control...
+1925-06-11 10:58:26 [DEBUG][UI] Peer List Control cleanup finished.
+1925-06-11 10:58:26 [DEBUG][UI] Cleaning up Input TE...
+1925-06-11 10:58:26 [DEBUG][UI] Input TE cleanup finished.
+1925-06-11 10:58:26 [DEBUG][UI] Cleaning up Messages TE...
+1925-06-11 10:58:26 [DEBUG][UI] Messages TE cleanup finished.
+1925-06-11 10:58:26 [DEBUG][UI] Disposing dialog window...
+1925-06-11 10:58:26 [DEBUG][UI] Dialog cleanup complete.
+1925-06-11 10:58:26 [DEBUG][UI] Dialog resources cleaned up.
+1925-06-11 10:58:26 Cleaning up Networking...
+1925-06-11 10:58:26 [DEBUG][MESSAGING] Cleaning up TCP Messaging Subsystem...
+1925-06-11 10:58:26 [DEBUG][MESSAGING] Listen async operation was in progress. Aborting.
+1925-06-11 10:58:26 [DEBUG][NETWORKING] OTImpl_TCPAbort: Cleaning up data endpoint (not persistent listener)
+1925-06-11 10:58:26 [DEBUG][NETWORKING] CleanupAsyncFactory: Cleaning up asynchronous factory pattern
+1925-06-11 10:58:26 [DEBUG][NETWORKING] CleanupAsyncFactory: Factory cleanup complete
+1925-06-11 10:58:26 [DEBUG][NETWORKING] OTImpl_TCPAbort: Listen stream abort complete (persistent listener remains active)
+1925-06-11 10:58:26 [DEBUG][MESSAGING] Releasing TCP Listen Stream...
+1925-06-11 10:58:26 [DEBUG][NETWORKING] OTImpl_TCPRelease: TCP endpoint released
+1925-06-11 10:58:26 [DEBUG][MESSAGING] Releasing TCP Send Stream...
+1925-06-11 10:58:26 [DEBUG][NETWORKING] OTImpl_TCPRelease: TCP endpoint released
+1925-06-11 10:58:26 [DEBUG][MESSAGING] Disposing TCP listen stream receive buffer.
+1925-06-11 10:58:26 [DEBUG][MESSAGING] Disposing TCP send stream receive buffer.
+1925-06-11 10:58:26 [DEBUG][MESSAGING] TCP Messaging Subsystem cleanup finished.
+1925-06-11 10:58:26 [DEBUG][MESSAGING] TCP Messaging Cleaned up.
+1925-06-11 10:58:26 [DEBUG][DISCOVERY] Cleaning up UDP Discovery Endpoint...
+1925-06-11 10:58:26 [DEBUG][DISCOVERY] Cancelling pending UDP read operation...
+1925-06-11 10:58:26 [DEBUG][NETWORKING] OTImpl_UDPCancelAsync: Operation cancelled
+1925-06-11 10:58:26 [DEBUG][DISCOVERY] Releasing UDP endpoint...
+1925-06-11 10:58:26 [DEBUG][NETWORKING] OTImpl_UDPRelease: UDP endpoint released
+1925-06-11 10:58:26 [DEBUG][DISCOVERY] Disposing UDP receive buffer at 0x29B7720.
+1925-06-11 10:58:26 [DEBUG][DISCOVERY] UDP Discovery Endpoint cleanup finished.
+1925-06-11 10:58:26 [DEBUG][DISCOVERY] UDP Discovery Cleaned up.
+1925-06-11 10:58:26 [DEBUG][NETWORKING] Disposing TCP Listen ASR UPP at 0x29D0132.
+1925-06-11 10:58:26 [DEBUG][NETWORKING] Disposing TCP Send ASR UPP at 0x29D01B0.
+1925-06-11 10:58:26 [DEBUG][NETWORKING] OTImpl_Shutdown: OpenTransport shutdown requested
+1925-06-11 10:58:26 [DEBUG][NETWORKING] CleanupPersistentListener: Persistent listener cleaned up
+1925-06-11 10:58:26 [DEBUG][NETWORKING] CleanupOTGlobalBuffers: Global OTRcvConnect buffers cleaned up
+1925-06-11 10:58:26 [INFO][NETWORKING] OT: Shutting down OpenTransport stack...
+1925-06-11 10:58:26 [DEBUG][NETWORKING] OT: Disposing Data Endpoint Notifier UPP...
+1925-06-11 10:58:26 [DEBUG][NETWORKING] OT: Disposing Persistent Listener Notifier UPP...
+1925-06-11 10:58:26 [DEBUG][NETWORKING] OT: Disposing General Notifier UPP...
+1925-06-11 10:58:26 [DEBUG][NETWORKING] OT: Calling CloseOpenTransport()...
+1925-06-11 10:58:26 [INFO][NETWORKING] OT: Shutdown complete.
+1925-06-11 10:58:26 [DEBUG][NETWORKING] ShutdownNetworkAbstraction: Shutting down network abstraction
+1925-06-11 10:58:26 [DEBUG][NETWORKING] ShutdownNetworkAbstraction: Complete
+1925-06-11 10:58:26 Networking cleanup complete.
+1925-06-11 10:58:26 [DEBUG][NETWORKING] Networking stack cleaned up.
+1925-06-11 10:58:26 [DEBUG][SYSTEM] Disposing AEQuitAppUPP.
+1925-06-11 10:58:26 Application terminated gracefully.
+--- [1925-06-11 10:58:26] Log Session Ended ---
+

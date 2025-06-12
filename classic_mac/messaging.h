@@ -7,6 +7,7 @@
 #include <MacTypes.h>
 #include <MacTCP.h>
 #include "common_defs.h"
+#include "network_abstraction.h"
 
 typedef void (*GiveTimePtr)(void);
 
@@ -54,10 +55,14 @@ TCPStreamState GetTCPListenStreamState(void);
 TCPStreamState GetTCPSendStreamState(void);
 int GetQueuedMessageCount(void);
 
+/* GEMINI'S ARCHITECTURAL FIX: Handoff function for OpenTransport factory */
+void Messaging_SetActiveDataStream(NetworkStreamRef dataStreamRef);
+
 /* ASR handlers - use StreamPtr as they're called directly by MacTCP */
 pascal void TCP_Listen_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr,
                                    unsigned short terminReason, struct ICMPReport *icmpMsg);
 pascal void TCP_Send_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr,
                                  unsigned short terminReason, struct ICMPReport *icmpMsg);
+
 
 #endif

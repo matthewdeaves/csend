@@ -71,6 +71,8 @@ typedef struct {
     OSErr(*TCPRelease)(short refNum, NetworkStreamRef streamRef);
     OSErr(*TCPListen)(NetworkStreamRef streamRef, tcp_port localPort,
                       Byte timeout, Boolean async);
+    OSErr(*TCPAcceptConnection)(NetworkStreamRef listenerRef, NetworkStreamRef *dataStreamRef,
+                                ip_addr *remoteHost, tcp_port *remotePort);
     OSErr(*TCPConnect)(NetworkStreamRef streamRef, ip_addr remoteHost,
                        tcp_port remotePort, Byte timeout,
                        NetworkGiveTimeProcPtr giveTime);
@@ -86,6 +88,7 @@ typedef struct {
                      NetworkGiveTimeProcPtr giveTime);
     OSErr(*TCPAbort)(NetworkStreamRef streamRef);
     OSErr(*TCPStatus)(NetworkStreamRef streamRef, NetworkTCPInfo *info);
+    OSErr(*TCPUnbind)(NetworkStreamRef streamRef);
 
     /* Async TCP operations */
     OSErr(*TCPListenAsync)(NetworkStreamRef streamRef, tcp_port localPort,
@@ -128,10 +131,14 @@ typedef struct {
                                  NetworkAsyncHandle *asyncHandle);
     OSErr(*UDPCheckReturnStatus)(NetworkAsyncHandle asyncHandle);
     void (*UDPCancelAsync)(NetworkAsyncHandle asyncHandle);
+    void (*FreeAsyncHandle)(NetworkAsyncHandle asyncHandle);
 
     /* Utility operations */
     OSErr(*ResolveAddress)(const char *hostname, ip_addr *address);
     OSErr(*AddressToString)(ip_addr address, char *addressStr);
+
+    /* Network processing */
+    void (*ProcessConnections)(void);
 
     /* Implementation info */
     const char *(*GetImplementationName)(void);
@@ -147,6 +154,9 @@ OSErr InitNetworkAbstraction(void);
 void ShutdownNetworkAbstraction(void);
 NetworkImplementation GetCurrentNetworkImplementation(void);
 const char *GetNetworkImplementationName(void);
+
+/* Network processing */
+void ProcessNetworkConnections(void);
 
 /* Error translation and handling */
 NetworkError TranslateOSErrToNetworkError(OSErr err);

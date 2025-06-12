@@ -1,0 +1,61 @@
+
+--- [2025-06-11 10:57:15] Log Session Started ---
+2025-06-11 10:57:15 Starting P2P messaging application as 'ubuntu'
+2025-06-11 10:57:15 [INFO][NETWORKING] TCP listener initialized on port 8080
+2025-06-11 10:57:15 [INFO][DISCOVERY] UDP discovery initialized on port 8081
+2025-06-11 10:57:15 [INFO][NETWORKING] Listener thread started
+2025-06-11 10:57:15 [INFO][DISCOVERY] Discovery thread started (local IP: 10.188.1.19)
+2025-06-11 10:57:15 [INFO][SYSTEM] All application threads created successfully.
+2025-06-11 10:57:15 [DEBUG][DISCOVERY] Discovery broadcast sent.
+2025-06-11 10:57:15 [DEBUG][DISCOVERY] Ignored discovery packet from self (10.188.1.19).
+2025-06-11 10:57:16 [DEBUG][DISCOVERY] Received DISCOVERY_RESPONSE from MacUser@10.188.1.102
+2025-06-11 10:57:16 [INFO][PEER_MGMT] Added new peer MacUser@10.188.1.102 at slot 0 (total active peers: 1)
+2025-06-11 10:57:16 [INFO][DISCOVERY] New peer added via RESPONSE: MacUser@10.188.1.102
+2025-06-11 10:57:25 [DEBUG][DISCOVERY] Discovery broadcast sent.
+2025-06-11 10:57:25 [DEBUG][DISCOVERY] Ignored discovery packet from self (10.188.1.19).
+2025-06-11 10:57:25 [DEBUG][DISCOVERY] Received DISCOVERY from MacUser@10.188.1.102
+2025-06-11 10:57:25 [DEBUG][DISCOVERY] Sent DISCOVERY_RESPONSE to 10.188.1.102:8081
+2025-06-11 10:57:25 [DEBUG][PEER_MGMT] Updated existing peer MacUser@10.188.1.102 (total active peers: 1)
+2025-06-11 10:57:25 [DEBUG][DISCOVERY] Existing peer updated via DISCOVERY: MacUser@10.188.1.102
+2025-06-11 10:57:26 Message sent to peer 1 (10.188.1.102)
+2025-06-11 10:57:35 [DEBUG][DISCOVERY] Discovery broadcast sent.
+2025-06-11 10:57:35 [DEBUG][DISCOVERY] Ignored discovery packet from self (10.188.1.19).
+2025-06-11 10:57:35 Broadcasting message: hello to all
+2025-06-11 10:57:36 [DEBUG][DISCOVERY] Received DISCOVERY from MacUser@10.188.1.102
+2025-06-11 10:57:36 [DEBUG][DISCOVERY] Sent DISCOVERY_RESPONSE to 10.188.1.102:8081
+2025-06-11 10:57:40 [ERROR][NETWORKING] Failed to connect to 10.188.1.102:8080 - Operation now in progress
+2025-06-11 10:57:40 [ERROR][MESSAGING] Failed to send broadcast message to 10.188.1.102
+2025-06-11 10:57:40 Broadcast message sent to 0 active peer(s).
+2025-06-11 10:57:40 [DEBUG][PEER_MGMT] Updated existing peer MacUser@10.188.1.102 (total active peers: 1)
+2025-06-11 10:57:40 [DEBUG][DISCOVERY] Existing peer updated via DISCOVERY: MacUser@10.188.1.102
+2025-06-11 10:57:45 [DEBUG][DISCOVERY] Discovery broadcast sent.
+2025-06-11 10:57:45 [DEBUG][DISCOVERY] Ignored discovery packet from self (10.188.1.19).
+2025-06-11 10:57:46 [DEBUG][DISCOVERY] Received DISCOVERY from MacUser@10.188.1.102
+2025-06-11 10:57:46 [DEBUG][DISCOVERY] Sent DISCOVERY_RESPONSE to 10.188.1.102:8081
+2025-06-11 10:57:46 [DEBUG][PEER_MGMT] Updated existing peer MacUser@10.188.1.102 (total active peers: 1)
+2025-06-11 10:57:46 [DEBUG][DISCOVERY] Existing peer updated via DISCOVERY: MacUser@10.188.1.102
+2025-06-11 10:57:55 [DEBUG][DISCOVERY] Discovery broadcast sent.
+2025-06-11 10:57:55 [DEBUG][DISCOVERY] Ignored discovery packet from self (10.188.1.19).
+2025-06-11 10:58:05 [DEBUG][DISCOVERY] Discovery broadcast sent.
+2025-06-11 10:58:05 [DEBUG][DISCOVERY] Ignored discovery packet from self (10.188.1.19).
+2025-06-11 10:58:16 [DEBUG][DISCOVERY] Discovery broadcast sent.
+2025-06-11 10:58:16 [DEBUG][DISCOVERY] Ignored discovery packet from self (10.188.1.19).
+2025-06-11 10:58:26 [DEBUG][DISCOVERY] Discovery broadcast sent.
+2025-06-11 10:58:26 [DEBUG][DISCOVERY] Ignored discovery packet from self (10.188.1.19).
+2025-06-11 10:58:33 [INFO][SYSTEM] Received signal 2. Initiating graceful shutdown...
+2025-06-11 10:58:33 [INFO][DISCOVERY] Discovery thread stopped
+2025-06-11 10:58:33 [INFO][UI] User input thread stopped.
+2025-06-11 10:58:33 [INFO][SYSTEM] User input thread finished. Main thread initiating shutdown...
+2025-06-11 10:58:33 [DEBUG][SYSTEM] Main thread: Waiting for listener thread to join...
+2025-06-11 10:58:33 [INFO][NETWORKING] Listener thread stopped
+2025-06-11 10:58:33 [DEBUG][SYSTEM] Main thread: Listener thread joined.
+2025-06-11 10:58:33 [DEBUG][SYSTEM] Main thread: Waiting for discovery thread to join...
+2025-06-11 10:58:33 [DEBUG][SYSTEM] Main thread: Discovery thread joined.
+2025-06-11 10:58:33 [INFO][SYSTEM] Starting POSIX cleanup...
+2025-06-11 10:58:33 [DEBUG][NETWORKING] Closing TCP socket 4
+2025-06-11 10:58:33 [DEBUG][NETWORKING] Closing UDP socket 5
+2025-06-11 10:58:33 [DEBUG][SYSTEM] Destroying peers mutex
+2025-06-11 10:58:33 [INFO][SYSTEM] POSIX cleanup complete
+2025-06-11 10:58:33 Application terminated gracefully.
+--- [2025-06-11 10:58:33] Log Session Ended ---
+

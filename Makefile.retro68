@@ -57,7 +57,7 @@ endif
 CFLAGS_MAC = -g -w -ffunction-sections -D__MACOS__ -Iclassic_mac -Ishared -I"$(CINCLUDES)" -I"$(UNIVERSAL_CINCLUDES)"
 
 # Linker flags (passed via the compiler driver using -Wl,)
-LDFLAGS_MAC = -Wl,-gc-sections -Wl,--mac-strip-macsbug
+LDFLAGS_MAC = -Wl,-gc-sections -Wl,--mac-strip-macsbug -lOpenTransport -lOpenTransportApp -lOpenTptInet -lInterface
 
 # Rez flags
 REZFLAGS = -I"$(RINCLUDES)" # Quote the path

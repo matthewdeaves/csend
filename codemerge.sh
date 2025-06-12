@@ -25,7 +25,7 @@ show_help() {
     echo
     echo "Options:"
     echo "  -o, --output FILE          Specify output file (default: combined_code.txt)"
-    echo "  -P, --platform PLATFORM    Specify platform: posix, classic, all (default: all)"
+    echo "  -P, --platform PLATFORM    Specify platform: posix, classic, classic-net, all (default: all)"
     echo "  -n, --no-headers           Don't include filename headers"
     echo "  -m, --no-separators        Don't include separator lines between files"
     echo "  -M, --include-makefile     Append root Makefile and Makefile.retro68 content at the end"
@@ -37,6 +37,7 @@ show_help() {
     echo "Examples:"
     echo "  $0 -o posix_for_ai.txt -P posix -M -S"
     echo "  $0 --platform classic --no-separators --no-tree"
+    echo "  $0 --platform classic-net -o networking.txt # Only Classic Mac networking files"
     echo "  $0 -o project_snapshot.txt # Defaults to --platform all and includes tree"
 }
 
@@ -49,10 +50,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -P|--platform)
             platform_arg=$(echo "$2" | tr '[:upper:]' '[:lower:]') # Convert to lowercase
-            if [[ "$platform_arg" == "posix" || "$platform_arg" == "classic" || "$platform_arg" == "all" ]]; then
+            if [[ "$platform_arg" == "posix" || "$platform_arg" == "classic" || "$platform_arg" == "classic-net" || "$platform_arg" == "all" ]]; then
                 platform="$platform_arg"
             else
-                echo "Error: Invalid platform '$2'. Use 'posix', 'classic', or 'all'."
+                echo "Error: Invalid platform '$2'. Use 'posix', 'classic', 'classic-net', or 'all'."
                 exit 1
             fi
             shift 2
@@ -215,6 +216,52 @@ process_hc_directory() {
     return $processed
 }
 
+# Function to process only Classic Mac networking files
+process_classic_net_files() {
+    local dir="$1"
+    local output_target="$2"
+    local use_headers="$3"
+    local use_separator="$4"
+    local sep_line="$5"
+    local processed=0
+
+    if [ ! -d "$dir" ]; then
+        echo "Info: Directory '$dir' does not exist, skipping."
+        return 0
+    fi
+
+    echo "Processing Classic Mac networking files in directory: $dir"
+
+    # Define the specific networking files
+    local net_files=(
+        "messaging.h"
+        "messaging.c"
+        "network_abstraction.h"
+        "network_abstraction.c"
+        "network_init.h"
+        "network_init.c"
+        "opentransport_impl.h"
+        "opentransport_impl.c"
+        "tcp_state_handlers.h"
+        "tcp_state_handlers.c"
+        "mactcp_impl.h"
+        "mactcp_impl.c"
+    )
+
+    # Process each file in order
+    for file_name in "${net_files[@]}"; do
+        local file_path="$dir/$file_name"
+        if [ -f "$file_path" ]; then
+            append_file_content "$file_path" "$output_target" "$use_headers" "$use_separator" "$sep_line"
+            ((processed++))
+        else
+            echo "Warning: Expected file '$file_path' not found, skipping."
+        fi
+    done
+
+    return $processed
+}
+
 
 # --- Main Processing ---
 
@@ -227,21 +274,21 @@ if [ "$strip_comments" = true ]; then echo "Stripping comments from .c/.h: Yes (
 tree_output_added=false
 if [ "$include_tree" = true ]; then
     # Construct the ignore pattern dynamically to include the output file name and exclude .sh files
-    ignore_pattern="build|obj|tools|misc|csend_venv|doxygen_docs|images|logs|__pycache__|Books|*.md|*.sh|$output_file"
+    ignore_pattern="build|obj|tools|misc|csend_venv|doxygen_docs|images|logs|__pycache__|Books|Retro68Reference|*.md|*.sh|$output_file"
 
     if command -v tree &> /dev/null; then
         echo "Adding project structure (tree .)..."
         {
             echo "#===================================="
             echo "# Project Structure (tree .)"
-            echo "# Excluded: build/, obj/, tools/, misc/, *.md, *.sh, $output_file"
+            echo "# Excluded: build/, obj/, tools/, misc/, Retro68Reference/, *.md, *.sh, $output_file"
             echo "#===================================="
 
             # Use the dynamically constructed ignore pattern
             if ! tree_output=$(tree -I "$ignore_pattern" . 2>/dev/null) || [ -z "$tree_output" ]; then
                 echo "# Tree command failed or produced no output. Using simple directory listing:"
                 echo "# Main directories (excluding build, obj, tools, misc):"
-                find . -type d -maxdepth 1 -not -path "*/\.*" -not -path "./build" -not -path "./obj" -not -path "./tools" -not -path "./misc" -not -path "./Books" -not -path "./images" -not -path "./doxygen_docs" | sort
+                find . -type d -maxdepth 1 -not -path "*/\.*" -not -path "./build" -not -path "./obj" -not -path "./tools" -not -path "./misc" -not -path "./Books" -not -path "./Retro68Reference" -not -path "./images" -not -path "./doxygen_docs" | sort
                 echo "# ----------------"
                 echo "# Files in root (excluding .md, .sh, $output_file):"
                 find . -type f -maxdepth 1 -not -path "*/\.*" -not -name '*.md' -not -name '*.sh' -not -name "$output_file" | sort
@@ -257,10 +304,10 @@ if [ "$include_tree" = true ]; then
         {
             echo "#===================================="
             echo "# Project Structure (simple directory listing)"
-            echo "# Excluded: build/, obj/, tools/, misc/, *.md, *.sh, $output_file"
+            echo "# Excluded: build/, obj/, tools/, misc/, Retro68Reference/, *.md, *.sh, $output_file"
             echo "#===================================="
             echo "# Main directories (excluding build, obj, tools, misc):"
-            find . -type d -maxdepth 1 -not -path "*/\.*" -not -path "./build" -not -path "./obj" -not -path "./tools" -not -path "./misc" -not -path "./Books" -not -path "./images" -not -path "./doxygen_docs" | sort
+            find . -type d -maxdepth 1 -not -path "*/\.*" -not -path "./build" -not -path "./obj" -not -path "./tools" -not -path "./misc" -not -path "./Books" -not -path "./Retro68Reference" -not -path "./images" -not -path "./doxygen_docs" | sort
             echo "# ----------------"
             echo "# Files in root (excluding .md, .sh, $output_file):"
             find . -type f -maxdepth 1 -not -path "*/\.*" -not -name '*.md' -not -name '*.sh' -not -name "$output_file" | sort
@@ -277,10 +324,12 @@ processed_posix=0
 processed_classic_hc=0 # C and H files for classic
 processed_classic_r=0  # .r files for classic
 
-# 1. Process Shared Files
-process_hc_directory "shared" "$output_file" "$include_headers" "$add_separator" "$separator_line"
-processed_shared=$?
-total_processed_count=$((total_processed_count + processed_shared))
+# 1. Process Shared Files (skip for classic-net which only wants specific networking files)
+if [[ "$platform" != "classic-net" ]]; then
+    process_hc_directory "shared" "$output_file" "$include_headers" "$add_separator" "$separator_line"
+    processed_shared=$?
+    total_processed_count=$((total_processed_count + processed_shared))
+fi
 
 # 2. Process POSIX Files
 if [[ "$platform" == "posix" || "$platform" == "all" ]]; then
@@ -306,6 +355,11 @@ if [[ "$platform" == "classic" || "$platform" == "all" ]]; then
     done < <(find "classic_mac" -maxdepth 1 -name '*.r' 2>/dev/null | sort)
     total_processed_count=$((total_processed_count + processed_classic_r))
 
+elif [[ "$platform" == "classic-net" ]]; then
+    # Process only Classic Mac networking files
+    process_classic_net_files "classic_mac" "$output_file" "$include_headers" "$add_separator" "$separator_line"
+    processed_classic_hc=$?
+    total_processed_count=$((total_processed_count + processed_classic_hc))
 fi
 
 # 4. Append Makefiles if requested (never strip comments)

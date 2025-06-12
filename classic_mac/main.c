@@ -1,4 +1,5 @@
 #include <MacTypes.h>
+
 #include <Quickdraw.h>
 #include <Fonts.h>
 #include <Events.h>
@@ -263,10 +264,16 @@ void MainEventLoop(void)
 {
     EventRecord event;
     Boolean gotEvent;
-    long sleepTime = 1L;
+    long sleepTime = 15L; /* 15 ticks = 250ms, optimal for TextEdit per Inside Macintosh */
+    static unsigned long lastIdleTime = 0;
     while (!gDone) {
-        if (gMessagesTE != NULL) TEIdle(gMessagesTE);
-        IdleInputTE();
+        /* Only call TEIdle at cursor blink rate (15 ticks) to reduce updates */
+        unsigned long currentTime = TickCount();
+        if (currentTime - lastIdleTime >= 15) {
+            if (gMessagesTE != NULL) TEIdle(gMessagesTE);
+            IdleInputTE();
+            lastIdleTime = currentTime;
+        }
         HandleIdleTasks();
         gotEvent = WaitNextEvent(everyEvent, &event, sleepTime, NULL);
         if (gotEvent) {
@@ -384,6 +391,14 @@ void HandleIdleTasks(void)
     PollUDPListener(gMacTCPRefNum, gMyLocalIP);
     ProcessTCPStateMachine(YieldTimeToSystem);
     CheckSendBroadcast(gMacTCPRefNum, gMyUsername, gMyLocalIPStr);
+    
+    /* Process network connections - abstracted to avoid header conflicts */
+    ProcessNetworkConnections();
+    
+    /* Process OpenTransport factory connections */
+    if (gNetworkOps != NULL && gNetworkOps->ProcessConnections != NULL) {
+        gNetworkOps->ProcessConnections();
+    }
     if (gLastPeerListUpdateTime == 0 ||
             (currentTimeTicks < gLastPeerListUpdateTime) ||
             (currentTimeTicks - gLastPeerListUpdateTime) >= kPeerListUpdateIntervalTicks) {
@@ -448,7 +463,13 @@ void HandleEvent(EventRecord *event)
         BeginUpdate(whichWindow);
         if (whichWindow == (WindowPtr)gMainWindow) {
             DrawDialog(whichWindow);
-            UpdateDialogControls();
+            /* Throttle dialog control updates to reduce excessive redraws */
+            static unsigned long lastUpdateTime = 0;
+            unsigned long currentTime = TickCount();
+            if (currentTime - lastUpdateTime >= 6) { /* ~100ms throttle */
+                UpdateDialogControls();
+                lastUpdateTime = currentTime;
+            }
         } else {
         }
         EndUpdate(whichWindow);

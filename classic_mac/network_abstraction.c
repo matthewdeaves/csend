@@ -4,6 +4,7 @@
 
 #include "network_abstraction.h"
 #include "mactcp_impl.h"
+#include "opentransport_impl.h"
 #include "../shared/logging.h"
 #include <Gestalt.h>
 #include <string.h>
@@ -14,11 +15,20 @@
 NetworkOperations *gNetworkOps = NULL;
 NetworkImplementation gCurrentNetworkImpl = NETWORK_IMPL_NONE;
 
-/* Check if OpenTransport is available (stub for now) */
+/* Check if OpenTransport is available using proper detection */
 static Boolean IsOpenTransportAvailable(void)
 {
-    /* TODO: Implement OpenTransport detection when adding OT support */
-    /* For now, always return false to use MacTCP */
+    /* Use the OpenTransport implementation's IsAvailable function */
+    /* This will use InitOpenTransport() as per Apple's documentation */
+    NetworkOperations *otOps = GetOpenTransportOperations();
+    if (otOps != NULL && otOps->IsAvailable != NULL) {
+        Boolean available = otOps->IsAvailable();
+        log_debug_cat(LOG_CAT_NETWORKING, "IsOpenTransportAvailable: OpenTransport availability = %s",
+                      available ? "true" : "false");
+        return available;
+    }
+
+    log_debug_cat(LOG_CAT_NETWORKING, "IsOpenTransportAvailable: Failed to get OpenTransport operations table");
     return false;
 }
 
@@ -34,13 +44,12 @@ OSErr InitNetworkAbstraction(void)
         return noErr;
     }
 
-    /* Determine which implementation to use */
+    /* Determine which implementation to use - prefer OpenTransport if available */
     if (IsOpenTransportAvailable()) {
-        /* TODO: Initialize OpenTransport implementation */
-        log_debug_cat(LOG_CAT_NETWORKING, "InitNetworkAbstraction: OpenTransport detected but not yet implemented");
-        gCurrentNetworkImpl = NETWORK_IMPL_MACTCP; /* Fall back to MacTCP for now */
+        log_info_cat(LOG_CAT_NETWORKING, "InitNetworkAbstraction: OpenTransport detected, using OpenTransport implementation");
+        gCurrentNetworkImpl = NETWORK_IMPL_OPENTRANSPORT;
     } else {
-        log_info_cat(LOG_CAT_NETWORKING, "InitNetworkAbstraction: Using MacTCP implementation");
+        log_info_cat(LOG_CAT_NETWORKING, "InitNetworkAbstraction: OpenTransport not available, using MacTCP implementation");
         gCurrentNetworkImpl = NETWORK_IMPL_MACTCP;
     }
 
@@ -55,9 +64,12 @@ OSErr InitNetworkAbstraction(void)
         break;
 
     case NETWORK_IMPL_OPENTRANSPORT:
-        /* TODO: gNetworkOps = GetOpenTransportOperations(); */
-        log_app_event("Fatal: OpenTransport not yet implemented");
-        return unimpErr;
+        gNetworkOps = GetOpenTransportOperations();
+        if (gNetworkOps == NULL) {
+            log_app_event("Fatal: Failed to get OpenTransport operations table");
+            return memFullErr;
+        }
+        break;
 
     case NETWORK_IMPL_NONE:
         log_app_event("Fatal: Network implementation not selected");
@@ -277,5 +289,13 @@ void LogNetworkError(const char *context, OSErr err)
         log_app_event("%s: MacTCP error %d - %s", context, err, errStr);
     } else {
         log_app_event("%s: %s (MacTCP error %d)", context, errStr, err);
+    }
+}
+
+/* Process network connections through abstraction layer */
+void ProcessNetworkConnections(void)
+{
+    if (gNetworkOps != NULL && gNetworkOps->ProcessConnections != NULL) {
+        gNetworkOps->ProcessConnections();
     }
 }

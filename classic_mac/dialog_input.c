@@ -80,19 +80,13 @@ void HandleInputTEUpdate(DialogPtr dialog)
         GetPort(&oldPort);
         SetPort((GrafPtr)GetWindowPort(dialog));
         GetDialogItem(dialog, kInputTextEdit, &itemTypeIgnored, &itemHandleIgnored, &userItemRect);
-        log_debug_cat(LOG_CAT_UI, "HandleInputTEUpdate: UserItemRect for kInputTextEdit is (%d,%d,%d,%d)",
-                      userItemRect.top, userItemRect.left, userItemRect.bottom, userItemRect.right);
         FrameRect(&userItemRect);
-        log_debug_cat(LOG_CAT_UI, "HandleInputTEUpdate: FrameRect called.");
         SignedByte teState = HGetState((Handle)gInputTE);
         HLock((Handle)gInputTE);
         if (*gInputTE != NULL) {
             teActualViewRect = (**gInputTE).viewRect;
             EraseRect(&teActualViewRect);
-            log_debug_cat(LOG_CAT_UI, "HandleInputTEUpdate: EraseRect called for TE's viewRect (%d,%d,%d,%d)",
-                          teActualViewRect.top, teActualViewRect.left, teActualViewRect.bottom, teActualViewRect.right);
             TEUpdate(&teActualViewRect, gInputTE);
-            log_debug_cat(LOG_CAT_UI, "HandleInputTEUpdate: TEUpdate called.");
         } else {
             log_debug_cat(LOG_CAT_UI, "HandleInputTEUpdate ERROR: gInputTE deref failed after HLock!");
         }
@@ -154,12 +148,14 @@ void ClearInputText(void)
         if (*gInputTE != NULL) {
             TESetText((Ptr)"", 0, gInputTE);
             TECalText(gInputTE);
+            TESetSelect(0, 0, gInputTE);
         } else {
             log_debug_cat(LOG_CAT_UI, "ClearInputText Error: gInputTE deref failed!");
         }
         HSetState((Handle)gInputTE, teState);
         log_debug_cat(LOG_CAT_UI, "Input field cleared.");
         if (gMainWindow != NULL) {
+            /* Force immediate visual update of the input field */
             HandleInputTEUpdate(gMainWindow);
         }
     }

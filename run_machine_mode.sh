@@ -5,7 +5,7 @@
 USERNAME="${1:-claude}"
 MODE="json"
 LOG_LEVEL="info"
-VENV_DIR="csend_venv"
+VENV_DIR="venv"
 
 # Function to setup virtual environment
 setup_venv() {
@@ -24,15 +24,26 @@ setup_venv() {
     echo "Activating virtual environment..."
     source "$VENV_DIR/bin/activate"
     
-    # Check if anthropic is installed
-    if ! python3 -c "import anthropic" 2>/dev/null; then
-        echo "Installing required packages..."
-        pip install anthropic
+    # Install packages from requirements.txt if available, otherwise install anthropic
+    if [ -f "requirements.txt" ]; then
+        echo "Installing packages from requirements.txt..."
+        pip install -r requirements.txt
         if [ $? -ne 0 ]; then
-            echo "Error: Failed to install anthropic package"
+            echo "Error: Failed to install packages from requirements.txt"
             exit 1
         fi
         echo "Package installation complete!"
+    else
+        # Check if anthropic is installed (fallback for compatibility)
+        if ! python3 -c "import anthropic" 2>/dev/null; then
+            echo "Installing required packages..."
+            pip install anthropic
+            if [ $? -ne 0 ]; then
+                echo "Error: Failed to install anthropic package"
+                exit 1
+            fi
+            echo "Package installation complete!"
+        fi
     fi
 }
 

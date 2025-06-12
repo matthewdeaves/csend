@@ -22,7 +22,7 @@ void handle_listen_connected_in_state(GiveTimePtr giveTime);
 void handle_listen_unexpected_state(GiveTimePtr giveTime);
 
 /* Helper functions for listen stream */
-Boolean should_wait_for_stream_reset(void);
+/* REMOVED: Boolean should_wait_for_stream_reset(void); - reset logic eliminated */
 void process_listen_async_completion(GiveTimePtr giveTime);
 void check_for_incoming_data(GiveTimePtr giveTime);
 void handle_connection_accepted(ip_addr remote_ip, tcp_port remote_port, GiveTimePtr giveTime);
