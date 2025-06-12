@@ -102,6 +102,10 @@ static Boolean gFactoryInitialized = false;
 static Boolean gOTInitialized = false;
 static Boolean gPendingConnectionsNeedProcessing = false;
 
+// UDP Async State
+static Boolean gUDPDataAvailable = false;
+static OTUDPEndpoint *gPendingUDPEndpoint = NULL;
+
 
 // MARK: - Forward Declarations
 
@@ -157,8 +161,29 @@ static void OTImpl_TCPCancelAsync(NetworkAsyncHandle asyncHandle) { (void)asyncH
 static OSErr OTImpl_UDPReturnBuffer(NetworkEndpointRef endpointRef, Ptr buffer, unsigned short bufferSize, Boolean async) { (void)endpointRef; (void)buffer; (void)bufferSize; (void)async; return noErr; } // No-op in OT
 static OSErr OTImpl_UDPSendAsync(NetworkEndpointRef endpointRef, ip_addr remoteHost, udp_port remotePort, Ptr data, unsigned short length, NetworkAsyncHandle *asyncHandle) { (void)asyncHandle; return OTImpl_UDPSend(endpointRef, remoteHost, remotePort, data, length); }
 static OSErr OTImpl_UDPCheckSendStatus(NetworkAsyncHandle asyncHandle) { (void)asyncHandle; return noErr; }
-static OSErr OTImpl_UDPReceiveAsync(NetworkEndpointRef endpointRef, NetworkAsyncHandle *asyncHandle) { (void)endpointRef; (void)asyncHandle; return kOTNotSupportedErr; }
-static OSErr OTImpl_UDPCheckAsyncStatus(NetworkAsyncHandle asyncHandle, ip_addr *remoteHost, udp_port *remotePort, Ptr *dataPtr, unsigned short *dataLength) { (void)asyncHandle; (void)remoteHost; (void)remotePort; (void)dataPtr; (void)dataLength; return kOTNotSupportedErr; }
+static OSErr OTImpl_UDPReceiveAsync(NetworkEndpointRef endpointRef, NetworkAsyncHandle *asyncHandle) {
+    if (!endpointRef || !asyncHandle) return paramErr;
+    
+    /* For OpenTransport UDP, async receive is always "ready" - the notifier tells us when data arrives */
+    *asyncHandle = (NetworkAsyncHandle)endpointRef;
+    return noErr;
+}
+static OSErr OTImpl_UDPCheckAsyncStatus(NetworkAsyncHandle asyncHandle, ip_addr *remoteHost, udp_port *remotePort, Ptr *dataPtr, unsigned short *dataLength) {
+    OTUDPEndpoint *udpContext = (OTUDPEndpoint*)asyncHandle;
+    if (!udpContext || !gUDPDataAvailable || gPendingUDPEndpoint != udpContext) {
+        return kOTNoDataErr;
+    }
+    
+    /* Data is available, call synchronous receive to get it */
+    OSErr result = OTImpl_UDPReceive((NetworkEndpointRef)udpContext, remoteHost, remotePort, 
+                                     udpContext->receiveBuffer, dataLength, false);
+    if (result == noErr) {
+        *dataPtr = udpContext->receiveBuffer;
+        gUDPDataAvailable = false;
+        gPendingUDPEndpoint = NULL;
+    }
+    return result;
+}
 static OSErr OTImpl_UDPReturnBufferAsync(NetworkEndpointRef endpointRef, Ptr buffer, unsigned short bufferSize, NetworkAsyncHandle *asyncHandle) { (void)endpointRef; (void)buffer; (void)bufferSize; (void)asyncHandle; return noErr; }
 static OSErr OTImpl_UDPCheckReturnStatus(NetworkAsyncHandle asyncHandle) { (void)asyncHandle; return noErr; }
 static void OTImpl_UDPCancelAsync(NetworkAsyncHandle asyncHandle) { (void)asyncHandle; }
@@ -713,9 +738,11 @@ static pascal void OTDataEndpointNotifier(void *contextPtr, OTEventCode code, OT
 }
 
 static pascal void OTUDPNotifier(void *contextPtr, OTEventCode code, OTResult result, void *cookie) {
-    (void)contextPtr; (void)result; (void)cookie;
-    if (code == T_DATA) {
-        // This signals the main loop to call OTImpl_UDPReceive
+    OTUDPEndpoint *udpContext = (OTUDPEndpoint*)contextPtr;
+    (void)result; (void)cookie;
+    if (code == T_DATA && udpContext) {
+        gUDPDataAvailable = true;
+        gPendingUDPEndpoint = udpContext;
     }
 }
 
