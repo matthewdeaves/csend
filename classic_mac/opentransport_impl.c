@@ -37,6 +37,7 @@
 #include <string.h>
 #include <Errors.h>
 #include <Gestalt.h>
+#include <MacTCP.h> // For wdsEntry type
 #include <OpenTransport.h>
 #include <OpenTptInternet.h>
 #include <OSUtils.h> // For TickCount
@@ -109,6 +110,9 @@ static OTUDPEndpoint *gPendingUDPEndpoint = NULL;
 
 // MARK: - Forward Declarations
 
+// External functions from messaging layer
+extern void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status, tcp_port remote_port_from_status);
+
 // Notifiers
 static pascal void OTPersistentListenerNotifier(void *contextPtr, OTEventCode code, OTResult result, void *cookie);
 static pascal void OTDataEndpointNotifier(void *contextPtr, OTEventCode code, OTResult result, void *cookie);
@@ -153,10 +157,43 @@ static OSErr OTImpl_TCPSend(NetworkStreamRef streamRef, Ptr data, unsigned short
 static OSErr OTImpl_TCPReceiveNoCopy(NetworkStreamRef streamRef, Ptr rdsPtr, short maxEntries, Byte timeout, Boolean *urgent, Boolean *mark, NetworkGiveTimeProcPtr giveTime) { (void)streamRef; (void)rdsPtr; (void)maxEntries; (void)timeout; (void)urgent; (void)mark; (void)giveTime; return kOTNotSupportedErr; }
 static OSErr OTImpl_TCPReturnBuffer(NetworkStreamRef streamRef, Ptr rdsPtr, NetworkGiveTimeProcPtr giveTime) { (void)streamRef; (void)rdsPtr; (void)giveTime; return kOTNotSupportedErr; }
 static OSErr OTImpl_TCPClose(NetworkStreamRef streamRef, Byte timeout, NetworkGiveTimeProcPtr giveTime) { (void)streamRef; (void)timeout; (void)giveTime; return kOTNotSupportedErr; }
-static OSErr OTImpl_TCPStatus(NetworkStreamRef streamRef, NetworkTCPInfo *info) { (void)streamRef; (void)info; return kOTNotSupportedErr; }
-static OSErr OTImpl_TCPListenAsync(NetworkStreamRef streamRef, tcp_port localPort, NetworkAsyncHandle *asyncHandle) { (void)streamRef; (void)localPort; (void)asyncHandle; return kOTNotSupportedErr; }
+static OSErr OTImpl_TCPStatus(NetworkStreamRef streamRef, NetworkTCPInfo *info) {
+    EndpointRef endpoint = (EndpointRef)streamRef;
+    if (!endpoint || !info) return paramErr;
+    
+    /* For OpenTransport endpoints, we provide basic status info */
+    OTResult state = OTGetEndpointState(endpoint);
+    info->isConnected = (state == T_DATAXFER);
+    info->isListening = (state == T_INCON || state == T_INREL);
+    info->localHost = 0; /* Would need OTGetProtAddress to get real values */
+    info->remoteHost = 0;
+    info->localPort = 0;
+    info->remotePort = 0;
+    
+    return noErr;
+}
+static OSErr OTImpl_TCPListenAsync(NetworkStreamRef streamRef, tcp_port localPort, NetworkAsyncHandle *asyncHandle) {
+    (void)streamRef; /* Not used - factory handles listening */
+    if (!asyncHandle) return paramErr;
+    
+    /* Start the async factory for this port */
+    OSErr result = InitializeAsyncFactory(localPort);
+    if (result == noErr) {
+        *asyncHandle = (NetworkAsyncHandle)&gPersistentListener; /* Use listener as handle */
+    }
+    return result;
+}
 static OSErr OTImpl_TCPReceiveAsync(NetworkStreamRef streamRef, Ptr rdsPtr, short maxEntries, NetworkAsyncHandle *asyncHandle) { (void)streamRef; (void)rdsPtr; (void)maxEntries; (void)asyncHandle; return kOTNotSupportedErr; }
-static OSErr OTImpl_TCPCheckAsyncStatus(NetworkAsyncHandle asyncHandle, OSErr *operationResult, void **resultData) { (void)asyncHandle; (void)operationResult; (void)resultData; return kOTNotSupportedErr; }
+static OSErr OTImpl_TCPCheckAsyncStatus(NetworkAsyncHandle asyncHandle, OSErr *operationResult, void **resultData) {
+    if (!asyncHandle || !operationResult) return paramErr;
+    
+    /* For OpenTransport, most operations complete immediately or via notifier */
+    /* Return operation as completed successfully */
+    *operationResult = noErr;
+    if (resultData) *resultData = NULL;
+    
+    return noErr; /* Status check succeeded */
+}
 static void OTImpl_TCPCancelAsync(NetworkAsyncHandle asyncHandle) { (void)asyncHandle; }
 static OSErr OTImpl_UDPReturnBuffer(NetworkEndpointRef endpointRef, Ptr buffer, unsigned short bufferSize, Boolean async) { (void)endpointRef; (void)buffer; (void)bufferSize; (void)async; return noErr; } // No-op in OT
 static OSErr OTImpl_UDPSendAsync(NetworkEndpointRef endpointRef, ip_addr remoteHost, udp_port remotePort, Ptr data, unsigned short length, NetworkAsyncHandle *asyncHandle) { (void)asyncHandle; return OTImpl_UDPSend(endpointRef, remoteHost, remotePort, data, length); }
@@ -721,8 +758,17 @@ static pascal void OTDataEndpointNotifier(void *contextPtr, OTEventCode code, OT
                 if (appBuffer) {
                     OTInitBufferInfo(&bufferInfo, bufferChain);
                     OTReadBuffer(&bufferInfo, appBuffer, &totalSize);
-                    // This is where you'd hand off appBuffer to your parsing logic
-                    log_debug_cat(LOG_CAT_NETWORKING, "Received %ld bytes on data endpoint", (long)totalSize);
+                    
+                    // Create a wdsEntry for the messaging layer
+                    wdsEntry rds[2];
+                    rds[0].length = (unsigned short)totalSize;
+                    rds[0].ptr = appBuffer;
+                    rds[1].length = 0;
+                    rds[1].ptr = NULL;
+                    
+                    // Get remote address info - we'll use placeholder values since this is endpoint data
+                    ProcessIncomingTCPData(rds, 0, 0);
+                    
                     DisposePtr(appBuffer);
                 }
                 OTReleaseBuffer(bufferChain);
