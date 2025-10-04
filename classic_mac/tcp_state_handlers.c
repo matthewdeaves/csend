@@ -97,8 +97,14 @@ void process_listen_async_completion(GiveTimePtr giveTime)
     if (err == noErr && operationResult == noErr) {
         /* Get connection info from async result data (TCPPassiveOpen params) */
         if (resultData != NULL) {
-            /* resultData points to csParam.open which has remoteHost/remotePort filled in */
+            /* resultData points to csParam.open (TCPOpenPB structure) */
+            /* Layout: ulpTimeoutValue, ulpTimeoutAction, validityFlags, commandTimeoutValue (4 bytes),
+             * then remoteHost (4 bytes), remotePort (2 bytes) */
             struct {
+                unsigned char ulpTimeoutValue;
+                unsigned char ulpTimeoutAction;
+                unsigned char validityFlags;
+                unsigned char commandTimeoutValue;
                 unsigned long remoteHost;
                 unsigned short remotePort;
             } *openParams = resultData;
