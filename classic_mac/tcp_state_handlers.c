@@ -158,14 +158,9 @@ void handle_connection_accepted(ip_addr remote_ip, tcp_port remote_port, GiveTim
         }
     }
 
-    /* CRITICAL FIX: Immediately close connection and return to listening
-     * This allows the listen stream to accept new connections immediately
-     * instead of staying in CONNECTED_IN state which blocks new connections */
-    log_debug_cat(LOG_CAT_MESSAGING, "Closing connection to free listen stream for next connection");
-    gNetworkOps->TCPAbort(gTCPListenStream);
-    gTCPListenState = TCP_STATE_IDLE;
-    gListenStreamNeedsReset = true;
-    gListenStreamResetTime = TickCount();
+    /* After reading initial data, the stream will stay in CONNECTED_IN state
+     * check_for_incoming_data() will handle subsequent data and connection close
+     * This allows proper TCP shutdown instead of abrupt abort */
 }
 
 /* Handle LISTENING state - check for incoming connections */

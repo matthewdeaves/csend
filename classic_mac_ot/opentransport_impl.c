@@ -440,12 +440,19 @@ EndpointRef AcquireEndpointFromPool(void)
 void ReleaseEndpointToPool(EndpointRef endpoint)
 {
     int i;
+    OTResult state;
 
     for (i = 0; i < gPoolSize; i++) {
         if (gEndpointPool[i].endpoint == endpoint) {
-            /* Unbind the endpoint asynchronously to recycle it */
-            if (gEndpointPool[i].bound) {
-                OTUnbind(endpoint);
+            /* Check endpoint state and reset to T_UNINIT for reuse */
+            state = OTGetEndpointState(endpoint);
+
+            /* If endpoint is in any connected/bound state, unbind it */
+            if (state != T_UNINIT && state != T_UNBND) {
+                OSStatus err = OTUnbind(endpoint);
+                if (err != noErr) {
+                    log_debug_cat(LOG_CAT_NETWORKING, "OTUnbind warning for pool endpoint %d: %ld (state was %ld)", i, err, state);
+                }
                 gEndpointPool[i].bound = false;
             }
 
@@ -514,13 +521,7 @@ void HandleIncomingConnection(EndpointRef listener)
         HandleIncomingTCPData(connEp);
     }
 
-    /* Send orderly disconnect before recycling */
-    OTSndOrderlyDisconnect(connEp);
-
-    /* Give a moment for disconnect to complete */
-    Delay(1, NULL); /* 1 tick = ~17ms */
-
-    /* Release the endpoint back to the pool for reuse */
+    /* ReleaseEndpointToPool will handle unbinding/disconnecting the endpoint */
     ReleaseEndpointToPool(connEp);
     log_debug_cat(LOG_CAT_NETWORKING, "Released connection endpoint back to pool");
 }
