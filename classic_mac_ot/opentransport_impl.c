@@ -444,16 +444,50 @@ void ReleaseEndpointToPool(EndpointRef endpoint)
 
     for (i = 0; i < gPoolSize; i++) {
         if (gEndpointPool[i].endpoint == endpoint) {
-            /* Check endpoint state and reset to T_UNINIT for reuse */
+            /* Check endpoint state and perform proper disconnect sequence */
             state = OTGetEndpointState(endpoint);
 
-            /* If endpoint is in any connected/bound state, unbind it */
+            /* Handle orderly disconnect for connected endpoints */
+            if (state == T_DATAXFER || state == T_INREL || state == T_OUTREL) {
+                /* Check for pending events first */
+                OTResult lookResult = OTLook(endpoint);
+                if (lookResult == T_ORDREL) {
+                    /* Remote side initiated orderly disconnect, acknowledge it */
+                    OTRcvOrderlyDisconnect(endpoint);
+                }
+
+                /* If still in data transfer state, initiate orderly disconnect */
+                state = OTGetEndpointState(endpoint);
+                if (state == T_DATAXFER || state == T_INREL) {
+                    OSStatus err = OTSndOrderlyDisconnect(endpoint);
+                    if (err == noErr) {
+                        /* Wait briefly for disconnect to complete */
+                        int retries = 10;  /* ~100ms */
+                        while (retries-- > 0) {
+                            lookResult = OTLook(endpoint);
+                            if (lookResult == T_ORDREL) {
+                                OTRcvOrderlyDisconnect(endpoint);
+                                break;
+                            }
+                            /* Brief delay to allow disconnect to complete */
+                            state = OTGetEndpointState(endpoint);
+                            if (state == T_IDLE || state == T_UNBND) {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            /* Now unbind if needed */
+            state = OTGetEndpointState(endpoint);
             if (state != T_UNINIT && state != T_UNBND) {
                 OSStatus err = OTUnbind(endpoint);
                 if (err != noErr) {
                     log_debug_cat(LOG_CAT_NETWORKING, "OTUnbind warning for pool endpoint %d: %ld (state was %ld)", i, err, state);
+                } else {
+                    gEndpointPool[i].bound = false;
                 }
-                gEndpointPool[i].bound = false;
             }
 
             gEndpointPool[i].inUse = false;
