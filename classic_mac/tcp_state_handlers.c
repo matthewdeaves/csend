@@ -95,12 +95,17 @@ void process_listen_async_completion(GiveTimePtr giveTime)
     gListenAsyncHandle = NULL;
 
     if (err == noErr && operationResult == noErr) {
-        /* Get connection info */
-        NetworkTCPInfo tcpInfo;
-        if (gNetworkOps->TCPStatus(gTCPListenStream, &tcpInfo) == noErr) {
-            handle_connection_accepted(tcpInfo.remoteHost, tcpInfo.remotePort, giveTime);
+        /* Get connection info from async result data (TCPPassiveOpen params) */
+        if (resultData != NULL) {
+            /* resultData points to csParam.open which has remoteHost/remotePort filled in */
+            struct {
+                unsigned long remoteHost;
+                unsigned short remotePort;
+            } *openParams = resultData;
+
+            handle_connection_accepted(openParams->remoteHost, openParams->remotePort, giveTime);
         } else {
-            log_app_event("TCPStatus failed after listen accept");
+            log_app_event("No connection info after listen accept");
             gTCPListenState = TCP_STATE_IDLE;
         }
     } else {

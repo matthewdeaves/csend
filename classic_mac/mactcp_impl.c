@@ -1339,8 +1339,8 @@ static OSErr MacTCPImpl_TCPCheckAsyncStatus(NetworkAsyncHandle asyncHandle,
             break;
 
         case TCP_ASYNC_LISTEN:
-            /* For listen, no additional data */
-            *resultData = NULL;
+            /* For listen, return pointer to open params containing remote host/port */
+            *resultData = (void *)&op->pb.csParam.open;
             break;
 
         default:

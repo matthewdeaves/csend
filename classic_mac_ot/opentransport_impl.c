@@ -444,54 +444,51 @@ void ReleaseEndpointToPool(EndpointRef endpoint)
 
     for (i = 0; i < gPoolSize; i++) {
         if (gEndpointPool[i].endpoint == endpoint) {
-            /* Check endpoint state and perform proper disconnect sequence */
+            /* Check endpoint state */
             state = OTGetEndpointState(endpoint);
+            log_debug_cat(LOG_CAT_NETWORKING, "Releasing endpoint %d (state %ld)", i, state);
 
-            /* Handle orderly disconnect for connected endpoints */
-            if (state == T_DATAXFER || state == T_INREL || state == T_OUTREL) {
-                /* Check for pending events first */
-                OTResult lookResult = OTLook(endpoint);
-                if (lookResult == T_ORDREL) {
-                    /* Remote side initiated orderly disconnect, acknowledge it */
-                    OTRcvOrderlyDisconnect(endpoint);
-                }
+            /* If endpoint is connected, disconnect it to return to T_IDLE/T_UNBND */
+            if (state == T_DATAXFER || state == T_INREL || state == T_OUTREL || state == T_INCON || state == T_OUTCON) {
+                /* Use abortive disconnect - it's immediate and returns endpoint to T_IDLE */
+                OSStatus err = OTSndDisconnect(endpoint, NULL);
+                if (err == noErr) {
+                    /* OTSndDisconnect immediately places endpoint in T_IDLE state */
+                    state = OTGetEndpointState(endpoint);
+                    log_debug_cat(LOG_CAT_NETWORKING, "Disconnected endpoint %d, now in state %ld", i, state);
+                } else if (err == kOTLookErr) {
+                    /* There's a pending event - clear it first */
+                    OTResult lookResult = OTLook(endpoint);
+                    log_debug_cat(LOG_CAT_NETWORKING, "Pending event on endpoint %d: %ld", i, lookResult);
 
-                /* If still in data transfer state, initiate orderly disconnect */
-                state = OTGetEndpointState(endpoint);
-                if (state == T_DATAXFER || state == T_INREL) {
-                    OSStatus err = OTSndOrderlyDisconnect(endpoint);
-                    if (err == noErr) {
-                        /* Wait briefly for disconnect to complete */
-                        int retries = 10;  /* ~100ms */
-                        while (retries-- > 0) {
-                            lookResult = OTLook(endpoint);
-                            if (lookResult == T_ORDREL) {
-                                OTRcvOrderlyDisconnect(endpoint);
-                                break;
-                            }
-                            /* Brief delay to allow disconnect to complete */
-                            state = OTGetEndpointState(endpoint);
-                            if (state == T_IDLE || state == T_UNBND) {
-                                break;
-                            }
-                        }
+                    if (lookResult == T_DISCONNECT) {
+                        OTRcvDisconnect(endpoint, NULL);
+                        log_debug_cat(LOG_CAT_NETWORKING, "Cleared T_DISCONNECT event on endpoint %d", i);
+                    } else if (lookResult == T_ORDREL) {
+                        OTRcvOrderlyDisconnect(endpoint);
+                        /* Send our own orderly disconnect to complete the sequence */
+                        OTSndOrderlyDisconnect(endpoint);
+                        log_debug_cat(LOG_CAT_NETWORKING, "Completed orderly disconnect on endpoint %d", i);
                     }
+
+                    /* Try disconnect again */
+                    state = OTGetEndpointState(endpoint);
+                    if (state == T_DATAXFER || state == T_INREL || state == T_OUTREL) {
+                        OTSndDisconnect(endpoint, NULL);
+                    }
+                } else {
+                    log_error_cat(LOG_CAT_NETWORKING, "OTSndDisconnect failed for endpoint %d: %ld", i, err);
                 }
             }
 
-            /* Now unbind if needed */
+            /* Verify endpoint is in a reusable state (T_IDLE, T_UNBND, or T_UNINIT) */
             state = OTGetEndpointState(endpoint);
-            if (state != T_UNINIT && state != T_UNBND) {
-                OSStatus err = OTUnbind(endpoint);
-                if (err != noErr) {
-                    log_debug_cat(LOG_CAT_NETWORKING, "OTUnbind warning for pool endpoint %d: %ld (state was %ld)", i, err, state);
-                } else {
-                    gEndpointPool[i].bound = false;
-                }
+            if (state != T_IDLE && state != T_UNBND && state != T_UNINIT) {
+                log_error_cat(LOG_CAT_NETWORKING, "WARNING: Endpoint %d still in bad state %ld after release attempt", i, state);
             }
 
             gEndpointPool[i].inUse = false;
-            log_debug_cat(LOG_CAT_NETWORKING, "Released endpoint %d back to pool: %ld", i, (long)endpoint);
+            log_debug_cat(LOG_CAT_NETWORKING, "Released endpoint %d back to pool (final state %ld)", i, state);
             return;
         }
     }
