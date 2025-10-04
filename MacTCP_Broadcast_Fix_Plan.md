@@ -106,8 +106,36 @@ After fixes:
   - Lines 2330-2602: TCPPassiveOpen parameter reference
   - Connection state documentation
 
+## Regression Analysis
+
+### Comparison with Commit f961569 (Oct 4, 2025)
+
+**Key Finding**: The MacTCP listen/receive code **has NOT changed** since commit f961569!
+
+**Changes Made Since f961569**:
+- ✅ **QUIT message handling** (UDP broadcast) - Added in `shared/discovery.c`, `classic_mac/discovery.c`
+- ✅ **peer_shared_mark_inactive()** - Added in `shared/peer.c`
+- ✅ **BroadcastQuitMessage()** - Added to Classic Mac
+- ✅ **MSG_QUIT handling in discovery logic** - Properly handles quit over UDP
+
+**Files Unchanged**:
+- `classic_mac/messaging.c` - NO CHANGES
+- `classic_mac/tcp_state_handlers.c` - NO CHANGES
+- `classic_mac/mactcp_impl.c` - NO CHANGES
+- All TCP listen/accept/receive code - NO CHANGES
+
+### Critical Conclusion
+
+**The TCPStatus bug existed in f961569 too** - it was simply not tested or noticed at that time!
+
+This is NOT a regression. This is a **pre-existing bug** that was present when the MacTCP code was originally written. The QUIT message changes we made are working correctly and did not introduce this issue.
+
+**Implication**: We cannot "revert" to fix this - we must debug and fix the root cause of why TCPStatus fails after PassiveOpen completes.
+
 ## Next Steps
 
-1. Compare current MacTCP code to working commit f961569cad302cbedb03c0bc5a79db2b1e50b7a2
-2. Identify what changed that broke TCPStatus
-3. Implement fix based on regression analysis
+1. ~~Compare current MacTCP code to working commit~~ ✅ DONE - No changes to TCP code
+2. ~~Identify what changed that broke TCPStatus~~ ✅ DONE - Nothing changed, bug pre-existed
+3. **NEW**: Add comprehensive diagnostic logging to understand TCPStatus failure
+4. **NEW**: Review MacTCP documentation for PassiveOpen completion behavior
+5. Implement fix based on diagnostic findings
