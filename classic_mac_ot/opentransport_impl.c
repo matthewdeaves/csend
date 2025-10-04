@@ -825,8 +825,12 @@ OSErr SendTCPMessage(const char* message, const char* targetIP, tcp_port targetP
         err = noErr;
     }
 
-    /* Close connection gracefully */
-    OTSndDisconnect(ep, NULL);
+    /* Use orderly disconnect to ensure data is sent before closing connection
+     * Per NetworkingOpenTransport.txt: "An orderly disconnect allows an endpoint
+     * to send all data remaining in its send buffer before it breaks a connection."
+     * OTSndDisconnect (abortive) would immediately tear down the connection,
+     * potentially discarding unsent buffered data. */
+    OTSndOrderlyDisconnect(ep);
     OTCloseProvider(ep);
 
     return (OSErr)err;
