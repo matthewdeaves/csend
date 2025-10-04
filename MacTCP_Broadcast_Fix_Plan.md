@@ -1,0 +1,113 @@
+# MacTCP Broadcast Reception Fix Plan
+
+## Root Cause Analysis (Verified Against MacTCP Documentation)
+
+### Critical Bug Found: TCPStatus Failing After PassiveOpen Completion
+
+**Evidence from Logs:**
+```
+1925-10-04 10:56:54 TCPStatus failed after listen accept
+1925-10-04 10:57:15 Incoming TCP connection established from 10.188.1.19:40770.
+1925-10-04 10:57:15 Listen connection closed by peer (periodic check).
+1925-10-04 10:57:38 TCPStatus failed after listen accept
+```
+
+**Flow:**
+1. ✅ MacTCP correctly calls `TCPListenAsync` (PassiveOpen) - works!
+2. ✅ OpenTransport Mac connects to MacTCP - connection accepted!
+3. ❌ **BUG**: `TCPStatus()` call fails immediately after PassiveOpen completes
+4. ❌ State goes back to IDLE instead of CONNECTED_IN
+5. ❌ Connection is never properly established, so data is never received
+
+**Location**: `classic_mac/tcp_state_handlers.c:102-106`
+
+```c
+if (gNetworkOps->TCPStatus(gTCPListenStream, &tcpInfo) == noErr) {
+    handle_connection_accepted(tcpInfo.remoteHost, tcpInfo.remotePort, giveTime);
+} else {
+    log_app_event("TCPStatus failed after listen accept");  // ← FAILING HERE
+    gTCPListenState = TCP_STATE_IDLE;  // ← Goes back to IDLE!
+}
+```
+
+### Secondary Issue: Incorrect "Send stream in unexpected state" Warnings
+
+**Not a bug, just noisy logging**. The send stream IS correctly in IDLE state when not actively sending.
+
+**Location**: `classic_mac/messaging.c:692-701`
+
+## Fixes Required
+
+### Fix 1: Investigate and Fix TCPStatus Failure (CRITICAL)
+
+**File**: `classic_mac/mactcp_impl.c:818-846`
+
+**Hypothesis**: The MacTCP `TCPStatus` call (PBControlSync with csCode=TCPStatus) is failing or returning invalid data immediately after `PassiveOpen` completes.
+
+**Per MacTCP Programmer's Guide**:
+- "TCPPassiveOpen listens for an incoming connection. The command is completed when a connection is established or when an error occurs."
+- When PassiveOpen completes successfully, connection SHOULD be established
+- `connectionState` field should be >= 8 (established)
+
+**Fix Options**:
+1. **Add error code logging** to see WHY TCPStatus is failing
+2. **Check if async completion is being checked too early** - may need small delay
+3. **Verify connectionState interpretation** - check if line 841-842 logic is correct
+4. **Check if stream is in transitional state** - may need to retry TCPStatus
+
+### Fix 2: Remove TCP_STATE_IDLE from Unexpected States (MINOR)
+
+**File**: `classic_mac/messaging.c:692-701`
+
+**Change**: Move `TCP_STATE_IDLE` to a valid case (do nothing), remove from warning case
+
+```c
+case TCP_STATE_IDLE:
+    /* Normal idle state - waiting for send request */
+    break;
+
+case TCP_STATE_UNINITIALIZED:
+case TCP_STATE_LISTENING:
+// ... other truly unexpected states
+    log_warning_cat(LOG_CAT_MESSAGING, "Send stream in unexpected state: %d", gTCPSendState);
+    break;
+```
+
+## Implementation Steps
+
+### Phase 1: Diagnose TCPStatus Failure
+1. Add detailed error logging to `MacTCPImpl_TCPStatus()` to capture actual error code
+2. Log the `connectionState` value even when TCPStatus succeeds
+3. Add logging to `process_listen_async_completion()` to see exact timing
+
+### Phase 2: Fix TCPStatus Issue
+Based on diagnostics, likely one of:
+- **Option A**: Add retry logic if TCPStatus fails immediately after PassiveOpen
+- **Option B**: Add small delay before calling TCPStatus
+- **Option C**: Fix connectionState interpretation logic
+- **Option D**: Handle specific MacTCP error codes differently
+
+### Phase 3: Clean Up Logging
+- Fix send stream IDLE warning
+- Remove excessive debug output
+
+## Expected Outcome
+
+After fixes:
+- ✅ MacTCP will properly transition to CONNECTED_IN state after accepting connections
+- ✅ OpenTransport Mac broadcast messages will be received and displayed
+- ✅ All three peers (OT Mac @10.188.1.103, MacTCP Mac @10.188.1.213, POSIX @10.188.1.19) will see each other's broadcasts
+- ✅ No more "Send stream in unexpected state" spam
+
+## References Used
+
+- `resources/Books/MacTCP_Programmers_Guide_1989.txt`
+  - Lines 2163-2207: TCPPassiveOpen documentation
+  - Lines 2330-2602: TCPPassiveOpen parameter reference
+  - Connection state documentation
+
+## Next Steps
+
+1. Compare current MacTCP code to working commit f961569cad302cbedb03c0bc5a79db2b1e50b7a2
+2. Identify what changed that broke TCPStatus
+3. Implement fix based on regression analysis
