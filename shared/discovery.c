@@ -12,7 +12,8 @@ void discovery_logic_process_packet(const char *buffer, int len,
     char msg_type[32];
     char content[BUFFER_SIZE];
     int add_result;
-    if (!callbacks || !callbacks->add_or_update_peer_callback || !callbacks->send_response_callback || !callbacks->notify_peer_list_updated_callback) {
+    if (!callbacks || !callbacks->add_or_update_peer_callback || !callbacks->send_response_callback ||
+        !callbacks->notify_peer_list_updated_callback || !callbacks->mark_peer_inactive_callback) {
         log_error_cat(LOG_CAT_DISCOVERY, "Error (discovery_logic): Invalid callbacks provided.");
         return;
     }
@@ -43,6 +44,10 @@ void discovery_logic_process_packet(const char *buffer, int len,
         } else {
             log_warning_cat(LOG_CAT_DISCOVERY, "Peer list full, could not add %s@%s from RESPONSE", (sender_username[0] != '\0') ? sender_username : "??", sender_ip_str);
         }
+    } else if (strcmp(msg_type, MSG_QUIT) == 0) {
+        log_info_cat(LOG_CAT_DISCOVERY, "Received QUIT from %s@%s", sender_username, sender_ip_str);
+        callbacks->mark_peer_inactive_callback(sender_ip_str, platform_context);
+        callbacks->notify_peer_list_updated_callback(platform_context);
     } else {
         log_warning_cat(LOG_CAT_DISCOVERY, "Received unhandled UDP message type '%s' from %s@%s.", msg_type, sender_username, sender_ip_str);
     }

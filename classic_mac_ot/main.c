@@ -20,7 +20,7 @@
 #include "../shared/common_defs.h"
 #include "../shared/protocol.h"
 #include "logging.h"
-#include "network_init.h"
+#include "opentransport_impl.h"
 #include "discovery.h"
 #include "messaging.h"
 #include "dialog.h"
@@ -34,6 +34,10 @@
 #ifndef LoWord
 #define LoWord(x) ((short)((long)(x) & 0xFFFF))
 #endif
+/* Global variables */
+char gMyLocalIPStr[INET_ADDRSTRLEN] = {0};
+char gMyUsername[64] = "User";
+char gUsername[64] = "User";  /* External reference */
 Boolean gDone = false;
 unsigned long gLastPeerListUpdateTime = 0;
 const unsigned long kPeerListUpdateIntervalTicks = 5 * 60;
@@ -47,6 +51,7 @@ void InitializeToolbox(void);
 void InstallAppleEventHandlers(void);
 pascal OSErr MyAEQuitApplication(const AppleEvent *theAppleEvent, AppleEvent *reply, long handlerRefCon);
 void HandleMenuChoice(long menuResult);
+void YieldTimeToSystem(void);
 void MainEventLoop(void);
 void HandleEvent(EventRecord *event);
 void HandleIdleTasks(void);
@@ -55,23 +60,71 @@ int main(void)
     OSErr networkErr;
     Boolean dialogOk;
     char ui_message_buffer[BUFFER_SIZE + 100];
+
+    /* Initialize Mac Toolbox first */
+    MaxApplZone();
+    InitializeToolbox();
+
+    /* Initialize logging after Toolbox is ready */
     platform_logging_callbacks_t classic_mac_log_callbacks = {
         .get_timestamp = classic_mac_platform_get_timestamp,
         .display_debug_log = classic_mac_platform_display_debug_log
     };
-    log_init("csend_mac.log", &classic_mac_log_callbacks);
-    MaxApplZone();
-    InitializeToolbox();
-    log_app_event("Starting Classic Mac P2P Messenger...");
+    log_init("csend_classic_mac_ot_ppc.log", &classic_mac_log_callbacks);
+    log_app_event("Starting Classic Mac OpenTransport P2P Messenger...");
     log_debug_cat(LOG_CAT_SYSTEM, "MaxApplZone called. Toolbox Initialized.");
-    networkErr = InitializeNetworking();
+
+    /* Initialize Open Transport - this is the critical test */
+    log_debug_cat(LOG_CAT_NETWORKING, "About to initialize OpenTransport...");
+    networkErr = InitOTForApp();
     if (networkErr != noErr) {
-        sprintf(ui_message_buffer, "Fatal: Network initialization failed (Error: %d). Application cannot continue.", (int)networkErr);
-        log_app_event("%s", ui_message_buffer);
+        sprintf(ui_message_buffer, "OpenTransport initialization failed (Error: %d). OpenTransport may not be installed or configured properly.", (int)networkErr);
+        log_error_cat(LOG_CAT_NETWORKING, "%s", ui_message_buffer);
+
+        /* Show user-friendly error */
         Str255 pErrorMsg;
-        sprintf((char *)pErrorMsg + 1, "Network Init Failed: %d. See log.", (int)networkErr);
+        sprintf((char *)pErrorMsg + 1, "OpenTransport Error %d. Check OpenTransport installation.", (int)networkErr);
         pErrorMsg[0] = strlen((char *)pErrorMsg + 1);
         StopAlert(128, nil);
+
+        if (gAEQuitAppUPP) {
+            DisposeAEEventHandlerUPP(gAEQuitAppUPP);
+        }
+        log_shutdown();
+        return 1;
+    }
+    log_info_cat(LOG_CAT_NETWORKING, "OpenTransport initialized successfully!");
+
+    /* Get local IP address */
+    if (GetLocalIPAddress(gMyLocalIPStr, sizeof(gMyLocalIPStr)) != noErr) {
+        strcpy(gMyLocalIPStr, "Unknown");
+    }
+
+    /* Set username for OpenTransport */
+    SetUsername(gMyUsername);
+
+    /* Create OpenTransport endpoints */
+    log_info_cat(LOG_CAT_NETWORKING, "Creating OpenTransport endpoints...");
+
+    /* Create TCP listen endpoint */
+    networkErr = CreateListenEndpoint(TCP_PORT);
+    if (networkErr != noErr) {
+        sprintf(ui_message_buffer, "Fatal: TCP endpoint creation failed (Error: %d).", (int)networkErr);
+        log_app_event("%s", ui_message_buffer);
+        ShutdownOTForApp();
+        if (gAEQuitAppUPP) {
+            DisposeAEEventHandlerUPP(gAEQuitAppUPP);
+        }
+        log_shutdown();
+        return 1;
+    }
+
+    /* Create UDP discovery endpoint */
+    networkErr = CreateDiscoveryEndpoint(UDP_PORT);
+    if (networkErr != noErr) {
+        sprintf(ui_message_buffer, "Fatal: UDP endpoint creation failed (Error: %d).", (int)networkErr);
+        log_app_event("%s", ui_message_buffer);
+        ShutdownOTForApp();
         if (gAEQuitAppUPP) {
             DisposeAEEventHandlerUPP(gAEQuitAppUPP);
         }
@@ -81,10 +134,14 @@ int main(void)
     log_info_cat(LOG_CAT_NETWORKING, "Networking stack initialized.");
     InitPeerList();
     log_debug_cat(LOG_CAT_PEER_MGMT, "Peer list data structure initialized.");
+
+    /* Initialize messaging and discovery systems */
+    InitMessaging();
+    InitDiscovery();
     dialogOk = InitDialog();
     if (!dialogOk) {
         log_app_event("Fatal: Dialog initialization failed. Exiting.");
-        CleanupNetworking();
+        ShutdownOTForApp();
         if (gAEQuitAppUPP) {
             DisposeAEEventHandlerUPP(gAEQuitAppUPP);
         }
@@ -101,14 +158,16 @@ int main(void)
     AppendToMessagesTE("Shutting down...\r");
 
     /* Send quit message via UDP broadcast */
-    OSErr quit_err = BroadcastQuitMessage(gMacTCPRefNum, gMyUsername, gMyLocalIPStr);
+    OSErr quit_err = BroadcastQuitMessage();
     if (quit_err != noErr) {
         log_warning_cat(LOG_CAT_MESSAGING, "Failed to broadcast quit message: %d", (int)quit_err);
     }
     CleanupDialog();
     log_debug_cat(LOG_CAT_UI, "Dialog resources cleaned up.");
-    CleanupNetworking();
-    log_debug_cat(LOG_CAT_NETWORKING, "Networking stack cleaned up.");
+
+    /* Shutdown Open Transport systems */
+    ShutdownOTForApp();
+    log_debug_cat(LOG_CAT_NETWORKING, "Open Transport stack cleaned up.");
     if (gAEQuitAppUPP) {
         log_debug_cat(LOG_CAT_SYSTEM, "Disposing AEQuitAppUPP.");
         DisposeAEEventHandlerUPP(gAEQuitAppUPP);
@@ -335,9 +394,13 @@ void MainEventLoop(void)
 void HandleIdleTasks(void)
 {
     unsigned long currentTimeTicks = TickCount();
-    PollUDPListener(gMacTCPRefNum, gMyLocalIP);
-    ProcessTCPStateMachine(YieldTimeToSystem);
-    CheckSendBroadcast(gMacTCPRefNum, gMyUsername, gMyLocalIPStr);
+
+    /* Poll OpenTransport events - this is the key integration point */
+    PollOTEvents();
+
+    /* Process discovery broadcasts */
+    ProcessDiscovery();
+
     if (gLastPeerListUpdateTime == 0 ||
             (currentTimeTicks < gLastPeerListUpdateTime) ||
             (currentTimeTicks - gLastPeerListUpdateTime) >= kPeerListUpdateIntervalTicks) {
@@ -443,4 +506,10 @@ void HandleEvent(EventRecord *event)
     default:
         break;
     }
+}
+
+void YieldTimeToSystem(void)
+{
+    EventRecord evt;
+    WaitNextEvent(0, &evt, 0, NULL);
 }

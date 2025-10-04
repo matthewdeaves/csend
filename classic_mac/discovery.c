@@ -76,6 +76,12 @@ static void mac_notify_peer_list_updated(void *platform_context)
     }
 }
 
+static void mac_mark_peer_inactive(const char *ip, void *platform_context)
+{
+    (void)platform_context;
+    MarkPeerInactive(ip);
+}
+
 OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum)
 {
     OSErr err;
@@ -268,6 +274,65 @@ OSErr SendDiscoveryResponseSync(short macTCPRefNum, const char *myUsername, cons
     return err;
 }
 
+OSErr BroadcastQuitMessage(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr)
+{
+    OSErr err;
+    int formatted_len;
+    static char quitBuffer[BUFFER_SIZE];
+
+    (void)macTCPRefNum; /* Not needed with abstraction */
+
+    if (!gNetworkOps || gUDPEndpoint == NULL) return notOpenErr;
+    if (myUsername == NULL || myLocalIPStr == NULL) return paramErr;
+
+    /* Check if a send is already pending - wait briefly if needed */
+    if (gUDPSendHandle != NULL) {
+        log_debug_cat(LOG_CAT_DISCOVERY, "BroadcastQuitMessage: Send pending, waiting briefly...");
+        unsigned long startTime = TickCount();
+        while (gUDPSendHandle != NULL && (TickCount() - startTime) < 60) {  /* Wait up to 1 second */
+            if (gNetworkOps->UDPCheckSendStatus) {
+                OSErr status = gNetworkOps->UDPCheckSendStatus(gUDPSendHandle);
+                if (status != 1) {  /* Not pending anymore */
+                    gUDPSendHandle = NULL;
+                    break;
+                }
+            }
+            YieldTimeToSystem();
+        }
+        if (gUDPSendHandle != NULL) {
+            log_warning_cat(LOG_CAT_DISCOVERY, "BroadcastQuitMessage: Previous send still pending, sending anyway");
+            gUDPSendHandle = NULL;  /* Force clear to allow quit message */
+        }
+    }
+
+    log_info_cat(LOG_CAT_DISCOVERY, "Broadcasting quit message");
+
+    /* Format the quit message */
+    formatted_len = format_message(quitBuffer, BUFFER_SIZE, MSG_QUIT, myUsername, myLocalIPStr, "");
+    if (formatted_len <= 0) {
+        log_error_cat(LOG_CAT_DISCOVERY, "Error: format_message failed for MSG_QUIT");
+        return paramErr;
+    }
+
+    /* Send using async abstraction layer */
+    if (!gNetworkOps->UDPSendAsync) {
+        log_error_cat(LOG_CAT_DISCOVERY, "Error: Async UDP send not available");
+        return notOpenErr;
+    }
+
+    err = gNetworkOps->UDPSendAsync(gUDPEndpoint, BROADCAST_IP, PORT_UDP,
+                                    (Ptr)quitBuffer, formatted_len - 1,
+                                    &gUDPSendHandle);
+    if (err != noErr) {
+        log_error_cat(LOG_CAT_DISCOVERY, "Error broadcasting quit message: %d", err);
+        gUDPSendHandle = NULL;
+    } else {
+        log_debug_cat(LOG_CAT_DISCOVERY, "Quit broadcast initiated asynchronously");
+    }
+
+    return err;
+}
+
 static OSErr StartAsyncUDPRead(void)
 {
     OSErr err;
@@ -363,7 +428,8 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
     static discovery_platform_callbacks_t mac_callbacks = {
         .send_response_callback = mac_send_discovery_response,
         .add_or_update_peer_callback = mac_add_or_update_peer,
-        .notify_peer_list_updated_callback = mac_notify_peer_list_updated
+        .notify_peer_list_updated_callback = mac_notify_peer_list_updated,
+        .mark_peer_inactive_callback = mac_mark_peer_inactive
     };
 
     (void)macTCPRefNum; /* Not needed with abstraction */

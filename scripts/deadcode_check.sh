@@ -49,8 +49,8 @@ detect_retro68() {
 # Get appropriate compiler for a file
 get_compiler_for_file() {
     local file="$1"
-    
-    if [[ "$file" == classic_mac/* ]]; then
+
+    if [[ "$file" == classic_mac/* ]] || [[ "$file" == classic_mac_ot/* ]]; then
         # Prefer m68k compiler for classic mac
         if [ -n "$RETRO68_M68K_GCC" ]; then
             echo "$RETRO68_M68K_GCC"
@@ -67,13 +67,16 @@ get_compiler_for_file() {
 # Get include flags for a file
 get_include_flags_for_file() {
     local file="$1"
-    
+
     if [[ "$file" == classic_mac/* ]] && [ -n "$RETRO68_PATH" ]; then
-        # Use Retro68 includes for Classic Mac files
+        # Use Retro68 includes for Classic Mac MacTCP files
         echo "-I\"$RETRO68_PATH/m68k-apple-macos/include\" -I\"$RETRO68_PATH/universal/CIncludes\" -Iclassic_mac -Ishared -D__MACOS__"
+    elif [[ "$file" == classic_mac_ot/* ]] && [ -n "$RETRO68_PATH" ]; then
+        # Use Retro68 includes for Classic Mac OpenTransport files
+        echo "-I\"$RETRO68_PATH/m68k-apple-macos/include\" -I\"$RETRO68_PATH/universal/CIncludes\" -Iclassic_mac_ot -Ishared -D__MACOS__"
     else
         # Standard includes for POSIX
-        echo "-Iposix -Ishared -Iclassic_mac"
+        echo "-Iposix -Ishared -Iclassic_mac -Iclassic_mac_ot"
     fi
 }
 
@@ -85,11 +88,11 @@ set_platform_dirs() {
             echo "Analyzing POSIX platform only"
             ;;
         "classic")
-            SOURCE_DIRS="classic_mac shared"
-            echo "Analyzing Classic Mac platform only"
+            SOURCE_DIRS="classic_mac classic_mac_ot shared"
+            echo "Analyzing Classic Mac platforms (MacTCP + OpenTransport)"
             ;;
         "all")
-            SOURCE_DIRS="posix shared classic_mac"
+            SOURCE_DIRS="posix shared classic_mac classic_mac_ot"
             echo "Analyzing all platforms"
             ;;
         *)
@@ -275,7 +278,7 @@ run_cppcheck_analysis() {
         cppcheck --enable=all --inconclusive \
                  --suppress=missingIncludeSystem \
                  --suppress=unusedFunction \
-                 -I posix -I shared -I classic_mac \
+                 -I posix -I shared -I classic_mac -I classic_mac_ot \
                  $SOURCE_DIRS 2> "$CPPCHECK_FILE"
         
         # Show summary

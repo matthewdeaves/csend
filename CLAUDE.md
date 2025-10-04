@@ -37,9 +37,9 @@ make
 # Output: build/posix/csend_posix
 ```
 
-### Classic Mac Build
+### Classic Mac MacTCP Build
 ```bash
-make -f Makefile.retro68
+make -f Makefile.retro68.mactcp
 # Output: build/classic_mac/csend-mac.{APPL,bin,dsk}
 # Requires Retro68 cross-compiler (use scripts/setup_retro68.sh)
 ```
@@ -184,5 +184,6 @@ scripts/deadcode_check.sh warnings               # Dead code warnings
 
 # Platform-specific builds
 make clean && make                         # POSIX build
-make -f Makefile.retro68                   # Classic Mac (requires Retro68)
+make -f Makefile.retro68.mactcp            # Classic Mac MacTCP (requires Retro68)
+make -f Makefile.retro68.ot.ppc all         # Classic Mac OpenTransport PowerPC
 ```

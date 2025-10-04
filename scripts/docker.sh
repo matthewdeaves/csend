@@ -145,9 +145,25 @@ stop_all() {
 # Show status of all peers
 status() {
     check_docker_context
-    
+
     echo "Current status of peer containers:"
     docker-compose ps
+}
+
+# Execute command in a specific peer container
+exec_peer() {
+    check_docker_context
+
+    local peer_num=$1
+
+    if [ -z "$peer_num" ]; then
+        echo "Usage: $0 exec <peer_number>"
+        echo "Example: $0 exec 1"
+        exit 1
+    fi
+
+    echo "Connecting to peer$peer_num..."
+    docker exec -it "peer$peer_num" /bin/bash
 }
 
 # Main script logic
@@ -161,13 +177,17 @@ case "$1" in
     status)
         status
         ;;
+    exec)
+        exec_peer "$2"
+        ;;
     *)
-        echo "Usage: $0 {start|stop|status}"
+        echo "Usage: $0 {start|stop|status|exec}"
         echo ""
         echo "Commands:"
-        echo "  start    # Start all peer containers and open terminal windows"
-        echo "  stop     # Stop all peer containers"
-        echo "  status   # Show status of all containers"
+        echo "  start         # Start all peer containers and open terminal windows"
+        echo "  stop          # Stop all peer containers"
+        echo "  status        # Show status of all containers"
+        echo "  exec <num>    # Execute bash in a specific peer container (e.g., exec 1)"
         echo ""
         echo "Note: When in a terminal, use Ctrl+P, Ctrl+Q to detach without stopping the container"
         ;;

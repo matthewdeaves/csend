@@ -6,6 +6,7 @@ typedef struct {
     void (*send_response_callback)(uint32_t dest_ip_addr, uint16_t dest_port, void *platform_context);
     int (*add_or_update_peer_callback)(const char *ip, const char *username, void *platform_context);
     void (*notify_peer_list_updated_callback)(void *platform_context);
+    void (*mark_peer_inactive_callback)(const char *ip, void *platform_context);
 } discovery_platform_callbacks_t;
 void discovery_logic_process_packet(const char *buffer, int len,
                                     const char *sender_ip_str, uint32_t sender_ip_addr, uint16_t sender_port,

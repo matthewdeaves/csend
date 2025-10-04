@@ -3,6 +3,7 @@
 #include "network.h"
 #include "logging.h"
 #include "messaging.h"
+#include "discovery.h"
 #include "../shared/protocol.h"
 #include "../shared/logging.h"
 #include <stdio.h>
@@ -277,22 +278,8 @@ int broadcast_to_all_peers(app_state_t *state, const char *message)
 
 void notify_peers_on_quit(app_state_t *state)
 {
-    pthread_mutex_lock(&state->peers_mutex);
-
-    log_info_cat(LOG_CAT_MESSAGING, "Sending QUIT notifications to peers...");
-    int notify_count = 0;
-
-    for (int i = 0; i < MAX_PEERS; i++) {
-        if (state->peer_manager.peers[i].active) {
-            if (send_message(state->peer_manager.peers[i].ip, "", MSG_QUIT, state->username) >= 0) {
-                notify_count++;
-            } else {
-                log_error_cat(LOG_CAT_MESSAGING, "Failed to send quit notification to %s",
-                              state->peer_manager.peers[i].ip);
-            }
-        }
+    /* Send quit message via UDP broadcast */
+    if (broadcast_quit_message(state) < 0) {
+        log_error_cat(LOG_CAT_MESSAGING, "Failed to broadcast quit message");
     }
-
-    pthread_mutex_unlock(&state->peers_mutex);
-    log_info_cat(LOG_CAT_MESSAGING, "Quit notifications sent to %d peer(s).", notify_count);
 }

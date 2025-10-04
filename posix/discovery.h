@@ -6,4 +6,5 @@
 int init_discovery(app_state_t *state);
 void *discovery_thread(void *arg);
 int broadcast_discovery(app_state_t *state);
+int broadcast_quit_message(app_state_t *state);
 #endif

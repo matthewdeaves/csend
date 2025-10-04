@@ -1,0 +1,155 @@
+# Makefile for csend Classic Mac build using Retro68
+# Outputs are generated in the build/ directory.
+
+# --- Variables ---
+
+# Assume Retro68 tools are in the PATH
+CC_MAC = m68k-apple-macos-gcc
+CXX_MAC = m68k-apple-macos-g++
+REZ = Rez
+
+# --- Dynamically Find RIncludes and CIncludes ---
+
+# Find the full path to the compiler
+CC_MAC_PATH = $(shell which $(CC_MAC))
+
+# Check if the compiler was found in the PATH
+ifeq ($(CC_MAC_PATH),)
+    $(error "$(CC_MAC) not found in PATH. Please ensure the Retro68 toolchain is installed and its bin directory is added to your PATH environment variable.")
+endif
+
+# Derive the toolchain directory (assuming structure like .../Retro68-build/toolchain/bin/compiler)
+TOOLCHAIN_BIN_DIR = $(shell dirname $(CC_MAC_PATH))
+TOOLCHAIN_DIR = $(shell dirname $(TOOLCHAIN_BIN_DIR))
+
+# Construct the expected path to RIncludes relative to the toolchain directory
+RINCLUDES = $(TOOLCHAIN_DIR)/m68k-apple-macos/RIncludes
+
+# Check if the derived RIncludes directory actually exists
+ifeq ($(wildcard $(RINCLUDES)/.),) # Check for existence of the directory itself
+    $(error "Retro68 RIncludes directory not found at the expected location relative to the compiler: $(RINCLUDES). Check your Retro68 installation.")
+endif
+
+# --- Construct and Check C Includes Path ---
+# Construct the expected path to C Includes relative to the toolchain directory
+# Based on ls output, headers are directly in the 'include' directory.
+CINCLUDES = $(TOOLCHAIN_DIR)/m68k-apple-macos/include
+
+# Check if the derived CIncludes directory actually exists
+ifeq ($(wildcard $(CINCLUDES)/.),) # Check for existence of the directory itself
+    $(error "Retro68 CIncludes directory not found at the expected location relative to the compiler: $(CINCLUDES). Check your Retro68 installation.")
+endif
+
+# This path often contains headers not symlinked into the target-specific include dir.
+UNIVERSAL_CINCLUDES = $(TOOLCHAIN_DIR)/universal/CIncludes
+
+# Check if the derived Universal CIncludes directory actually exists
+ifeq ($(wildcard $(UNIVERSAL_CINCLUDES)/.),) # Check for existence of the directory itself
+    $(error "Retro68 Universal CIncludes directory not found at the expected location relative to the toolchain: $(UNIVERSAL_CINCLUDES). Check your Retro68 installation.")
+endif
+# --- END Path Finding Section ---
+
+
+# --- Compiler, Linker, Rez Flags ---
+
+# Compiler flags
+# Ensure paths are quoted. The -I flags themselves handle spaces if the shell passes them correctly.
+CFLAGS_MAC = -g -w -ffunction-sections -D__MACOS__ -Iclassic_mac -Ishared -I"$(CINCLUDES)" -I"$(UNIVERSAL_CINCLUDES)"
+
+# Linker flags (passed via the compiler driver using -Wl,)
+LDFLAGS_MAC = -Wl,-gc-sections -Wl,--mac-strip-macsbug
+
+# Rez flags
+REZFLAGS = -I"$(RINCLUDES)" # Quote the path
+
+# --- Source and Build Directories ---
+
+MAC_DIR = classic_mac
+SHARED_DIR = shared
+# Define the directory containing the MPW resource file
+MPW_RES_DIR = MPW_resources
+
+BUILD_BASE_DIR = build
+BUILD_DIR = $(BUILD_BASE_DIR)/classic_mac
+OBJ_DIR = $(BUILD_BASE_DIR)/obj/classic_mac
+
+# --- Source Files ---
+
+MAC_C_FILES = $(wildcard $(MAC_DIR)/*.c)
+SHARED_C_FILES = $(wildcard $(SHARED_DIR)/*.c)
+# Note: Wildcard doesn't pick up DNR.c if it starts with uppercase 'D' on case-sensitive systems.
+# Explicitly add files if wildcard might miss them or if order matters significantly.
+
+# --- Object Files ---
+
+MAC_OBJS = $(patsubst $(MAC_DIR)/%.c, $(OBJ_DIR)/%.o, $(MAC_C_FILES))
+SHARED_OBJS = $(patsubst $(SHARED_DIR)/%.c, $(OBJ_DIR)/shared_%.o, $(SHARED_C_FILES))
+OBJS = $(MAC_OBJS) $(SHARED_OBJS)
+
+# --- Resource and Target Definitions ---
+
+# *** UPDATED RESOURCE FILE PATH ***
+R_FILE_MAC = $(MPW_RES_DIR)/csend.r
+
+INTERMEDIATE_TARGET = $(OBJ_DIR)/csend-mac.code.bin
+
+TARGET_MAC_BASE = $(BUILD_DIR)/csend-mac
+TARGET_MAC_APPL = $(TARGET_MAC_BASE).APPL
+TARGET_MAC_BIN = $(TARGET_MAC_BASE).bin
+TARGET_MAC_DSK = $(TARGET_MAC_BASE).dsk
+FINAL_TARGETS = $(TARGET_MAC_APPL) $(TARGET_MAC_BIN) $(TARGET_MAC_DSK)
+
+# --- Targets ---
+
+# Default target: Build all final outputs
+all: $(FINAL_TARGETS)
+
+# Rule to create the final outputs using Rez
+$(FINAL_TARGETS): $(INTERMEDIATE_TARGET) $(R_FILE_MAC) Makefile.retro68.mactcp | $(BUILD_DIR)
+	@echo "--- Rez Stage ---"
+	@echo "Using RIncludes from: $(RINCLUDES)"
+	@echo "Using CIncludes from: $(CINCLUDES)"
+	@echo "Using Universal CIncludes from: $(UNIVERSAL_CINCLUDES)"
+	@echo "Running Rez..."
+	$(REZ) $(REZFLAGS) \
+		--copy "$(INTERMEDIATE_TARGET)" \
+		"$(RINCLUDES)/Retro68APPL.r" \
+		"$(R_FILE_MAC)" \
+		-t "APPL" -c "CSND" \
+		-o "$(TARGET_MAC_BIN)" --cc "$(TARGET_MAC_APPL)" --cc "$(TARGET_MAC_DSK)"
+	@echo "Classic Mac build complete. Outputs in $(BUILD_DIR)"
+
+# Rule to link the intermediate code binary from object files
+$(INTERMEDIATE_TARGET): $(OBJS) Makefile.retro68.mactcp | $(OBJ_DIR)
+	@echo "--- Link Stage ---"
+	@echo "Linking objects: $(OBJS)"
+	@echo "Output: $@"
+	# Use CXX_MAC (g++) for linking. It handles C++ runtime bits if needed.
+	$(CXX_MAC) $(OBJS) -o $@ $(LDFLAGS_MAC)
+
+# Rule to compile Classic Mac C source files into object files in OBJ_DIR
+$(OBJ_DIR)/%.o: $(MAC_DIR)/%.c Makefile.retro68.mactcp | $(OBJ_DIR)
+	@echo "--- Compile Stage ---"
+	@echo "Compiling Mac $< -> $@"
+	# Ensure the variable is expanded correctly
+	$(CC_MAC) $(CFLAGS_MAC) -c $< -o $@
+
+# Rule to compile shared C source files into object files in OBJ_DIR
+$(OBJ_DIR)/shared_%.o: $(SHARED_DIR)/%.c Makefile.retro68.mactcp | $(OBJ_DIR)
+	@echo "--- Compile Stage ---"
+	@echo "Compiling Shared $< -> $@"
+	# Ensure the variable is expanded correctly
+	$(CC_MAC) $(CFLAGS_MAC) -c $< -o $@
+
+# Rule to create the build and object directories if they don't exist
+$(BUILD_DIR) $(OBJ_DIR):
+	@mkdir -p $@
+
+# Target to clean up build files
+clean:
+	@echo "Cleaning Classic Mac build files..."
+	@rm -rf $(BUILD_BASE_DIR) # Remove the whole build directory
+	@echo "Clean complete."
+
+# Phony targets are not files
+.PHONY: all clean

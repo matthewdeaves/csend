@@ -21,6 +21,7 @@ void CleanupUDPDiscoveryEndpoint(short macTCPRefNum);
 OSErr SendDiscoveryBroadcastSync(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr);
 OSErr SendDiscoveryResponseSync(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr,
                                 ip_addr destIP, udp_port destPort);
+OSErr BroadcastQuitMessage(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr);
 void CheckSendBroadcast(short macTCPRefNum, const char *myUsername, const char *myLocalIPStr);
 void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP);
 

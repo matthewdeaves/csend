@@ -60,6 +60,16 @@ static void posix_notify_peer_list_updated(void *platform_context)
         log_debug_cat(LOG_CAT_PEER_MGMT, "posix_notify_peer_list_updated called (no UI available).");
     }
 }
+
+static void posix_mark_peer_inactive(const char *ip, void *platform_context)
+{
+    app_state_t *state = (app_state_t *)platform_context;
+    if (!state) return;
+
+    pthread_mutex_lock(&state->peers_mutex);
+    peer_shared_mark_inactive(&state->peer_manager, ip);
+    pthread_mutex_unlock(&state->peers_mutex);
+}
 int init_discovery(app_state_t *state)
 {
     struct sockaddr_in address;
@@ -120,6 +130,44 @@ int broadcast_discovery(app_state_t *state)
     log_debug_cat(LOG_CAT_DISCOVERY, "Discovery broadcast sent.");
     return 0;
 }
+
+int broadcast_quit_message(app_state_t *state)
+{
+    struct sockaddr_in broadcast_addr;
+    char buffer[BUFFER_SIZE];
+    char local_ip[INET_ADDRSTRLEN];
+    int formatted_len;
+
+    if (!state || state->udp_socket < 0) {
+        log_error_cat(LOG_CAT_DISCOVERY, "Error: Invalid state or UDP socket for quit broadcast");
+        return -1;
+    }
+
+    if (get_local_ip(local_ip, INET_ADDRSTRLEN) < 0) {
+        log_warning_cat(LOG_CAT_DISCOVERY, "Warning: broadcast_quit_message failed to get local IP. Using 'unknown'.");
+        strcpy(local_ip, "unknown");
+    }
+
+    formatted_len = format_message(buffer, BUFFER_SIZE, MSG_QUIT, state->username, local_ip, "");
+    if (formatted_len <= 0) {
+        log_error_cat(LOG_CAT_DISCOVERY, "Error: Failed to format quit broadcast message (buffer too small?).");
+        return -1;
+    }
+
+    memset(&broadcast_addr, 0, sizeof(broadcast_addr));
+    broadcast_addr.sin_family = AF_INET;
+    broadcast_addr.sin_port = htons(PORT_UDP);
+    broadcast_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+
+    if (sendto(state->udp_socket, buffer, formatted_len - 1, 0,
+               (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr)) < 0) {
+        perror("Quit broadcast sendto failed");
+        return -1;
+    }
+
+    log_info_cat(LOG_CAT_DISCOVERY, "Quit broadcast sent.");
+    return 0;
+}
 void *discovery_thread(void *arg)
 {
     app_state_t *state = (app_state_t *)arg;
@@ -133,7 +181,8 @@ void *discovery_thread(void *arg)
     discovery_platform_callbacks_t callbacks = {
         .send_response_callback = posix_send_discovery_response,
         .add_or_update_peer_callback = posix_add_or_update_peer,
-        .notify_peer_list_updated_callback = posix_notify_peer_list_updated
+        .notify_peer_list_updated_callback = posix_notify_peer_list_updated,
+        .mark_peer_inactive_callback = posix_mark_peer_inactive
     };
     if (get_local_ip(local_ip_str, INET_ADDRSTRLEN) < 0) {
         log_warning_cat(LOG_CAT_DISCOVERY, "Warning: Failed to get local IP address for discovery self-check. Using 127.0.0.1.");

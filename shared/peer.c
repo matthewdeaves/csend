@@ -79,6 +79,20 @@ int peer_shared_add_or_update(peer_manager_t *manager, const char *ip, const cha
                     username ? username : "??", ip, MAX_PEERS);
     return -1;
 }
+int peer_shared_mark_inactive(peer_manager_t *manager, const char *ip)
+{
+    if (!manager || !ip) return -1;
+
+    int index = peer_shared_find_by_ip(manager, ip);
+    if (index != -1) {
+        log_info_cat(LOG_CAT_PEER_MGMT, "Marking peer %s@%s as inactive",
+                     manager->peers[index].username, ip);
+        manager->peers[index].active = 0;
+        return 1;
+    }
+    return 0;
+}
+
 int peer_shared_prune_timed_out(peer_manager_t *manager)
 {
     if (!manager) return 0;
