@@ -157,6 +157,15 @@ void handle_connection_accepted(ip_addr remote_ip, tcp_port remote_port, GiveTim
             gListenNoCopyRdsPendingReturn = false;
         }
     }
+
+    /* CRITICAL FIX: Immediately close connection and return to listening
+     * This allows the listen stream to accept new connections immediately
+     * instead of staying in CONNECTED_IN state which blocks new connections */
+    log_debug_cat(LOG_CAT_MESSAGING, "Closing connection to free listen stream for next connection");
+    gNetworkOps->TCPAbort(gTCPListenStream);
+    gTCPListenState = TCP_STATE_IDLE;
+    gListenStreamNeedsReset = true;
+    gListenStreamResetTime = TickCount();
 }
 
 /* Handle LISTENING state - check for incoming connections */

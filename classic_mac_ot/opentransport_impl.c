@@ -32,6 +32,17 @@ static EndpointRef gDiscoveryEndpoint = NULL;
 static char gLocalIPStr[16] = "0.0.0.0";
 static char gUsername[32] = "OTUser";
 
+/* Endpoint pool for handling multiple concurrent connections */
+typedef struct {
+    EndpointRef endpoint;
+    Boolean inUse;
+    Boolean bound;
+} PooledEndpoint;
+
+static PooledEndpoint gEndpointPool[MAX_CACHED_ENDPOINTS];
+static int gPoolSize = 0;
+static Boolean gPoolInitialized = false;
+
 /* Initialize Open Transport for P2P messaging */
 OSErr InitOTForApp(void)
 {
@@ -78,6 +89,9 @@ void ShutdownOTForApp(void)
     }
 
     log_debug_cat(LOG_CAT_NETWORKING, "Shutting down OpenTransport");
+
+    /* Shutdown endpoint pool first */
+    ShutdownEndpointPool();
 
     /* Close all endpoints */
     if (gListenEndpoint) {
@@ -314,6 +328,138 @@ void HandleUDPEvent(EndpointRef endpoint, OTResult event)
     }
 }
 
+/* Initialize endpoint pool for handling multiple concurrent connections */
+OSErr InitializeEndpointPool(void)
+{
+    int i;
+    OSStatus err;
+
+    if (gPoolInitialized) {
+        log_debug_cat(LOG_CAT_NETWORKING, "Endpoint pool already initialized");
+        return noErr;
+    }
+
+    log_info_cat(LOG_CAT_NETWORKING, "Initializing endpoint pool with %d endpoints", INITIAL_CACHED_ENDPOINTS);
+
+    /* Initialize pool structure */
+    memset(gEndpointPool, 0, sizeof(gEndpointPool));
+    gPoolSize = 0;
+
+    /* Pre-create initial endpoints */
+    for (i = 0; i < INITIAL_CACHED_ENDPOINTS; i++) {
+        EndpointRef ep = OTOpenEndpoint(OTCreateConfiguration("tcp"), 0, NULL, &err);
+        if (err != noErr || ep == kOTInvalidEndpointRef) {
+            log_error_cat(LOG_CAT_NETWORKING, "Failed to create pooled endpoint %d: %ld", i, err);
+            continue;
+        }
+
+        /* Set non-blocking mode for all pooled endpoints */
+        OTSetNonBlocking(ep);
+
+        gEndpointPool[gPoolSize].endpoint = ep;
+        gEndpointPool[gPoolSize].inUse = false;
+        gEndpointPool[gPoolSize].bound = false;
+        gPoolSize++;
+
+        log_debug_cat(LOG_CAT_NETWORKING, "Created pooled endpoint %d: %ld", gPoolSize, (long)ep);
+    }
+
+    gPoolInitialized = true;
+    log_info_cat(LOG_CAT_NETWORKING, "Endpoint pool initialized with %d/%d endpoints", gPoolSize, INITIAL_CACHED_ENDPOINTS);
+    return noErr;
+}
+
+/* Shutdown endpoint pool */
+void ShutdownEndpointPool(void)
+{
+    int i;
+
+    if (!gPoolInitialized) {
+        return;
+    }
+
+    log_debug_cat(LOG_CAT_NETWORKING, "Shutting down endpoint pool");
+
+    for (i = 0; i < gPoolSize; i++) {
+        if (gEndpointPool[i].endpoint != kOTInvalidEndpointRef) {
+            if (gEndpointPool[i].bound) {
+                OTUnbind(gEndpointPool[i].endpoint);
+            }
+            OTCloseProvider(gEndpointPool[i].endpoint);
+            gEndpointPool[i].endpoint = kOTInvalidEndpointRef;
+        }
+    }
+
+    gPoolSize = 0;
+    gPoolInitialized = false;
+    log_debug_cat(LOG_CAT_NETWORKING, "Endpoint pool shutdown complete");
+}
+
+/* Acquire an endpoint from the pool */
+EndpointRef AcquireEndpointFromPool(void)
+{
+    int i;
+    OSStatus err;
+
+    /* Try to find an unused endpoint in the pool */
+    for (i = 0; i < gPoolSize; i++) {
+        if (!gEndpointPool[i].inUse) {
+            gEndpointPool[i].inUse = true;
+            log_debug_cat(LOG_CAT_NETWORKING, "Acquired pooled endpoint %d: %ld", i, (long)gEndpointPool[i].endpoint);
+            return gEndpointPool[i].endpoint;
+        }
+    }
+
+    /* Pool exhausted - create a new endpoint if we have room */
+    if (gPoolSize < MAX_CACHED_ENDPOINTS) {
+        EndpointRef ep = OTOpenEndpoint(OTCreateConfiguration("tcp"), 0, NULL, &err);
+        if (err != noErr || ep == kOTInvalidEndpointRef) {
+            log_error_cat(LOG_CAT_NETWORKING, "Failed to create new pooled endpoint: %ld", err);
+            return kOTInvalidEndpointRef;
+        }
+
+        /* Set non-blocking mode */
+        OTSetNonBlocking(ep);
+
+        gEndpointPool[gPoolSize].endpoint = ep;
+        gEndpointPool[gPoolSize].inUse = true;
+        gEndpointPool[gPoolSize].bound = false;
+        gPoolSize++;
+
+        log_info_cat(LOG_CAT_NETWORKING, "Created new pooled endpoint %d: %ld (pool now %d/%d)",
+                     gPoolSize - 1, (long)ep, gPoolSize, MAX_CACHED_ENDPOINTS);
+        return ep;
+    }
+
+    /* No endpoints available */
+    log_error_cat(LOG_CAT_NETWORKING, "Endpoint pool exhausted! All %d endpoints in use", MAX_CACHED_ENDPOINTS);
+    return kOTInvalidEndpointRef;
+}
+
+/* Release an endpoint back to the pool */
+void ReleaseEndpointToPool(EndpointRef endpoint)
+{
+    int i;
+
+    for (i = 0; i < gPoolSize; i++) {
+        if (gEndpointPool[i].endpoint == endpoint) {
+            /* Unbind the endpoint asynchronously to recycle it */
+            if (gEndpointPool[i].bound) {
+                OTUnbind(endpoint);
+                gEndpointPool[i].bound = false;
+            }
+
+            gEndpointPool[i].inUse = false;
+            log_debug_cat(LOG_CAT_NETWORKING, "Released endpoint %d back to pool: %ld", i, (long)endpoint);
+            return;
+        }
+    }
+
+    /* Endpoint not in pool - close it */
+    log_debug_cat(LOG_CAT_NETWORKING, "Endpoint %ld not in pool, closing directly", (long)endpoint);
+    OTCloseProvider(endpoint);
+}
+
 /* Handle incoming TCP connection */
 void HandleIncomingConnection(EndpointRef listener)
 {
@@ -336,26 +482,26 @@ void HandleIncomingConnection(EndpointRef listener)
         return;
     }
 
-    /* Create new endpoint for the connection */
-    connEp = OTOpenEndpoint(OTCreateConfiguration(kTCPName), 0, NULL, &err);
-    if (err != noErr || connEp == kOTInvalidEndpointRef) {
-        log_error_cat(LOG_CAT_NETWORKING, "Failed to open new endpoint for incoming connection: %ld", err);
+    /* Acquire an endpoint from the pool for this connection */
+    connEp = AcquireEndpointFromPool();
+    if (connEp == kOTInvalidEndpointRef) {
+        log_error_cat(LOG_CAT_NETWORKING, "No endpoint available from pool, rejecting connection");
         OTSndDisconnect(listener, &call);
         return;
     }
 
-    /* Set the new endpoint to non-blocking mode to avoid blocking the event loop */
-    OTSetNonBlocking(connEp);
+    /* Endpoint from pool is already in non-blocking mode */
 
-    /* Accept the connection on the new endpoint */
+    /* Accept the connection on the pooled endpoint */
     err = OTAccept(listener, connEp, &call);
     if (err != noErr) {
         log_error_cat(LOG_CAT_NETWORKING, "OTAccept failed: %ld", err);
-        OTCloseProvider(connEp);
+        /* Release endpoint back to pool */
+        ReleaseEndpointToPool(connEp);
         return;
     }
 
-    log_info_cat(LOG_CAT_NETWORKING, "Accepted connection, sequence %ld. New endpoint ref %ld", call.sequence, (long)connEp);
+    log_info_cat(LOG_CAT_NETWORKING, "Accepted connection, sequence %ld. Using pooled endpoint %ld", call.sequence, (long)connEp);
 
     /* Try to read data with a short timeout - don't block */
     /* Use OTRcv with non-blocking check first */
@@ -368,15 +514,15 @@ void HandleIncomingConnection(EndpointRef listener)
         HandleIncomingTCPData(connEp);
     }
 
-    /* Send orderly disconnect before closing */
+    /* Send orderly disconnect before recycling */
     OTSndOrderlyDisconnect(connEp);
 
     /* Give a moment for disconnect to complete */
     Delay(1, NULL); /* 1 tick = ~17ms */
 
-    /* Close the temporary connection endpoint */
-    OTCloseProvider(connEp);
-    log_debug_cat(LOG_CAT_NETWORKING, "Closed incoming connection endpoint");
+    /* Release the endpoint back to the pool for reuse */
+    ReleaseEndpointToPool(connEp);
+    log_debug_cat(LOG_CAT_NETWORKING, "Released connection endpoint back to pool");
 }
 
 /* Handle incoming TCP data */

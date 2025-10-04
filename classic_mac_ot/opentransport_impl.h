@@ -34,6 +34,10 @@ void ShutdownOTForApp(void);
 OSErr CreateListenEndpoint(tcp_port localPort);
 OSErr CreateDiscoveryEndpoint(udp_port localPort);
 
+/* Endpoint pool configuration */
+#define MAX_CACHED_ENDPOINTS 10
+#define INITIAL_CACHED_ENDPOINTS 3
+
 /* Event polling - call from main event loop */
 void PollOTEvents(void);
 
@@ -44,6 +48,12 @@ void HandleIncomingConnection(EndpointRef endpoint);
 void HandleIncomingTCPData(EndpointRef endpoint);
 void HandleIncomingUDPData(EndpointRef endpoint);
 void HandleConnectionClosed(EndpointRef endpoint);
+
+/* Endpoint pool management */
+OSErr InitializeEndpointPool(void);
+void ShutdownEndpointPool(void);
+EndpointRef AcquireEndpointFromPool(void);
+void ReleaseEndpointToPool(EndpointRef endpoint);
 
 /* Message sending */
 OSErr SendUDPMessage(const char* message, const char* targetIP, udp_port targetPort);

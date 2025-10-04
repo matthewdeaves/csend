@@ -131,6 +131,14 @@ int main(void)
         log_shutdown();
         return 1;
     }
+
+    /* Initialize endpoint pool for handling multiple concurrent connections */
+    networkErr = InitializeEndpointPool();
+    if (networkErr != noErr) {
+        log_error_cat(LOG_CAT_NETWORKING, "Warning: Endpoint pool initialization failed (Error: %d). Concurrent connections may be limited.", (int)networkErr);
+        /* Continue anyway - we can still handle one connection at a time */
+    }
+
     log_info_cat(LOG_CAT_NETWORKING, "Networking stack initialized.");
     InitPeerList();
     log_debug_cat(LOG_CAT_PEER_MGMT, "Peer list data structure initialized.");
