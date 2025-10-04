@@ -106,6 +106,36 @@ After fixes:
   - Lines 2330-2602: TCPPassiveOpen parameter reference
   - Connection state documentation
 
+## CRITICAL UPDATE: MacTCP CAN Receive TCP - Specific OT Mac Issue!
+
+### Evidence from Logs
+
+**MacTCP Mac SUCCESSFULLY received TCP from POSIX:**
+```
+1925-10-04 10:57:15 ubuntu@10.188.1.19: hello fom ubuntu ← RECEIVED!
+```
+
+**POSIX SUCCESSFULLY received TCP from both Macs:**
+```
+2025-10-04 10:53:30 User@10.188.1.103: hello to all (OT Mac) ← RECEIVED!
+2025-10-04 10:54:14 User@10.188.1.103: test broadcast (OT Mac) ← RECEIVED!
+2025-10-04 10:54:38 MacUser@10.188.1.213: hello from mactcp (MacTCP) ← RECEIVED!
+```
+
+**MacTCP Mac DID NOT receive from OT Mac:**
+- NO "hello to all" message
+- NO "test broadcast" message
+- Only UDP discovery packets were received
+
+### Revised Root Cause
+
+The problem is **NOT** a general TCP reception failure in MacTCP. The problem is **specific to connections from OpenTransport Mac (10.188.1.103)**.
+
+**Working**: POSIX (10.188.1.19) → MacTCP (10.188.1.213) ✅
+**Broken**: OT Mac (10.188.1.103) → MacTCP (10.188.1.213) ❌
+
+This suggests a **compatibility issue** between OpenTransport's TCP implementation and MacTCP's listen/accept logic.
+
 ## Regression Analysis
 
 ### Comparison with Commit f961569 (Oct 4, 2025)
@@ -132,10 +162,31 @@ This is NOT a regression. This is a **pre-existing bug** that was present when t
 
 **Implication**: We cannot "revert" to fix this - we must debug and fix the root cause of why TCPStatus fails after PassiveOpen completes.
 
+## Hypothesis: OpenTransport vs MacTCP Compatibility Issue
+
+### Possible Causes
+
+1. **Connection timing difference**: OT Mac might connect faster than POSIX, hitting the TCPStatus bug window
+2. **TCP option negotiation**: OT might negotiate different TCP options that MacTCP can't handle
+3. **Connection state race**: OT's async behavior might trigger edge case in MacTCP's state machine
+4. **Port/addressing difference**: Something specific about how OT formats the connection
+
+### Key Question
+
+Why does "TCPStatus failed after listen accept" correlation with OT Mac connections but not POSIX connections?
+
+Looking at logs:
+- 10:56:54 - TCPStatus failed
+- 10:57:15 - Connection from POSIX (10.188.1.19) succeeded ← This works!
+- 10:57:15 - Connection immediately closed
+- 10:57:38 - TCPStatus failed again
+
 ## Next Steps
 
 1. ~~Compare current MacTCP code to working commit~~ ✅ DONE - No changes to TCP code
 2. ~~Identify what changed that broke TCPStatus~~ ✅ DONE - Nothing changed, bug pre-existed
-3. **NEW**: Add comprehensive diagnostic logging to understand TCPStatus failure
-4. **NEW**: Review MacTCP documentation for PassiveOpen completion behavior
-5. Implement fix based on diagnostic findings
+3. **NEW**: Compare exact timestamps - does TCPStatus failure correlate with OT connection attempts?
+4. **NEW**: Add logging to see what IP addresses trigger TCPStatus failures
+5. **NEW**: Check if OT Mac uses different TCP options vs POSIX
+6. **NEW**: Test theory: Does MacTCP reject ALL OT connections, or just some?
+7. Implement fix based on findings
