@@ -2,6 +2,11 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Mac epoch (Jan 1, 1904) to Unix epoch (Jan 1, 1970) difference in seconds */
+#ifdef __MACOS__
+#define MAC_EPOCH_OFFSET 2082844800UL
+#endif
+
 void format_current_time(char *buffer, size_t size, const char *format)
 {
     time_t now;
@@ -10,6 +15,11 @@ void format_current_time(char *buffer, size_t size, const char *format)
     if (!buffer || size == 0) return;
 
     time(&now);
+#ifdef __MACOS__
+    /* Classic Mac time() returns seconds since 1904, but localtime() expects Unix epoch (1970).
+     * We need to subtract the difference to get the correct year. */
+    now -= MAC_EPOCH_OFFSET;
+#endif
     local_time_info = localtime(&now);
 
     if (local_time_info != NULL) {
@@ -40,6 +50,11 @@ void get_timestamp_with_fallback(char *buffer, size_t size, const char *format, 
     if (!buffer || size == 0) return;
 
     time(&now);
+#ifdef __MACOS__
+    /* Classic Mac time() returns seconds since 1904, but localtime() expects Unix epoch (1970).
+     * We need to subtract the difference to get the correct year. */
+    now -= MAC_EPOCH_OFFSET;
+#endif
     local_time_info = localtime(&now);
 
     if (local_time_info != NULL) {
