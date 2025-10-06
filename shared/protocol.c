@@ -20,6 +20,19 @@ static inline csend_uint32_t csend_plat_ntohl(csend_uint32_t netlong)
 #include <arpa/inet.h>
 #endif
 
+/* Message ID counter - static to persist across calls */
+static csend_uint32_t g_message_id_counter = 0;
+
+csend_uint32_t generate_message_id(void)
+{
+    /* Simple counter-based ID generation.
+     * On POSIX platforms with pthreads, we could use atomic operations,
+     * but for simplicity and Classic Mac compatibility, we use a simple counter.
+     * Thread safety note: On POSIX, callers should use mutex protection if needed.
+     * On Classic Mac, single-threaded event loop makes this safe. */
+    return ++g_message_id_counter;
+}
+
 /* Internal constants for protocol limits */
 #define MAX_MSG_TYPE_LEN 31
 #define MAX_USERNAME_LEN 31
@@ -40,7 +53,8 @@ static void safe_strncpy(char *dest, const char *src, size_t dest_size)
 }
 
 int format_message(char *buffer, int buffer_size, const char *msg_type,
-                   const char *sender, const char *local_ip_str, const char *content)
+                   csend_uint32_t msg_id, const char *sender, const char *local_ip_str,
+                   const char *content)
 {
     char sender_with_ip[BUFFER_SIZE];
     const char *ip_to_use;
@@ -84,12 +98,12 @@ int format_message(char *buffer, int buffer_size, const char *msg_type,
     magic_net_order = htonl(magic_host_order);
     memcpy(buffer, &magic_net_order, sizeof(csend_uint32_t));
 
-    /* Calculate remaining space and format text part */
+    /* Calculate remaining space and format text part with message ID */
     int remaining_buffer_size = buffer_size - (int)sizeof(csend_uint32_t);
     char *text_buffer_start = buffer + sizeof(csend_uint32_t);
 
-    text_part_len = snprintf(text_buffer_start, remaining_buffer_size, "%s|%s|%s",
-                             safe_msg_type, sender_with_ip, safe_content);
+    text_part_len = snprintf(text_buffer_start, remaining_buffer_size, "%s|%lu|%s|%s",
+                             safe_msg_type, (unsigned long)msg_id, sender_with_ip, safe_content);
 
     /* Check for truncation or error */
     if (text_part_len < 0) {
@@ -117,7 +131,7 @@ int format_message(char *buffer, int buffer_size, const char *msg_type,
 }
 
 int parse_message(const char *buffer, int buffer_len, char *sender_ip, char *sender_username,
-                  char *msg_type, char *content)
+                  char *msg_type, csend_uint32_t *msg_id, char *content)
 {
     char *token;
     char *rest;
@@ -133,6 +147,7 @@ int parse_message(const char *buffer, int buffer_len, char *sender_ip, char *sen
     if (sender_ip) sender_ip[0] = '\0';
     if (sender_username) sender_username[0] = '\0';
     if (msg_type) msg_type[0] = '\0';
+    if (msg_id) *msg_id = 0;
     if (content) content[0] = '\0';
 
     /* Validate minimum buffer requirements */
@@ -183,6 +198,24 @@ int parse_message(const char *buffer, int buffer_len, char *sender_ip, char *sen
         safe_strncpy(msg_type, token, MAX_MSG_TYPE_LEN + 1);
     }
 
+    /* Parse message ID */
+    token = strtok_r(NULL, "|", &rest);
+    if (token == NULL) {
+        log_error_cat(LOG_CAT_PROTOCOL, "Parse error: Could not find message ID token.");
+        goto cleanup;
+    }
+    if (msg_id) {
+        /* Convert string to unsigned long */
+        char *endptr;
+        unsigned long id_value = strtoul(token, &endptr, 10);
+        if (endptr == token || *endptr != '\0') {
+            log_warning_cat(LOG_CAT_PROTOCOL, "Parse warning: Invalid message ID '%s', using 0.", token);
+            *msg_id = 0;
+        } else {
+            *msg_id = (csend_uint32_t)id_value;
+        }
+    }
+
     /* Parse sender@ip */
     token = strtok_r(NULL, "|", &rest);
     if (token == NULL) {
@@ -220,7 +253,7 @@ int parse_message(const char *buffer, int buffer_len, char *sender_ip, char *sen
         }
     }
 
-    /* Parse content (everything after second |) */
+    /* Parse content (everything after third |) */
     token = strtok_r(NULL, "", &rest);
     if (token == NULL) {
         /* No content is valid - just ensure it's empty */

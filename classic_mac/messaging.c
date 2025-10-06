@@ -735,10 +735,11 @@ void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status, tcp_p
 
         log_debug_cat(LOG_CAT_MESSAGING, "Processing RDS entry %d: Ptr 0x%lX, Len %u", i, (unsigned long)rds[i].ptr, rds[i].length);
 
+        csend_uint32_t msg_id;
         if (parse_message((const char *)rds[i].ptr, rds[i].length,
-                          senderIPStrFromPayload, senderUsername, msgType, content) == 0) {
-            log_debug_cat(LOG_CAT_MESSAGING, "Parsed TCP message: Type '%s', FromUser '%s', FromIP(payload) '%s', Content(len %d) '%.30s...'",
-                          msgType, senderUsername, senderIPStrFromPayload, (int)strlen(content), content);
+                          senderIPStrFromPayload, senderUsername, msgType, &msg_id, content) == 0) {
+            log_debug_cat(LOG_CAT_MESSAGING, "Parsed TCP message: ID %lu, Type '%s', FromUser '%s', FromIP(payload) '%s', Content(len %d) '%.30s...'",
+                          (unsigned long)msg_id, msgType, senderUsername, senderIPStrFromPayload, (int)strlen(content), content);
 
             handle_received_tcp_message(remoteIPStrConnected,
                                         senderUsername,
@@ -803,7 +804,7 @@ static OSErr StartAsyncSend(const char *peerIPStr, const char *message_content, 
 
     /* Format message */
     formattedLen = format_message(messageBuffer, sizeof(messageBuffer), msg_type,
-                                  gMyUsername, gMyLocalIPStr, message_content);
+                                  generate_message_id(), gMyUsername, gMyLocalIPStr, message_content);
     if (formattedLen < 0) {
         log_app_event("Error: format_message failed for type '%s'.", msg_type);
         return paramErr;

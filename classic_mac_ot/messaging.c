@@ -27,10 +27,10 @@ void ShutdownMessaging(void)
 }
 
 /* Send message to specific peer */
-OSErr SendMessageToPeer(const char* targetIP, const char* message, const char* msg_type)
+OSErr SendMessageToPeer(const char *targetIP, const char *message, const char *msg_type)
 {
     char formattedMessage[BUFFER_SIZE];
-    const char* username = GetUsername();
+    const char *username = GetUsername();
     char localIP[16];
     int result;
 
@@ -43,7 +43,8 @@ OSErr SendMessageToPeer(const char* targetIP, const char* message, const char* m
     GetLocalIPAddress(localIP, sizeof(localIP));
 
     /* Format message according to protocol */
-    result = format_message(formattedMessage, sizeof(formattedMessage), msg_type, username, localIP, message ? message : "");
+    result = format_message(formattedMessage, sizeof(formattedMessage), msg_type,
+                            generate_message_id(), username, localIP, message ? message : "");
     if (result <= 0) {
         log_error_cat(LOG_CAT_MESSAGING, "SendMessageToPeer: Failed to format message");
         return paramErr;
@@ -56,7 +57,7 @@ OSErr SendMessageToPeer(const char* targetIP, const char* message, const char* m
 }
 
 /* Broadcast message to all peers */
-OSErr BroadcastMessage(const char* message)
+OSErr BroadcastMessage(const char *message)
 {
     int sent_count = 0;
     int failed_count = 0;
@@ -101,7 +102,7 @@ OSErr BroadcastMessage(const char* message)
 OSErr BroadcastQuitMessage(void)
 {
     char formattedMessage[BUFFER_SIZE];
-    const char* username = GetUsername();
+    const char *username = GetUsername();
     char localIP[16];
     int result;
 
@@ -109,7 +110,8 @@ OSErr BroadcastQuitMessage(void)
     GetLocalIPAddress(localIP, sizeof(localIP));
 
     /* Format quit message according to protocol */
-    result = format_message(formattedMessage, sizeof(formattedMessage), MSG_QUIT, username, localIP, "");
+    result = format_message(formattedMessage, sizeof(formattedMessage), MSG_QUIT,
+                            generate_message_id(), username, localIP, "");
     if (result <= 0) {
         log_error_cat(LOG_CAT_MESSAGING, "BroadcastQuitMessage: Failed to format message");
         return paramErr;
@@ -122,7 +124,7 @@ OSErr BroadcastQuitMessage(void)
 }
 
 /* Process incoming TCP message (called by OpenTransport TCP event handlers) */
-void ProcessIncomingMessage(const char* rawMessage, const char* senderIP)
+void ProcessIncomingMessage(const char *rawMessage, const char *senderIP)
 {
     char message[BUFFER_SIZE];
     char sender_username[32];
@@ -148,7 +150,10 @@ void ProcessIncomingMessage(const char* rawMessage, const char* senderIP)
     log_debug_cat(LOG_CAT_MESSAGING, "Processing TCP message from %s: %s", senderIP, rawMessage);
 
     /* Parse the protocol message */
-    if (parse_message(rawMessage, messageLen, sender_ip, sender_username, msg_type, message) == 0) {
+    csend_uint32_t msg_id;
+    if (parse_message(rawMessage, messageLen, sender_ip, sender_username, msg_type, &msg_id, message) == 0) {
+        log_debug_cat(LOG_CAT_MESSAGING, "Received message ID %lu from %s@%s",
+                      (unsigned long)msg_id, sender_username, senderIP);
 
         if (strcmp(msg_type, MSG_TEXT) == 0) {
             log_debug_cat(LOG_CAT_MESSAGING, "Text message from %s: %s", sender_username, message);
@@ -159,8 +164,7 @@ void ProcessIncomingMessage(const char* rawMessage, const char* senderIP)
             char displayMsg[BUFFER_SIZE + 100];
             snprintf(displayMsg, sizeof(displayMsg), "%s: %s\r", sender_username, message);
             AppendToMessagesTE(displayMsg);
-        }
-        else {
+        } else {
             log_warning_cat(LOG_CAT_MESSAGING, "Unexpected message type '%s' on TCP from %s (should be TEXT)", msg_type, sender_username);
         }
     } else {

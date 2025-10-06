@@ -119,7 +119,8 @@ int send_message(const char *ip, const char *message, const char *msg_type, cons
         log_warning_cat(LOG_CAT_NETWORKING, "Warning: send_message failed to get local IP. Using 'unknown'.");
         strcpy(local_ip, "unknown");
     }
-    formatted_len = format_message(buffer, BUFFER_SIZE, msg_type, sender_username, local_ip, message);
+    formatted_len = format_message(buffer, BUFFER_SIZE, msg_type, generate_message_id(),
+                                   sender_username, local_ip, message);
     if (formatted_len <= 0) {
         log_error_cat(LOG_CAT_MESSAGING, "Error: Failed to format outgoing message (buffer too small?).");
         close(sock);
@@ -181,7 +182,10 @@ void *listener_thread(void *arg)
         memset(buffer, 0, BUFFER_SIZE);
         bytes_read = read(client_sock, buffer, BUFFER_SIZE - 1);
         if (bytes_read > 0) {
-            if (parse_message(buffer, bytes_read, sender_ip_from_payload, sender_username, msg_type, content) == 0) {
+            csend_uint32_t msg_id;
+            if (parse_message(buffer, bytes_read, sender_ip_from_payload, sender_username, msg_type, &msg_id, content) == 0) {
+                log_debug_cat(LOG_CAT_MESSAGING, "Received message ID %lu from %s@%s",
+                              (unsigned long)msg_id, sender_username, sender_ip);
                 handle_received_tcp_message(sender_ip, sender_username, msg_type, content,
                                             &posix_callbacks, state);
             } else {

@@ -30,13 +30,27 @@ typedef uint32_t csend_uint32_t;
 #define PROTOCOL_MIN_MESSAGE_SIZE   (sizeof(csend_uint32_t) + 3)  /* magic + "||" */
 #define PROTOCOL_MIN_BUFFER_SIZE    64  /* Reasonable minimum for any message */
 
-/* Protocol format: [4-byte magic][msg_type]|[sender@ip]|[content] */
+/* Protocol format: [4-byte magic][msg_type]|[msg_id]|[sender@ip]|[content] */
+
+/**
+ * generate_message_id - Generate a unique message ID
+ *
+ * Generates a unique message ID for each message sent. The ID is a simple
+ * monotonically increasing counter that wraps at UINT32_MAX. This is useful
+ * for message tracking, deduplication, and ordering independent of clock sync.
+ *
+ * This function is thread-safe on platforms that support atomic operations.
+ *
+ * Return: A unique message ID
+ */
+csend_uint32_t generate_message_id(void);
 
 /**
  * format_message - Format a message for network transmission
  * @buffer: Output buffer to write formatted message
  * @buffer_size: Size of output buffer in bytes
  * @msg_type: Message type (e.g., MSG_TEXT, MSG_QUIT)
+ * @msg_id: Message ID (use generate_message_id() to create)
  * @sender: Sender's username (NULL defaults to "anon")
  * @local_ip_str: Sender's IP address (NULL defaults to "unknown")
  * @content: Message content (NULL defaults to empty string)
@@ -47,7 +61,8 @@ typedef uint32_t csend_uint32_t;
  * Return: Total bytes written including null terminator on success, 0 on error
  */
 int format_message(char *buffer, int buffer_size, const char *msg_type,
-                   const char *sender, const char *local_ip_str, const char *content);
+                   csend_uint32_t msg_id, const char *sender, const char *local_ip_str,
+                   const char *content);
 
 /**
  * parse_message - Parse a received network message
@@ -56,6 +71,7 @@ int format_message(char *buffer, int buffer_size, const char *msg_type,
  * @sender_ip: Output buffer for sender's IP (size >= INET_ADDRSTRLEN)
  * @sender_username: Output buffer for sender's username (size >= 32)
  * @msg_type: Output buffer for message type (size >= 32)
+ * @msg_id: Output pointer for message ID (NULL if not needed)
  * @content: Output buffer for message content (size >= BUFFER_SIZE)
  *
  * Parses a message formatted according to the protocol specification.
@@ -65,7 +81,7 @@ int format_message(char *buffer, int buffer_size, const char *msg_type,
  * Return: 0 on success, -1 on error
  */
 int parse_message(const char *buffer, int buffer_len, char *sender_ip, char *sender_username,
-                  char *msg_type, char *content);
+                  char *msg_type, csend_uint32_t *msg_id, char *content);
 
 /* Protocol validation: Use strcmp() for message type comparison */
 

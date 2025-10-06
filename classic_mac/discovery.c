@@ -203,7 +203,7 @@ OSErr SendDiscoveryBroadcastSync(short macTCPRefNum, const char *myUsername, con
 
     /* Format the message */
     formatted_len = format_message(gBroadcastBuffer, BUFFER_SIZE, MSG_DISCOVERY,
-                                   myUsername, myLocalIPStr, "");
+                                   generate_message_id(), myUsername, myLocalIPStr, "");
     if (formatted_len <= 0) {
         log_error_cat(LOG_CAT_DISCOVERY, "Error: format_message failed for DISCOVERY");
         return paramErr;
@@ -249,7 +249,7 @@ OSErr SendDiscoveryResponseSync(short macTCPRefNum, const char *myUsername, cons
 
     /* Format the message */
     formatted_len = format_message(gResponseBuffer, BUFFER_SIZE, MSG_DISCOVERY_RESPONSE,
-                                   myUsername, myLocalIPStr, "");
+                                   generate_message_id(), myUsername, myLocalIPStr, "");
     if (formatted_len <= 0) {
         log_error_cat(LOG_CAT_DISCOVERY, "Error: format_message failed for DISCOVERY_RESPONSE");
         return paramErr;
@@ -308,7 +308,8 @@ OSErr BroadcastQuitMessage(short macTCPRefNum, const char *myUsername, const cha
     log_info_cat(LOG_CAT_DISCOVERY, "Broadcasting quit message");
 
     /* Format the quit message */
-    formatted_len = format_message(quitBuffer, BUFFER_SIZE, MSG_QUIT, myUsername, myLocalIPStr, "");
+    formatted_len = format_message(quitBuffer, BUFFER_SIZE, MSG_QUIT,
+                                   generate_message_id(), myUsername, myLocalIPStr, "");
     if (formatted_len <= 0) {
         log_error_cat(LOG_CAT_DISCOVERY, "Error: format_message failed for MSG_QUIT");
         return paramErr;

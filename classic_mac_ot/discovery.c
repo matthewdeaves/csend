@@ -26,7 +26,7 @@ static unsigned long gLastDiscoveryTime = 0;
 static void ot_send_discovery_response(uint32_t dest_ip_addr, uint16_t dest_port, void *platform_context)
 {
     char formattedMessage[BUFFER_SIZE];
-    const char* username = GetUsername();
+    const char *username = GetUsername();
     char localIP[16];
     int result;
     char destIPStr[16];
@@ -40,7 +40,8 @@ static void ot_send_discovery_response(uint32_t dest_ip_addr, uint16_t dest_port
     OTInetHostToString(dest_ip_addr, destIPStr);
 
     /* Format discovery response message */
-    result = format_message(formattedMessage, sizeof(formattedMessage), MSG_DISCOVERY_RESPONSE, username, localIP, "");
+    result = format_message(formattedMessage, sizeof(formattedMessage), MSG_DISCOVERY_RESPONSE,
+                            generate_message_id(), username, localIP, "");
     if (result <= 0) {
         log_error_cat(LOG_CAT_DISCOVERY, "Failed to format discovery response");
         return;
@@ -95,8 +96,8 @@ void ProcessDiscovery(void)
 
     /* Send discovery broadcast periodically */
     if (gLastDiscoveryTime == 0 ||
-        (currentTime >= gLastDiscoveryTime &&
-         (currentTime - gLastDiscoveryTime) >= DISCOVERY_INTERVAL_TICKS)) {
+            (currentTime >= gLastDiscoveryTime &&
+             (currentTime - gLastDiscoveryTime) >= DISCOVERY_INTERVAL_TICKS)) {
 
         SendDiscoveryBroadcast();
         gLastDiscoveryTime = currentTime;
@@ -107,7 +108,7 @@ void ProcessDiscovery(void)
 OSErr SendDiscoveryBroadcast(void)
 {
     char formattedMessage[BUFFER_SIZE];
-    const char* username = GetUsername();
+    const char *username = GetUsername();
     char localIP[16];
     int result;
 
@@ -119,7 +120,8 @@ OSErr SendDiscoveryBroadcast(void)
     GetLocalIPAddress(localIP, sizeof(localIP));
 
     /* Format discovery message according to protocol */
-    result = format_message(formattedMessage, sizeof(formattedMessage), MSG_DISCOVERY, username, localIP, "");
+    result = format_message(formattedMessage, sizeof(formattedMessage), MSG_DISCOVERY,
+                            generate_message_id(), username, localIP, "");
     if (result <= 0) {
         log_error_cat(LOG_CAT_DISCOVERY, "SendDiscoveryBroadcast: Failed to format message");
         return paramErr;
@@ -132,7 +134,7 @@ OSErr SendDiscoveryBroadcast(void)
 }
 
 /* Process incoming UDP discovery message */
-void ProcessIncomingUDPMessage(const char* buffer, int len, const char* senderIPStr, UInt32 senderIPAddr, UInt16 senderPort)
+void ProcessIncomingUDPMessage(const char *buffer, int len, const char *senderIPStr, UInt32 senderIPAddr, UInt16 senderPort)
 {
     static discovery_platform_callbacks_t callbacks = {
         .send_response_callback = ot_send_discovery_response,

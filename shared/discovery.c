@@ -11,16 +11,19 @@ void discovery_logic_process_packet(const char *buffer, int len,
     char sender_username[32];
     char msg_type[32];
     char content[BUFFER_SIZE];
+    csend_uint32_t msg_id;
     int add_result;
     if (!callbacks || !callbacks->add_or_update_peer_callback || !callbacks->send_response_callback ||
-        !callbacks->notify_peer_list_updated_callback || !callbacks->mark_peer_inactive_callback) {
+            !callbacks->notify_peer_list_updated_callback || !callbacks->mark_peer_inactive_callback) {
         log_error_cat(LOG_CAT_DISCOVERY, "Error (discovery_logic): Invalid callbacks provided.");
         return;
     }
-    if (parse_message(buffer, len, sender_ip_from_payload, sender_username, msg_type, content) != 0) {
+    if (parse_message(buffer, len, sender_ip_from_payload, sender_username, msg_type, &msg_id, content) != 0) {
         log_warning_cat(LOG_CAT_DISCOVERY, "Discarding invalid/unknown UDP msg from %s (%d bytes) - parse failed.", sender_ip_str, len);
         return;
     }
+    log_debug_cat(LOG_CAT_DISCOVERY, "Received message ID %lu from %s@%s",
+                  (unsigned long)msg_id, sender_username, sender_ip_str);
     if (strcmp(msg_type, MSG_DISCOVERY) == 0) {
         log_debug_cat(LOG_CAT_DISCOVERY, "Received DISCOVERY from %s@%s", sender_username, sender_ip_str);
         callbacks->send_response_callback(sender_ip_addr, sender_port, platform_context);

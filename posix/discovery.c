@@ -28,7 +28,8 @@ static void posix_send_discovery_response(uint32_t dest_ip_addr_host, uint16_t d
         log_warning_cat(LOG_CAT_DISCOVERY, "Warning: posix_send_discovery_response failed to get local IP. Using 'unknown'.");
         strcpy(local_ip, "unknown");
     }
-    response_len = format_message(response, BUFFER_SIZE, MSG_DISCOVERY_RESPONSE, state->username, local_ip, "");
+    response_len = format_message(response, BUFFER_SIZE, MSG_DISCOVERY_RESPONSE,
+                                  generate_message_id(), state->username, local_ip, "");
     if (response_len <= 0) {
         log_error_cat(LOG_CAT_DISCOVERY, "Error: Failed to format discovery response message (buffer too small?).");
         return;
@@ -113,7 +114,8 @@ int broadcast_discovery(app_state_t *state)
         log_warning_cat(LOG_CAT_DISCOVERY, "Warning: broadcast_discovery failed to get local IP. Using 'unknown'.");
         strcpy(local_ip, "unknown");
     }
-    formatted_len = format_message(buffer, BUFFER_SIZE, MSG_DISCOVERY, state->username, local_ip, "");
+    formatted_len = format_message(buffer, BUFFER_SIZE, MSG_DISCOVERY,
+                                   generate_message_id(), state->username, local_ip, "");
     if (formatted_len <= 0) {
         log_error_cat(LOG_CAT_DISCOVERY, "Error: Failed to format discovery broadcast message (buffer too small?).");
         return -1;
@@ -148,7 +150,8 @@ int broadcast_quit_message(app_state_t *state)
         strcpy(local_ip, "unknown");
     }
 
-    formatted_len = format_message(buffer, BUFFER_SIZE, MSG_QUIT, state->username, local_ip, "");
+    formatted_len = format_message(buffer, BUFFER_SIZE, MSG_QUIT,
+                                   generate_message_id(), state->username, local_ip, "");
     if (formatted_len <= 0) {
         log_error_cat(LOG_CAT_DISCOVERY, "Error: Failed to format quit broadcast message (buffer too small?).");
         return -1;
