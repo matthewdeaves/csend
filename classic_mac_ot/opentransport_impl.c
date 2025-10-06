@@ -637,7 +637,37 @@ void PollActiveConnections(void)
                 RemoveActiveConnection(ep);
                 ReleaseEndpointToPool(ep);
             } else if (lookResult == T_ORDREL) {
-                log_debug_cat(LOG_CAT_NETWORKING, "Poll: Orderly disconnect on active connection %d (endpoint %ld) - no data received", i, (long)ep);
+                /* Orderly disconnect received, but data might still be in the buffer.
+                 * Per NetworkingOpenTransport.txt: "receive all data remaining" before disconnect.
+                 * Try one more OTRcv to catch any data that arrived with the T_ORDREL. */
+                log_debug_cat(LOG_CAT_NETWORKING, "Poll: T_ORDREL on active connection %d, checking for buffered data", i);
+
+                char finalBuffer[BUFFER_SIZE];
+                UInt32 finalFlags = 0;
+                OTResult finalBytes = OTRcv(ep, finalBuffer, sizeof(finalBuffer) - 1, &finalFlags);
+
+                if (finalBytes > 0) {
+                    /* Data was still in buffer! Process it before disconnect */
+                    finalBuffer[finalBytes] = '\0';
+                    log_debug_cat(LOG_CAT_NETWORKING, "Poll: Received %ld bytes from orderly disconnect (endpoint %ld)", finalBytes, (long)ep);
+
+                    /* Get peer IP */
+                    TBind peerAddr;
+                    InetAddress peerInetAddr;
+                    char peerIPStr[16] = "unknown";
+                    peerAddr.addr.buf = (UInt8*)&peerInetAddr;
+                    peerAddr.addr.maxlen = sizeof(InetAddress);
+
+                    OSStatus err = OTGetProtAddress(ep, NULL, &peerAddr);
+                    if (err == noErr && peerAddr.addr.len > 0) {
+                        OTInetHostToString(peerInetAddr.fHost, peerIPStr);
+                    }
+
+                    ProcessIncomingMessage(finalBuffer, peerIPStr);
+                } else {
+                    log_debug_cat(LOG_CAT_NETWORKING, "Poll: Orderly disconnect on active connection %d (endpoint %ld) - no data received", i, (long)ep);
+                }
+
                 OTRcvOrderlyDisconnect(ep); /* Acknowledge the orderly release */
                 RemoveActiveConnection(ep);
                 ReleaseEndpointToPool(ep);
