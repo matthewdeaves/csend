@@ -7,7 +7,7 @@
 #include "opentransport_impl.h"
 #include "../shared/logging.h"
 #include "../shared/protocol.h"
-#include "peer_mac.h"
+#include "../shared/peer_wrapper.h"
 #include "messaging.h"
 #include "discovery.h"
 #include <OpenTransport.h>
@@ -42,6 +42,17 @@ typedef struct {
 static PooledEndpoint gEndpointPool[MAX_CACHED_ENDPOINTS];
 static int gPoolSize = 0;
 static Boolean gPoolInitialized = false;
+
+/* Active connection tracking - endpoints awaiting data */
+typedef struct {
+    EndpointRef endpoint;
+    Boolean active;
+    unsigned long acceptTime; /* TickCount when accepted */
+} ActiveConnection;
+
+#define MAX_ACTIVE_CONNECTIONS 10
+static ActiveConnection gActiveConnections[MAX_ACTIVE_CONNECTIONS];
+static Boolean gActiveConnectionsInitialized = false;
 
 /* Initialize Open Transport for P2P messaging */
 OSErr InitOTForApp(void)
@@ -448,7 +459,7 @@ void ReleaseEndpointToPool(EndpointRef endpoint)
             state = OTGetEndpointState(endpoint);
             log_debug_cat(LOG_CAT_NETWORKING, "Releasing endpoint %d (state %ld)", i, state);
 
-            /* If endpoint is connected, disconnect it to return to T_IDLE/T_UNBND */
+            /* If endpoint is connected, disconnect it first */
             if (state == T_DATAXFER || state == T_INREL || state == T_OUTREL || state == T_INCON || state == T_OUTCON) {
                 /* Use abortive disconnect - it's immediate and returns endpoint to T_IDLE */
                 OSStatus err = OTSndDisconnect(endpoint, NULL);
@@ -481,13 +492,27 @@ void ReleaseEndpointToPool(EndpointRef endpoint)
                 }
             }
 
-            /* Verify endpoint is in a reusable state (T_IDLE, T_UNBND, or T_UNINIT) */
+            /* Per NetworkingOpenTransport.txt: Endpoints for OTAccept should be "open, unbound".
+             * After disconnect, endpoint is in T_IDLE. Unbind it to return to T_UNBND for reuse. */
+            state = OTGetEndpointState(endpoint);
+            if (state == T_IDLE) {
+                OSStatus err = OTUnbind(endpoint);
+                if (err == noErr) {
+                    state = OTGetEndpointState(endpoint);
+                    log_debug_cat(LOG_CAT_NETWORKING, "Unbound endpoint %d, now in state %ld", i, state);
+                } else {
+                    log_error_cat(LOG_CAT_NETWORKING, "OTUnbind failed for endpoint %d: %ld", i, err);
+                }
+            }
+
+            /* Verify endpoint is in a reusable state (T_UNBND preferred for OTAccept) */
             state = OTGetEndpointState(endpoint);
             if (state != T_IDLE && state != T_UNBND && state != T_UNINIT) {
                 log_error_cat(LOG_CAT_NETWORKING, "WARNING: Endpoint %d still in bad state %ld after release attempt", i, state);
             }
 
             gEndpointPool[i].inUse = false;
+            gEndpointPool[i].bound = false; /* Mark as unbound for proper tracking */
             log_debug_cat(LOG_CAT_NETWORKING, "Released endpoint %d back to pool (final state %ld)", i, state);
             return;
         }
@@ -496,6 +521,143 @@ void ReleaseEndpointToPool(EndpointRef endpoint)
     /* Endpoint not in pool - close it */
     log_debug_cat(LOG_CAT_NETWORKING, "Endpoint %ld not in pool, closing directly", (long)endpoint);
     OTCloseProvider(endpoint);
+}
+
+/* Initialize active connections tracking */
+static void InitializeActiveConnections(void)
+{
+    int i;
+    if (gActiveConnectionsInitialized) {
+        return;
+    }
+
+    for (i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
+        gActiveConnections[i].endpoint = kOTInvalidEndpointRef;
+        gActiveConnections[i].active = false;
+        gActiveConnections[i].acceptTime = 0;
+    }
+
+    gActiveConnectionsInitialized = true;
+    log_debug_cat(LOG_CAT_NETWORKING, "Initialized active connections tracking");
+}
+
+/* Add connection to active tracking */
+static Boolean AddActiveConnection(EndpointRef endpoint)
+{
+    int i;
+
+    if (!gActiveConnectionsInitialized) {
+        InitializeActiveConnections();
+    }
+
+    for (i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
+        if (!gActiveConnections[i].active) {
+            gActiveConnections[i].endpoint = endpoint;
+            gActiveConnections[i].active = true;
+            gActiveConnections[i].acceptTime = TickCount();
+            log_debug_cat(LOG_CAT_NETWORKING, "Added endpoint %ld to active connections slot %d", (long)endpoint, i);
+            return true;
+        }
+    }
+
+    log_error_cat(LOG_CAT_NETWORKING, "No free slot in active connections for endpoint %ld", (long)endpoint);
+    return false;
+}
+
+/* Remove connection from active tracking */
+static void RemoveActiveConnection(EndpointRef endpoint)
+{
+    int i;
+
+    for (i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
+        if (gActiveConnections[i].active && gActiveConnections[i].endpoint == endpoint) {
+            gActiveConnections[i].active = false;
+            gActiveConnections[i].endpoint = kOTInvalidEndpointRef;
+            log_debug_cat(LOG_CAT_NETWORKING, "Removed endpoint %ld from active connections slot %d", (long)endpoint, i);
+            return;
+        }
+    }
+}
+
+/* Poll active connections for data */
+void PollActiveConnections(void)
+{
+    int i;
+    unsigned long currentTime = TickCount();
+    const unsigned long timeout = 180; /* 3 seconds at 60 ticks/sec */
+
+    if (!gActiveConnectionsInitialized) {
+        return;
+    }
+
+    for (i = 0; i < MAX_ACTIVE_CONNECTIONS; i++) {
+        if (!gActiveConnections[i].active) {
+            continue;
+        }
+
+        EndpointRef ep = gActiveConnections[i].endpoint;
+
+        /* Per NetworkingOpenTransport.txt: OTLook prioritizes T_ORDREL over T_DATA.
+         * We MUST try to receive data first before checking OTLook, otherwise we'll
+         * miss data that arrived before the orderly disconnect. */
+
+        /* Try to receive data first */
+        char buffer[BUFFER_SIZE];
+        UInt32 flags = 0;
+        OTResult bytesReceived = OTRcv(ep, buffer, sizeof(buffer) - 1, &flags);
+
+        if (bytesReceived > 0) {
+            /* Data received! Process it */
+            buffer[bytesReceived] = '\0';
+            log_debug_cat(LOG_CAT_NETWORKING, "Poll: Received %ld bytes on active connection %d (endpoint %ld)", bytesReceived, i, (long)ep);
+
+            /* Get peer IP for processing */
+            TBind peerAddr;
+            InetAddress peerInetAddr;
+            char peerIPStr[16] = "unknown";
+            peerAddr.addr.buf = (UInt8*)&peerInetAddr;
+            peerAddr.addr.maxlen = sizeof(InetAddress);
+
+            OSStatus err = OTGetProtAddress(ep, NULL, &peerAddr);
+            if (err == noErr && peerAddr.addr.len > 0) {
+                OTInetHostToString(peerInetAddr.fHost, peerIPStr);
+            }
+
+            ProcessIncomingMessage(buffer, peerIPStr);
+
+            /* After receiving data, release the endpoint */
+            RemoveActiveConnection(ep);
+            ReleaseEndpointToPool(ep);
+        } else if (bytesReceived == kOTNoDataErr) {
+            /* No data yet - check for disconnect events */
+            OTResult lookResult = OTLook(ep);
+
+            if (lookResult == T_DISCONNECT) {
+                log_debug_cat(LOG_CAT_NETWORKING, "Poll: Abortive disconnect on active connection %d (endpoint %ld)", i, (long)ep);
+                RemoveActiveConnection(ep);
+                ReleaseEndpointToPool(ep);
+            } else if (lookResult == T_ORDREL) {
+                log_debug_cat(LOG_CAT_NETWORKING, "Poll: Orderly disconnect on active connection %d (endpoint %ld) - no data received", i, (long)ep);
+                OTRcvOrderlyDisconnect(ep); /* Acknowledge the orderly release */
+                RemoveActiveConnection(ep);
+                ReleaseEndpointToPool(ep);
+            } else if (lookResult < 0) {
+                log_error_cat(LOG_CAT_NETWORKING, "Poll: OTLook error on active connection %d (endpoint %ld): %ld", i, (long)ep, lookResult);
+                RemoveActiveConnection(ep);
+                ReleaseEndpointToPool(ep);
+            } else if (currentTime - gActiveConnections[i].acceptTime > timeout) {
+                log_debug_cat(LOG_CAT_NETWORKING, "Poll: Timeout on active connection %d (endpoint %ld)", i, (long)ep);
+                RemoveActiveConnection(ep);
+                ReleaseEndpointToPool(ep);
+            }
+            /* else: No data, no events - keep waiting */
+        } else {
+            /* OTRcv error */
+            log_error_cat(LOG_CAT_NETWORKING, "Poll: OTRcv error on active connection %d (endpoint %ld): %ld", i, (long)ep, bytesReceived);
+            RemoveActiveConnection(ep);
+            ReleaseEndpointToPool(ep);
+        }
+    }
 }
 
 /* Handle incoming TCP connection */
@@ -541,20 +703,24 @@ void HandleIncomingConnection(EndpointRef listener)
 
     log_info_cat(LOG_CAT_NETWORKING, "Accepted connection, sequence %ld. Using pooled endpoint %ld", call.sequence, (long)connEp);
 
-    /* Try to read data with a short timeout - don't block */
-    /* Use OTRcv with non-blocking check first */
+    /* Check if data is immediately available */
     OTResult lookResult = OTLook(connEp);
     if (lookResult == T_DATA) {
-        /* Data is available, handle it */
+        /* Data is available immediately, handle it now */
+        log_debug_cat(LOG_CAT_NETWORKING, "Data immediately available on new connection");
         HandleIncomingTCPData(connEp);
+        /* Release endpoint after handling data */
+        ReleaseEndpointToPool(connEp);
+        log_debug_cat(LOG_CAT_NETWORKING, "Released connection endpoint back to pool");
     } else {
-        /* No immediate data - try one receive with very short wait */
-        HandleIncomingTCPData(connEp);
+        /* No immediate data - add to active connections for polling */
+        log_debug_cat(LOG_CAT_NETWORKING, "No immediate data, adding connection to active tracking");
+        if (!AddActiveConnection(connEp)) {
+            /* Failed to add to active connections - release immediately */
+            log_error_cat(LOG_CAT_NETWORKING, "Failed to track connection, releasing endpoint");
+            ReleaseEndpointToPool(connEp);
+        }
     }
-
-    /* ReleaseEndpointToPool will handle unbinding/disconnecting the endpoint */
-    ReleaseEndpointToPool(connEp);
-    log_debug_cat(LOG_CAT_NETWORKING, "Released connection endpoint back to pool");
 }
 
 /* Handle incoming TCP data */
