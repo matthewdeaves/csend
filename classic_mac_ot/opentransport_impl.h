@@ -40,6 +40,7 @@ OSErr CreateDiscoveryEndpoint(udp_port localPort);
 
 /* Event polling - call from main event loop */
 void PollOTEvents(void);
+void PollActiveConnections(void);
 
 /* Event handlers */
 void HandleTCPEvent(EndpointRef endpoint, OTResult event);

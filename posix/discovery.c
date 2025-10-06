@@ -3,6 +3,7 @@
 #include "../shared/protocol.h"
 #include "../shared/discovery.h"
 #include "../shared/logging.h"
+#include "../shared/peer_wrapper.h"
 #include "network.h"
 #include "peer.h"
 #include "ui_interface.h"
@@ -47,10 +48,10 @@ static void posix_send_discovery_response(uint32_t dest_ip_addr_host, uint16_t d
 }
 static int posix_add_or_update_peer(const char *ip, const char *username, void *platform_context)
 {
-    app_state_t *state = (app_state_t *)platform_context;
-    if (!state) return -1;
-    return add_peer(state, ip, username);
+    (void)platform_context;
+    return pw_add_or_update(ip, username);
 }
+
 static void posix_notify_peer_list_updated(void *platform_context)
 {
     app_state_t *state = (app_state_t *)platform_context;
@@ -64,12 +65,8 @@ static void posix_notify_peer_list_updated(void *platform_context)
 
 static void posix_mark_peer_inactive(const char *ip, void *platform_context)
 {
-    app_state_t *state = (app_state_t *)platform_context;
-    if (!state) return;
-
-    pthread_mutex_lock(&state->peers_mutex);
-    peer_shared_mark_inactive(&state->peer_manager, ip);
-    pthread_mutex_unlock(&state->peers_mutex);
+    (void)platform_context;
+    pw_mark_inactive(ip);
 }
 int init_discovery(app_state_t *state)
 {

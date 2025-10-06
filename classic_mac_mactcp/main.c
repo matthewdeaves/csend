@@ -27,7 +27,7 @@
 #include "dialog_peerlist.h"
 #include "dialog_input.h"
 #include "dialog_messages.h"
-#include "peer_mac.h"
+#include "../shared/peer_wrapper.h"
 #ifndef HiWord
 #define HiWord(x) ((short)(((long)(x) >> 16) & 0xFFFF))
 #endif

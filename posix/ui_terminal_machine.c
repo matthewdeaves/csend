@@ -3,6 +3,7 @@
 #include "logging.h"
 #include "../shared/logging.h"
 #include "../shared/common_defs.h"
+#include "../shared/peer_wrapper.h"
 #include <stdio.h>
 #include <pthread.h>
 #include <string.h>
@@ -184,6 +185,7 @@ static void machine_display_error(void *context, const char *format, va_list arg
 static void machine_display_peer_list(void *context, app_state_t *state)
 {
     (void)context;
+    (void)state;
     char timestamp[32];
     char json[4096];
     char peers_json[3072] = "[";
@@ -191,43 +193,31 @@ static void machine_display_peer_list(void *context, app_state_t *state)
 
     get_timestamp(timestamp, sizeof(timestamp));
 
-    pthread_mutex_lock(&state->peers_mutex);
-    time_t now = time(NULL);
-    int active_count = 0;
+    int active_count = pw_get_active_peer_count();
 
-    for (int i = 0; i < MAX_PEERS; i++) {
-        if (state->peer_manager.peers[i].active) {
-            if (difftime(now, state->peer_manager.peers[i].last_seen) > PEER_TIMEOUT) {
-                log_info_cat(LOG_CAT_PEER_MGMT, "Peer %s@%s timed out",
-                             state->peer_manager.peers[i].username,
-                             state->peer_manager.peers[i].ip);
-                state->peer_manager.peers[i].active = 0;
-                continue;
-            }
+    for (int i = 0; i < active_count; i++) {
+        peer_t peer;
+        pw_get_peer_by_index(i, &peer);
 
-            char peer_timestamp[32];
-            time_t last_seen_time = state->peer_manager.peers[i].last_seen;
-            struct tm *tm_info = gmtime(&last_seen_time);
-            strftime(peer_timestamp, sizeof(peer_timestamp), "%Y-%m-%dT%H:%M:%SZ", tm_info);
+        char peer_timestamp[32];
+        time_t last_seen_time = peer.last_seen;
+        struct tm *tm_info = gmtime(&last_seen_time);
+        strftime(peer_timestamp, sizeof(peer_timestamp), "%Y-%m-%dT%H:%M:%SZ", tm_info);
 
-            char peer_json[256];
-            snprintf(peer_json, sizeof(peer_json),
-                     "%s{\"id\":%d,\"username\":\"%s\",\"ip\":\"%s\","
-                     "\"last_seen\":\"%s\",\"status\":\"active\"}",
-                     first ? "" : ",",
-                     ++active_count,
-                     state->peer_manager.peers[i].username,
-                     state->peer_manager.peers[i].ip,
-                     peer_timestamp);
+        char peer_json[256];
+        snprintf(peer_json, sizeof(peer_json),
+                 "%s{\"id\":%d,\"username\":\"%s\",\"ip\":\"%s\",\"last_seen\":\"%s\",\"status\":\"active\"}",
+                 first ? "" : ",",
+                 i + 1,
+                 peer.username,
+                 peer.ip,
+                 peer_timestamp);
 
-            strcat(peers_json, peer_json);
-            first = 0;
-        }
+        strcat(peers_json, peer_json);
+        first = 0;
     }
 
     strcat(peers_json, "]");
-
-    pthread_mutex_unlock(&state->peers_mutex);
 
     snprintf(json, sizeof(json),
              "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
@@ -450,15 +440,7 @@ static void machine_notify_status(void *context, app_state_t *state)
     get_timestamp(timestamp, sizeof(timestamp));
     time_t uptime = time(NULL) - start_time;
 
-    pthread_mutex_lock(&state->peers_mutex);
-    int active_peers = 0;
-    for (int i = 0; i < MAX_PEERS; i++) {
-        if (state->peer_manager.peers[i].active &&
-                difftime(time(NULL), state->peer_manager.peers[i].last_seen) <= PEER_TIMEOUT) {
-            active_peers++;
-        }
-    }
-    pthread_mutex_unlock(&state->peers_mutex);
+    int active_peers = pw_get_active_peer_count();
 
     snprintf(json, sizeof(json),
              "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","
@@ -481,19 +463,13 @@ static void machine_notify_status(void *context, app_state_t *state)
 static void machine_notify_stats(void *context, app_state_t *state)
 {
     (void)context;
+    (void)state;
     char timestamp[32];
     char json[512];
 
     get_timestamp(timestamp, sizeof(timestamp));
 
-    pthread_mutex_lock(&state->peers_mutex);
-    int total_peers = 0;
-    for (int i = 0; i < MAX_PEERS; i++) {
-        if (state->peer_manager.peers[i].active) {
-            total_peers++;
-        }
-    }
-    pthread_mutex_unlock(&state->peers_mutex);
+    int total_peers = pw_get_active_peer_count();
 
     snprintf(json, sizeof(json),
              "{\"type\":\"response\",\"id\":\"%s\",\"timestamp\":\"%s\","

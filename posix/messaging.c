@@ -3,6 +3,7 @@
 #include "../shared/protocol.h"
 #include "../shared/messaging.h"
 #include "../shared/logging.h"
+#include "../shared/peer_wrapper.h"
 #include "logging.h"
 #include "ui_terminal.h"
 #include "ui_interface.h"
@@ -18,13 +19,10 @@
 #include <sys/time.h>
 static int posix_tcp_add_or_update_peer(const char *ip, const char *username, void *platform_context)
 {
-    app_state_t *state = (app_state_t *)platform_context;
-    if (!state) {
-        log_error_cat(LOG_CAT_MESSAGING, "Error (posix_tcp_add_or_update_peer): NULL platform_context.");
-        return -1;
-    }
-    return add_peer(state, ip, username);
+    (void)platform_context;
+    return pw_add_or_update(ip, username);
 }
+
 static void posix_tcp_display_text_message(const char *username, const char *ip, const char *message_content, void *platform_context)
 {
     app_state_t *state = (app_state_t *)platform_context;
@@ -37,26 +35,11 @@ static void posix_tcp_display_text_message(const char *username, const char *ip,
         terminal_display_app_message("%s@%s: %s", username, ip, message_content);
     }
 }
+
 static void posix_tcp_mark_peer_inactive(const char *ip, void *platform_context)
 {
-    app_state_t *state = (app_state_t *)platform_context;
-    if (!state || !ip) {
-        log_error_cat(LOG_CAT_MESSAGING, "Error (posix_tcp_mark_peer_inactive): NULL platform_context or IP.");
-        return;
-    }
-    pthread_mutex_lock(&state->peers_mutex);
-    int index = peer_shared_find_by_ip(&state->peer_manager, ip);
-    if (index != -1) {
-        if (state->peer_manager.peers[index].active) {
-            state->peer_manager.peers[index].active = 0;
-            log_info_cat(LOG_CAT_PEER_MGMT, "Marked peer %s@%s as inactive.", state->peer_manager.peers[index].username, ip);
-        } else {
-            log_debug_cat(LOG_CAT_PEER_MGMT, "posix_tcp_mark_peer_inactive: Peer %s was already inactive.", ip);
-        }
-    } else {
-        log_debug_cat(LOG_CAT_PEER_MGMT, "posix_tcp_mark_peer_inactive: Peer %s not found.", ip);
-    }
-    pthread_mutex_unlock(&state->peers_mutex);
+    (void)platform_context;
+    pw_mark_inactive(ip);
 }
 int init_listener(app_state_t *state)
 {

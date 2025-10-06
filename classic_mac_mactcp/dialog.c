@@ -1,7 +1,7 @@
 #include "dialog.h"
 #include "../shared/logging.h"
 #include "network_init.h"
-#include "peer_mac.h"
+#include "../shared/peer_wrapper.h"
 #include "messaging.h"
 #include "../shared/logging.h"
 #include "../shared/protocol.h"
@@ -158,22 +158,14 @@ void HandleSendButtonClick(void)
     if (isBroadcast) {
         int sent_count = 0;
         int failed_count = 0;
-        int total_active_peers = 0;
+        int total_active_peers = pw_get_active_peer_count();
         TCPStreamState currentState;
-
-        /* Count active peers first */
-        for (i = 0; i < MAX_PEERS; i++) {
-            if (gPeerManager.peers[i].active) {
-                total_active_peers++;
-            }
-        }
 
         log_debug_cat(LOG_CAT_MESSAGING, "Attempting broadcast of: '%s' to %d active peers", inputCStr, total_active_peers);
         sprintf(displayMsg, "You (Broadcast): %s", inputCStr);
         AppendToMessagesTE(displayMsg);
         AppendToMessagesTE("\r");
 
-        /* Check if there are any peers to broadcast to */
         if (total_active_peers == 0) {
             log_debug_cat(LOG_CAT_MESSAGING, "No active peers to broadcast to");
             sprintf(displayMsg, "No active peers found. Waiting for peers to join...");
@@ -183,7 +175,6 @@ void HandleSendButtonClick(void)
             return;
         }
 
-        /* Check if we can send before attempting broadcast */
         currentState = GetTCPSendStreamState();
         if (currentState != TCP_STATE_IDLE) {
             log_warning_cat(LOG_CAT_MESSAGING, "Cannot broadcast: TCP send stream is busy (state %d)", currentState);
@@ -195,21 +186,16 @@ void HandleSendButtonClick(void)
             return;
         }
 
-        for (i = 0; i < MAX_PEERS; i++) {
-            if (gPeerManager.peers[i].active) {
-                /* For broadcast, queue messages instead of sending synchronously */
-                sendErr = MacTCP_QueueMessage(gPeerManager.peers[i].ip,
-                                              inputCStr,
-                                              MSG_TEXT);
-                if (sendErr == noErr) {
-                    sent_count++;
-                    log_debug_cat(LOG_CAT_MESSAGING, "Broadcast queued for %s@%s",
-                                  gPeerManager.peers[i].username, gPeerManager.peers[i].ip);
-                } else {
-                    failed_count++;
-                    log_error_cat(LOG_CAT_MESSAGING, "Broadcast queue failed for %s@%s: %d",
-                                  gPeerManager.peers[i].username, gPeerManager.peers[i].ip, sendErr);
-                }
+        for (i = 0; i < total_active_peers; i++) {
+            peer_t peer;
+            pw_get_peer_by_index(i, &peer);
+            sendErr = MacTCP_QueueMessage(peer.ip, inputCStr, MSG_TEXT);
+            if (sendErr == noErr) {
+                sent_count++;
+                log_debug_cat(LOG_CAT_MESSAGING, "Broadcast queued for %s@%s", peer.username, peer.ip);
+            } else {
+                failed_count++;
+                log_error_cat(LOG_CAT_MESSAGING, "Broadcast queue failed for %s@%s: %d", peer.username, peer.ip, sendErr);
             }
         }
 
@@ -236,9 +222,7 @@ void HandleSendButtonClick(void)
             log_debug_cat(LOG_CAT_MESSAGING, "Attempting to send to selected peer %s@%s: '%s'",
                           targetPeer.username, targetPeer.ip, inputCStr);
 
-            sendErr = MacTCP_QueueMessage(targetPeer.ip,
-                                          inputCStr,
-                                          MSG_TEXT);
+            sendErr = MacTCP_QueueMessage(targetPeer.ip, inputCStr, MSG_TEXT);
 
             if (sendErr == noErr) {
                 sprintf(displayMsg, "You (to %s): %s", targetPeer.username, inputCStr);

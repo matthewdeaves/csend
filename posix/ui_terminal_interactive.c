@@ -3,6 +3,7 @@
 #include "logging.h"
 #include "../shared/logging.h"
 #include "../shared/time_utils.h"
+#include "../shared/peer_wrapper.h"
 #include <stdio.h>
 #include <time.h>
 #include <pthread.h>
@@ -52,36 +53,26 @@ static void interactive_display_error(void *context, const char *format, va_list
 static void interactive_display_peer_list(void *context, app_state_t *state)
 {
     (void)context;
-    pthread_mutex_lock(&state->peers_mutex);
+    (void)state;
     time_t now = time(NULL);
-    int active_count = 0;
+    int active_count = pw_get_active_peer_count();
 
     printf("\n--- Active Peers ---\n");
 
-    for (int i = 0; i < MAX_PEERS; i++) {
-        if (state->peer_manager.peers[i].active) {
-            if (difftime(now, state->peer_manager.peers[i].last_seen) > PEER_TIMEOUT) {
-                log_info_cat(LOG_CAT_PEER_MGMT, "Peer %s@%s timed out (detected in print_peers).",
-                             state->peer_manager.peers[i].username,
-                             state->peer_manager.peers[i].ip);
-                state->peer_manager.peers[i].active = 0;
-                continue;
-            }
-
-            printf("%d. %s@%s (last seen %ld seconds ago)\n",
-                   ++active_count,
-                   state->peer_manager.peers[i].username,
-                   state->peer_manager.peers[i].ip,
-                   (long)(now - state->peer_manager.peers[i].last_seen));
-        }
-    }
-
     if (active_count == 0) {
         printf("No active peers found.\n");
+    } else {
+        for (int i = 0; i < active_count; i++) {
+            peer_t peer;
+            pw_get_peer_by_index(i, &peer);
+            printf("%d. %s@%s (last seen %ld seconds ago)\n",
+                   i + 1,
+                   peer.username,
+                   peer.ip,
+                   (long)(now - peer.last_seen));
+        }
     }
     printf("--------------------\n\n");
-
-    pthread_mutex_unlock(&state->peers_mutex);
     fflush(stdout);
 }
 

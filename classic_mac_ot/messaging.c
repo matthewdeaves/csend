@@ -8,7 +8,7 @@
 #include "dialog_messages.h"
 #include "../shared/logging.h"
 #include "../shared/protocol.h"
-#include "peer_mac.h"
+#include "../shared/peer_wrapper.h"
 #include <string.h>
 #include <stdio.h>
 #include <OSUtils.h>
@@ -62,7 +62,6 @@ OSErr BroadcastMessage(const char *message)
     int sent_count = 0;
     int failed_count = 0;
     OSErr err;
-    unsigned long currentTime;
 
     if (!message) {
         log_error_cat(LOG_CAT_MESSAGING, "BroadcastMessage: Invalid message");
@@ -71,23 +70,17 @@ OSErr BroadcastMessage(const char *message)
 
     log_debug_cat(LOG_CAT_MESSAGING, "Broadcasting message: %s", message);
 
-    /* Get current time for timeout check (Mac uses TickCount in ticks) */
-    currentTime = TickCount();
+    int active_count = pw_get_active_peer_count();
 
-    /* Iterate through all active peers and send individual TCP messages */
-    for (int i = 0; i < MAX_PEERS; i++) {
-        if (gPeerManager.peers[i].active) {
-            /* Check if peer hasn't timed out (PEER_TIMEOUT is in seconds, convert to ticks) */
-            if ((currentTime - gPeerManager.peers[i].last_seen) <= (PEER_TIMEOUT * 60)) {
-                err = SendMessageToPeer(gPeerManager.peers[i].ip, message, MSG_TEXT);
-                if (err == noErr) {
-                    sent_count++;
-                } else {
-                    failed_count++;
-                    log_error_cat(LOG_CAT_MESSAGING, "Failed to send broadcast message to %s",
-                                  gPeerManager.peers[i].ip);
-                }
-            }
+    for (int i = 0; i < active_count; i++) {
+        peer_t peer;
+        pw_get_peer_by_index(i, &peer);
+        err = SendMessageToPeer(peer.ip, message, MSG_TEXT);
+        if (err == noErr) {
+            sent_count++;
+        } else {
+            failed_count++;
+            log_error_cat(LOG_CAT_MESSAGING, "Failed to send broadcast message to %s", peer.ip);
         }
     }
 

@@ -1,7 +1,7 @@
 #include "dialog_peerlist.h"
 #include "dialog.h"
 #include "../../logging.h"
-#include "../peer_mac.h"
+#include "../../peer_wrapper.h"
 #include <MacTypes.h>
 #include <Lists.h>
 #include <Dialogs.h>
@@ -134,15 +134,17 @@ void UpdatePeerDisplayList(Boolean forceRedraw)
     Cell theCell;
     char peerStr[INET_ADDRSTRLEN + 32 + 2];
     int currentListLengthInRows;
-    int activePeerCount = 0;
+    int activePeerCount;
     SignedByte listState;
     Boolean oldSelectionStillValidAndFound = false;
     peer_t oldSelectedPeerData;
     Boolean hadOldSelectionData = false;
+
     if (gPeerListHandle == NULL) {
         log_debug_cat(LOG_CAT_UI, "Skipping UpdatePeerDisplayList: List not initialized.");
         return;
     }
+
     if (gLastSelectedCell.v >= 0) {
         hadOldSelectionData = DialogPeerList_GetSelectedPeer(&oldSelectedPeerData);
         if (hadOldSelectionData) {
@@ -153,7 +155,9 @@ void UpdatePeerDisplayList(Boolean forceRedraw)
     } else {
         log_debug_cat(LOG_CAT_UI, "UpdatePeerDisplayList: No prior selection (gLastSelectedCell.v = %d).", gLastSelectedCell.v);
     }
+
     PruneTimedOutPeers();
+
     listState = HGetState((Handle)gPeerListHandle);
     HLock((Handle)gPeerListHandle);
     if (*gPeerListHandle == NULL) {
@@ -161,29 +165,36 @@ void UpdatePeerDisplayList(Boolean forceRedraw)
         HSetState((Handle)gPeerListHandle, listState);
         return;
     }
+
     currentListLengthInRows = (**gPeerListHandle).dataBounds.bottom;
     if (currentListLengthInRows > 0) {
         LDelRow(currentListLengthInRows, 0, gPeerListHandle);
         log_debug_cat(LOG_CAT_UI, "UpdatePeerDisplayList: Deleted %d rows from List Manager.", currentListLengthInRows);
     }
+
     Cell tempNewSelectedCell = {0, -1};
-    for (int i = 0; i < MAX_PEERS; i++) {
-        if (gPeerManager.peers[i].active) {
-            const char *displayName = (gPeerManager.peers[i].username[0] != '\0') ? gPeerManager.peers[i].username : "???";
-            sprintf(peerStr, "%s@%s", displayName, gPeerManager.peers[i].ip);
-            LAddRow(1, activePeerCount, gPeerListHandle);
-            SetPt(&theCell, 0, activePeerCount);
-            LSetCell(peerStr, strlen(peerStr), theCell, gPeerListHandle);
-            if (hadOldSelectionData &&
-                    strcmp(gPeerManager.peers[i].ip, oldSelectedPeerData.ip) == 0 &&
-                    strcmp(gPeerManager.peers[i].username, oldSelectedPeerData.username) == 0) {
-                tempNewSelectedCell = theCell;
-                oldSelectionStillValidAndFound = true;
-            }
-            activePeerCount++;
+    activePeerCount = pw_get_active_peer_count();
+
+    for (int i = 0; i < activePeerCount; i++) {
+        peer_t peer;
+        pw_get_peer_by_index(i, &peer);
+
+        const char *displayName = (peer.username[0] != '\0') ? peer.username : "???";
+        sprintf(peerStr, "%s@%s", displayName, peer.ip);
+        LAddRow(1, i, gPeerListHandle);
+        SetPt(&theCell, 0, i);
+        LSetCell(peerStr, strlen(peerStr), theCell, gPeerListHandle);
+
+        if (hadOldSelectionData &&
+                strcmp(peer.ip, oldSelectedPeerData.ip) == 0 &&
+                strcmp(peer.username, oldSelectedPeerData.username) == 0) {
+            tempNewSelectedCell = theCell;
+            oldSelectionStillValidAndFound = true;
         }
     }
+
     (**gPeerListHandle).dataBounds.bottom = activePeerCount;
+
     if (oldSelectionStillValidAndFound) {
         LSetSelect(true, tempNewSelectedCell, gPeerListHandle);
         gLastSelectedCell = tempNewSelectedCell;
@@ -196,7 +207,9 @@ void UpdatePeerDisplayList(Boolean forceRedraw)
             SetPt(&gLastSelectedCell, 0, -1);
         }
     }
+
     HSetState((Handle)gPeerListHandle, listState);
+
     if (forceRedraw || activePeerCount != currentListLengthInRows || oldSelectionStillValidAndFound || (hadOldSelectionData && !oldSelectionStillValidAndFound)) {
         GrafPtr windowPort = (GrafPtr)GetWindowPort(gMainWindow);
         if (windowPort != NULL) {
@@ -243,21 +256,15 @@ Boolean DialogPeerList_GetSelectedPeer(peer_t *outPeer)
         log_debug_cat(LOG_CAT_UI, "DialogPeerList_GetSelectedPeer: No peer selected (gLastSelectedCell.v = %d).", gLastSelectedCell.v);
         return false;
     }
-    int selectedDisplayRow = gLastSelectedCell.v;
-    int current_active_peer_index = 0;
-    for (int i = 0; i < MAX_PEERS; i++) {
-        if (gPeerManager.peers[i].active) {
-            if (current_active_peer_index == selectedDisplayRow) {
-                *outPeer = gPeerManager.peers[i];
-                log_debug_cat(LOG_CAT_UI, "DialogPeerList_GetSelectedPeer: Found selected peer '%s'@'%s' at display row %d (data index %d).",
-                              (outPeer->username[0] ? outPeer->username : "???"), outPeer->ip, selectedDisplayRow, i);
-                return true;
-            }
-            current_active_peer_index++;
-        }
+
+    if (GetPeerByIndex(gLastSelectedCell.v, outPeer)) {
+        log_debug_cat(LOG_CAT_UI, "DialogPeerList_GetSelectedPeer: Found selected peer '%s'@'%s' at display row %d.",
+                      (outPeer->username[0] ? outPeer->username : "???"), outPeer->ip, gLastSelectedCell.v);
+        return true;
     }
-    log_debug_cat(LOG_CAT_UI, "DialogPeerList_GetSelectedPeer Warning: Selected row %d is out of bounds or peer became inactive (current active peers: %d).",
-                  selectedDisplayRow, current_active_peer_index);
+
+    log_debug_cat(LOG_CAT_UI, "DialogPeerList_GetSelectedPeer Warning: Selected row %d is out of bounds or peer became inactive.",
+                  gLastSelectedCell.v);
     SetPt(&gLastSelectedCell, 0, -1);
     return false;
 }

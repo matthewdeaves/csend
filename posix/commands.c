@@ -6,6 +6,7 @@
 #include "discovery.h"
 #include "../shared/protocol.h"
 #include "../shared/logging.h"
+#include "../shared/peer_wrapper.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -216,26 +217,17 @@ int find_peer_by_number(app_state_t *state, int peer_num, char *target_ip, size_
 {
     if (!state || !target_ip || ip_size < INET_ADDRSTRLEN) return 0;
 
-    pthread_mutex_lock(&state->peers_mutex);
-
-    int current_peer_index = 0;
-    int found = 0;
-
-    for (int i = 0; i < MAX_PEERS; i++) {
-        if (state->peer_manager.peers[i].active &&
-                (difftime(time(NULL), state->peer_manager.peers[i].last_seen) <= PEER_TIMEOUT)) {
-            current_peer_index++;
-            if (current_peer_index == peer_num) {
-                strncpy(target_ip, state->peer_manager.peers[i].ip, ip_size - 1);
-                target_ip[ip_size - 1] = '\0';
-                found = 1;
-                break;
-            }
-        }
+    int active_count = pw_get_active_peer_count();
+    if (peer_num <= 0 || peer_num > active_count) {
+        return 0;
     }
 
-    pthread_mutex_unlock(&state->peers_mutex);
-    return found;
+    peer_t peer;
+    pw_get_peer_by_index(peer_num - 1, &peer);
+    strncpy(target_ip, peer.ip, ip_size - 1);
+    target_ip[ip_size - 1] = '\0';
+
+    return 1;
 }
 
 int send_to_peer(app_state_t *state, const char *target_ip, const char *message, int peer_num)
@@ -257,22 +249,19 @@ int send_to_peer(app_state_t *state, const char *target_ip, const char *message,
 
 int broadcast_to_all_peers(app_state_t *state, const char *message)
 {
-    pthread_mutex_lock(&state->peers_mutex);
-
     int sent_count = 0;
-    for (int i = 0; i < MAX_PEERS; i++) {
-        if (state->peer_manager.peers[i].active &&
-                (difftime(time(NULL), state->peer_manager.peers[i].last_seen) <= PEER_TIMEOUT)) {
-            if (send_message(state->peer_manager.peers[i].ip, message, MSG_TEXT, state->username) >= 0) {
-                sent_count++;
-            } else {
-                log_error_cat(LOG_CAT_MESSAGING, "Failed to send broadcast message to %s",
-                              state->peer_manager.peers[i].ip);
-            }
+    int active_count = pw_get_active_peer_count();
+
+    for (int i = 0; i < active_count; i++) {
+        peer_t peer;
+        pw_get_peer_by_index(i, &peer);
+        if (send_message(peer.ip, message, MSG_TEXT, state->username) >= 0) {
+            sent_count++;
+        } else {
+            log_error_cat(LOG_CAT_MESSAGING, "Failed to send broadcast message to %s", peer.ip);
         }
     }
 
-    pthread_mutex_unlock(&state->peers_mutex);
     return sent_count;
 }
 
