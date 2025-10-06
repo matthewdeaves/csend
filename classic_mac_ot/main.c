@@ -19,7 +19,7 @@
 #include "../shared/logging.h"
 #include "../shared/common_defs.h"
 #include "../shared/protocol.h"
-#include "logging.h"
+#include "logging_mac.h"
 #include "opentransport_impl.h"
 #include "discovery.h"
 #include "messaging.h"
@@ -27,7 +27,7 @@
 #include "dialog_peerlist.h"
 #include "dialog_input.h"
 #include "dialog_messages.h"
-#include "peer.h"
+#include "peer_mac.h"
 #ifndef HiWord
 #define HiWord(x) ((short)(((long)(x) >> 16) & 0xFFFF))
 #endif

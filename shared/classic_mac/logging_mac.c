@@ -1,7 +1,7 @@
-#include "logging.h"
-#include "../shared/logging.h"
+#include "logging_mac.h"
+#include "../logging.h"
 #include "dialog.h"
-#include "dialog_messages.h"
+#include "ui/dialog_messages.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>

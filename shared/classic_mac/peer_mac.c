@@ -1,5 +1,5 @@
-#include "peer.h"
-#include "../shared/logging.h"
+#include "peer_mac.h"
+#include "../logging.h"
 #include <stddef.h>
 #include <string.h>
 #include <MacTypes.h>

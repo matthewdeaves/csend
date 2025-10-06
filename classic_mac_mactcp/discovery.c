@@ -8,7 +8,7 @@
 #include "../shared/logging.h"
 #include "protocol.h"
 #include "../shared/discovery.h"
-#include "peer.h"
+#include "peer_mac.h"
 #include "network_init.h"
 #include "dialog.h"
 #include "dialog_peerlist.h"

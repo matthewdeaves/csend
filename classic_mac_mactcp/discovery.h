@@ -8,7 +8,7 @@
 #include <MacTypes.h>
 #include <MacTCP.h>  /* Need this for ip_addr and udp_port types */
 #include "common_defs.h"
-#include "peer.h"
+#include "peer_mac.h"
 
 #define BROADCAST_IP 0xFFFFFFFFUL
 #define kMinUDPBufSize 2048

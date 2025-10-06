@@ -53,7 +53,7 @@ endif
 # --- Compiler, Linker, Rez Flags ---
 
 # Compiler flags - Define USE_OPENTRANSPORT to enable OT-specific code
-CFLAGS_MAC = -g -w -ffunction-sections -D__MACOS__ -DUSE_OPENTRANSPORT -Iclassic_mac_ot -Ishared -I"$(CINCLUDES)" -I"$(UNIVERSAL_CINCLUDES)"
+CFLAGS_MAC = -g -w -ffunction-sections -D__MACOS__ -DUSE_OPENTRANSPORT -Iclassic_mac_ot -Ishared -Ishared/classic_mac -Ishared/classic_mac/ui -I"$(CINCLUDES)" -I"$(UNIVERSAL_CINCLUDES)"
 
 # Linker flags (passed via the compiler driver using -Wl,) - Link with 68K OpenTransport libraries
 LDFLAGS_MAC = -Wl,-gc-sections -Wl,--mac-strip-macsbug -L$(TOOLCHAIN_DIR)/m68k-apple-macos/lib -lOpenTransport -lOpenTransportApp -lOpenTptInet
@@ -65,6 +65,8 @@ REZFLAGS = -I"$(RINCLUDES)" # Quote the path
 
 MAC_OT_DIR = classic_mac_ot
 SHARED_DIR = shared
+SHARED_CLASSIC_MAC_DIR = shared/classic_mac
+SHARED_CLASSIC_MAC_UI_DIR = shared/classic_mac/ui
 # Define the directory containing the MPW resource file
 MPW_RES_DIR = MPW_resources
 
@@ -76,12 +78,16 @@ OBJ_DIR = $(BUILD_BASE_DIR)/obj/classic_mac_ot
 
 MAC_OT_C_FILES = $(wildcard $(MAC_OT_DIR)/*.c)
 SHARED_C_FILES = $(wildcard $(SHARED_DIR)/*.c)
+SHARED_CLASSIC_MAC_C_FILES = $(wildcard $(SHARED_CLASSIC_MAC_DIR)/*.c)
+SHARED_CLASSIC_MAC_UI_C_FILES = $(wildcard $(SHARED_CLASSIC_MAC_UI_DIR)/*.c)
 
 # --- Object Files ---
 
 MAC_OT_OBJS = $(patsubst $(MAC_OT_DIR)/%.c, $(OBJ_DIR)/%.o, $(MAC_OT_C_FILES))
 SHARED_OBJS = $(patsubst $(SHARED_DIR)/%.c, $(OBJ_DIR)/shared_%.o, $(SHARED_C_FILES))
-OBJS = $(MAC_OT_OBJS) $(SHARED_OBJS)
+SHARED_CLASSIC_MAC_OBJS = $(patsubst $(SHARED_CLASSIC_MAC_DIR)/%.c, $(OBJ_DIR)/shared_classic_mac_%.o, $(SHARED_CLASSIC_MAC_C_FILES))
+SHARED_CLASSIC_MAC_UI_OBJS = $(patsubst $(SHARED_CLASSIC_MAC_UI_DIR)/%.c, $(OBJ_DIR)/shared_classic_mac_ui_%.o, $(SHARED_CLASSIC_MAC_UI_C_FILES))
+OBJS = $(MAC_OT_OBJS) $(SHARED_OBJS) $(SHARED_CLASSIC_MAC_OBJS) $(SHARED_CLASSIC_MAC_UI_OBJS)
 
 # --- Resource and Target Definitions ---
 
@@ -136,6 +142,18 @@ $(OBJ_DIR)/shared_%.o: $(SHARED_DIR)/%.c Makefile.retro68.ot | $(OBJ_DIR)
 	@echo "--- Compile Stage ---"
 	@echo "Compiling Shared $< -> $@"
 	# Ensure the variable is expanded correctly
+	$(CC_MAC) $(CFLAGS_MAC) -c $< -o $@
+
+# Rule to compile shared/classic_mac C source files into object files in OBJ_DIR
+$(OBJ_DIR)/shared_classic_mac_%.o: $(SHARED_CLASSIC_MAC_DIR)/%.c Makefile.retro68.ot | $(OBJ_DIR)
+	@echo "--- Compile Stage ---"
+	@echo "Compiling Shared Classic Mac $< -> $@"
+	$(CC_MAC) $(CFLAGS_MAC) -c $< -o $@
+
+# Rule to compile shared/classic_mac/ui C source files into object files in OBJ_DIR
+$(OBJ_DIR)/shared_classic_mac_ui_%.o: $(SHARED_CLASSIC_MAC_UI_DIR)/%.c Makefile.retro68.ot | $(OBJ_DIR)
+	@echo "--- Compile Stage ---"
+	@echo "Compiling Shared Classic Mac UI $< -> $@"
 	$(CC_MAC) $(CFLAGS_MAC) -c $< -o $@
 
 # Rule to create the build and object directories if they don't exist

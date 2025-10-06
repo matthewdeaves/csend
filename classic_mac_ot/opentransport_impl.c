@@ -7,7 +7,7 @@
 #include "opentransport_impl.h"
 #include "../shared/logging.h"
 #include "../shared/protocol.h"
-#include "peer.h"
+#include "peer_mac.h"
 #include "messaging.h"
 #include "discovery.h"
 #include <OpenTransport.h>

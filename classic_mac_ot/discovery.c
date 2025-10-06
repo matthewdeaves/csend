@@ -9,7 +9,7 @@
 #include "../shared/logging.h"
 #include "../shared/protocol.h"
 #include "../shared/discovery.h"
-#include "peer.h"
+#include "peer_mac.h"
 #include <stdio.h>
 #include <string.h>
 #include <OSUtils.h>

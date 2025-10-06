@@ -1,7 +1,7 @@
 #include "dialog.h"
 #include "../shared/logging.h"
 #include "opentransport_impl.h"
-#include "peer.h"
+#include "peer_mac.h"
 #include "messaging.h"
 #include "../shared/logging.h"
 #include "../shared/protocol.h"

@@ -8,7 +8,7 @@
 #include "dialog_messages.h"
 #include "../shared/logging.h"
 #include "../shared/protocol.h"
-#include "peer.h"
+#include "peer_mac.h"
 #include <string.h>
 #include <stdio.h>
 #include <OSUtils.h>
