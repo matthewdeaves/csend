@@ -569,30 +569,50 @@ void HandleIncomingTCPData(EndpointRef endpoint)
 
     log_debug_cat(LOG_CAT_NETWORKING, "Handling incoming TCP data");
 
-    /* Wait for data to arrive with timeout - endpoint is in non-blocking mode */
-    while (retryCount < maxRetries) {
-        OTResult lookResult = OTLook(endpoint);
-        if (lookResult == T_DATA) {
-            break; /* Data available */
-        } else if (lookResult == T_DISCONNECT || lookResult == T_ORDREL) {
-            log_debug_cat(LOG_CAT_NETWORKING, "Connection closed while waiting for data");
-            return;
-        } else if (lookResult < 0) {
-            log_error_cat(LOG_CAT_NETWORKING, "OTLook failed while waiting for data: %ld", lookResult);
+    /* Per NetworkingOpenTransport.txt: OTLook prioritizes T_ORDREL over T_DATA.
+     * When sender uses OTSndOrderlyDisconnect after sending data, OTLook returns
+     * T_ORDREL first, even if data is pending. We must try to receive data BEFORE
+     * checking for disconnect events. This is the correct pattern for orderly
+     * disconnect handling. */
+
+    /* Try to receive data immediately (non-blocking) */
+    bytesReceived = OTRcv(endpoint, buffer, sizeof(buffer) - 1, &flags);
+
+    if (bytesReceived == kOTNoDataErr) {
+        /* No immediate data available, wait with timeout */
+        while (retryCount < maxRetries) {
+            /* Check if connection was closed or data arrived */
+            OTResult lookResult = OTLook(endpoint);
+
+            if (lookResult == T_DATA) {
+                /* Data arrived, receive it */
+                bytesReceived = OTRcv(endpoint, buffer, sizeof(buffer) - 1, &flags);
+                break;
+            } else if (lookResult == T_DISCONNECT) {
+                log_debug_cat(LOG_CAT_NETWORKING, "Connection aborted while waiting for data");
+                return;
+            } else if (lookResult == T_ORDREL) {
+                /* Orderly disconnect received - sender has finished sending all data.
+                 * This is expected after the peer completes its send. */
+                log_debug_cat(LOG_CAT_NETWORKING, "Orderly disconnect received, no data pending");
+                OTRcvOrderlyDisconnect(endpoint); /* Acknowledge the orderly release */
+                return;
+            } else if (lookResult < 0) {
+                log_error_cat(LOG_CAT_NETWORKING, "OTLook failed while waiting for data: %ld", lookResult);
+                return;
+            }
+
+            /* Wait a bit and try again */
+            Delay(1, NULL); /* ~17ms per tick */
+            retryCount++;
+        }
+
+        if (retryCount >= maxRetries) {
+            log_debug_cat(LOG_CAT_NETWORKING, "Timeout waiting for TCP data");
             return;
         }
-        /* Wait a bit and try again */
-        Delay(1, NULL); /* ~17ms per tick */
-        retryCount++;
     }
 
-    if (retryCount >= maxRetries) {
-        log_debug_cat(LOG_CAT_NETWORKING, "Timeout waiting for TCP data");
-        return;
-    }
-
-    /* Receive data - non-blocking mode, so won't block event loop */
-    bytesReceived = OTRcv(endpoint, buffer, sizeof(buffer) - 1, &flags);
     if (bytesReceived > 0) {
         buffer[bytesReceived] = '\0'; /* Null terminate */
         log_debug_cat(LOG_CAT_MESSAGING, "Received TCP data (%ld bytes): %s", bytesReceived, buffer);
