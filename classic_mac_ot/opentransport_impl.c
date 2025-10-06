@@ -628,7 +628,7 @@ void PollActiveConnections(void)
             /* After receiving data, release the endpoint */
             RemoveActiveConnection(ep);
             ReleaseEndpointToPool(ep);
-        } else if (bytesReceived == kOTNoDataErr) {
+        } else if (bytesReceived == kOTNoDataErr || bytesReceived == -3158) {
             /* No data yet - check for disconnect events */
             OTResult lookResult = OTLook(ep);
 
@@ -651,8 +651,8 @@ void PollActiveConnections(void)
                 ReleaseEndpointToPool(ep);
             }
             /* else: No data, no events - keep waiting */
-        } else {
-            /* OTRcv error */
+        } else if (bytesReceived < 0) {
+            /* Other OTRcv error (not kOTNoDataErr) */
             log_error_cat(LOG_CAT_NETWORKING, "Poll: OTRcv error on active connection %d (endpoint %ld): %ld", i, (long)ep, bytesReceived);
             RemoveActiveConnection(ep);
             ReleaseEndpointToPool(ep);
@@ -909,7 +909,12 @@ OSErr SendUDPMessage(const char* message, const char* targetIP, udp_port targetP
     /* Send UDP data */
     err = OTSndUData(gDiscoveryEndpoint, &unitData);
     if (err != noErr) {
-        log_error_cat(LOG_CAT_NETWORKING, "OTSndUData failed: %ld", err);
+        if (err == kOTFlowErr || err == kOTNoDataErr || err == -3158) {
+            /* Flow control or buffer full - not a critical error, data will be dropped */
+            log_debug_cat(LOG_CAT_NETWORKING, "OTSndUData flow-controlled (data dropped): %ld", err);
+        } else {
+            log_error_cat(LOG_CAT_NETWORKING, "OTSndUData failed: %ld", err);
+        }
         return (OSErr)err;
     }
 
