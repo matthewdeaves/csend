@@ -26,6 +26,7 @@ int handle_stats_command(app_state_t *state, const char *args);
 int handle_history_command(app_state_t *state, const char *args);
 int handle_version_command(app_state_t *state, const char *args);
 int handle_peers_command(app_state_t *state, const char *args);
+int handle_test_command(app_state_t *state, const char *args);
 
 /* Helper functions */
 int parse_peer_number(const char *input, int *peer_num);

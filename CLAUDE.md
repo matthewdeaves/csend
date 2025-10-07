@@ -119,13 +119,22 @@ scripts/filter_logs.sh <log_file> [categories]  # Filter logs by category
 
 ## Testing Approaches
 
+- **Automated Test Feature**: Built-in test command that exercises the application's messaging code:
+  - Classic Mac (MacTCP & OpenTransport): Select **"Perform Test"** from File menu
+  - POSIX: Use `/test` command
+  - Test sequence: 2 rounds of broadcasts→direct messages (4 second delays)
+  - Generates clear START/END markers in log files
+  - **CRITICAL**: Test feature reuses existing application messaging functions (not duplicate code paths)
+  - Implementation: `shared/test.c` (core logic) + platform adapters (`*/test.c`)
+  - See `docs/PERFORM_TEST_IMPLEMENTATION_PLAN.md` for architecture details
 - **Unit Testing**: No formal test framework currently in use (contributions welcome)
 - **Integration Testing**: Use Docker setup for multi-peer testing scenarios
 - **Machine Mode Testing**: `tools/test_machine_mode.py` for automated JSON API testing
 - **AI Integration Testing**: Python client library (`tools/csend_client.py`) for chatbot testing
 - **Logging**: Enable debug mode (`/debug` command) and check log files:
   - POSIX: `csend_posix.log`
-  - Classic Mac: `csend_classic_mac.log`
+  - Classic Mac MacTCP: `csend_mac.log`
+  - Classic Mac OpenTransport: `csend_classic_mac_ot_ppc.log`
 - **Cross-Platform Testing**: Build verification on both POSIX and Classic Mac (via Retro68)
 
 ## Important Implementation Notes

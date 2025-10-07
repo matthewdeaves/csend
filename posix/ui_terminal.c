@@ -28,6 +28,7 @@ void print_help_message(void)
     printf("  /send <peer_number> <msg> - Send <msg> to a specific peer from the list\n");
     printf("  /broadcast <message>      - Send <message> to all active peers\n");
     printf("  /debug                    - Toggle detailed debug message visibility\n");
+    printf("  /test                     - Run automated test sequence\n");
     printf("  /quit                     - Send quit notification and exit the application\n");
     printf("  /help                     - Show this help message\n\n");
     fflush(stdout);
@@ -54,6 +55,7 @@ static const command_entry_t command_table[] = {
     {"/history",   handle_history_command,   "Show message history"},
     {"/version",   handle_version_command,   "Show version information"},
     {"/peers",     handle_peers_command,     "List or filter peers"},
+    {"/test",      handle_test_command,      "Run automated test"},
     {NULL, NULL, NULL} /* Sentinel */
 };
 

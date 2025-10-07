@@ -28,7 +28,7 @@ typedef enum {
 } TCPStreamState;
 
 #define MAX_RDS_ENTRIES 10
-#define MAX_QUEUED_MESSAGES 10
+#define MAX_QUEUED_MESSAGES 64  /* Increased from 10 to handle burst sends: 4 rounds × 12 msg/round = 48 messages */
 
 typedef struct {
     Boolean eventPending;

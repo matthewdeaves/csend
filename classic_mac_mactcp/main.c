@@ -28,6 +28,7 @@
 #include "dialog_input.h"
 #include "dialog_messages.h"
 #include "../shared/peer_wrapper.h"
+#include "test.h"
 #ifndef HiWord
 #define HiWord(x) ((short)(((long)(x) >> 16) & 0xFFFF))
 #endif
@@ -41,7 +42,8 @@ const unsigned long kQuitMessageDelayTicks = 30;
 #define kAppleMenuID 1
 #define kFileMenuID 128
 #define kAboutItem 1
-#define kQuitItem 1
+#define kPerformTestItem 1
+#define kQuitItem 2
 static AEEventHandlerUPP gAEQuitAppUPP = NULL;
 void InitializeToolbox(void);
 void InstallAppleEventHandlers(void);
@@ -196,7 +198,10 @@ void HandleMenuChoice(long menuResult)
         }
         break;
     case kFileMenuID:
-        if (menuItem == kQuitItem) {
+        if (menuItem == kPerformTestItem) {
+            log_app_event("HandleMenuChoice: File->Perform Test selected");
+            PerformAutomatedTest();
+        } else if (menuItem == kQuitItem) {
             log_app_event("HandleMenuChoice: File->Quit selected by user. Setting gDone=true.");
             gDone = true;
         }

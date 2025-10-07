@@ -94,7 +94,12 @@ int send_message(const char *ip, const char *message, const char *msg_type, cons
         return -1;
     }
     if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        log_error_cat(LOG_CAT_NETWORKING, "Failed to connect to %s:%d - %s", ip, PORT_TCP, strerror(errno));
+        /* Connection refused is common when peer is offline - log as warning instead of error */
+        if (errno == ECONNREFUSED || errno == EHOSTUNREACH || errno == ENETUNREACH) {
+            log_warning_cat(LOG_CAT_NETWORKING, "Cannot reach peer %s:%d - %s (peer may be offline)", ip, PORT_TCP, strerror(errno));
+        } else {
+            log_error_cat(LOG_CAT_NETWORKING, "Failed to connect to %s:%d - %s", ip, PORT_TCP, strerror(errno));
+        }
         close(sock);
         return -1;
     }

@@ -242,7 +242,7 @@ static void machine_display_help(void *context)
              "\"/list\",\"/send <id> <msg>\",\"/broadcast <msg>\","
              "\"/status\",\"/stats\",\"/history [count]\","
              "\"/peers --filter <pattern>\",\"/version\","
-             "\"/debug\",\"/quit\",\"/help\"]}}",
+             "\"/debug\",\"/test\",\"/quit\",\"/help\"]}}",
              current_command_id[0] ? current_command_id : "null",
              timestamp);
 

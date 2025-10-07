@@ -18,7 +18,7 @@ extern wdsEntry gListenNoCopyRDS[];
 extern Boolean gListenNoCopyRdsPendingReturn;
 
 /* Constants */
-#define TCP_STREAM_RESET_DELAY_TICKS 60  /* 1 second at 60Hz */
+#define TCP_STREAM_RESET_DELAY_TICKS 6  /* 100ms at 60Hz - reduced from 1s for faster connection acceptance */
 
 /* Forward declarations */
 void StartPassiveListen(void);

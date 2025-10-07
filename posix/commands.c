@@ -4,6 +4,7 @@
 #include "logging.h"
 #include "messaging.h"
 #include "discovery.h"
+#include "test.h"
 #include "../shared/protocol.h"
 #include "../shared/logging.h"
 #include "../shared/peer_wrapper.h"
@@ -200,6 +201,14 @@ int handle_peers_command(app_state_t *state, const char *args)
         /* Just list peers normally */
         return handle_list_command(state, args);
     }
+    return 0;
+}
+
+int handle_test_command(app_state_t *state, const char *args)
+{
+    (void)args; /* Unused */
+    log_app_event("Starting automated test...");
+    run_posix_automated_test(state);
     return 0;
 }
 

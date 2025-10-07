@@ -27,6 +27,7 @@
 #include "dialog_peerlist.h"
 #include "dialog_input.h"
 #include "dialog_messages.h"
+#include "test.h"
 #include "../shared/peer_wrapper.h"
 #ifndef HiWord
 #define HiWord(x) ((short)(((long)(x) >> 16) & 0xFFFF))
@@ -36,8 +37,8 @@
 #endif
 /* Global variables */
 char gMyLocalIPStr[INET_ADDRSTRLEN] = {0};
-char gMyUsername[64] = "User";
-char gUsername[64] = "User";  /* External reference */
+char gMyUsername[64] = "OpenTransport";
+char gUsername[64] = "OpenTransport";  /* External reference */
 Boolean gDone = false;
 unsigned long gLastPeerListUpdateTime = 0;
 const unsigned long kPeerListUpdateIntervalTicks = 5 * 60;
@@ -45,7 +46,8 @@ const unsigned long kQuitMessageDelayTicks = 30;
 #define kAppleMenuID 1
 #define kFileMenuID 128
 #define kAboutItem 1
-#define kQuitItem 1
+#define kPerformTestItem 1
+#define kQuitItem 2
 static AEEventHandlerUPP gAEQuitAppUPP = NULL;
 void InitializeToolbox(void);
 void InstallAppleEventHandlers(void);
@@ -263,7 +265,10 @@ void HandleMenuChoice(long menuResult)
         }
         break;
     case kFileMenuID:
-        if (menuItem == kQuitItem) {
+        if (menuItem == kPerformTestItem) {
+            log_app_event("HandleMenuChoice: File->Perform Test selected");
+            PerformAutomatedTest();
+        } else if (menuItem == kQuitItem) {
             log_app_event("HandleMenuChoice: File->Quit selected by user. Setting gDone=true.");
             gDone = true;
         }

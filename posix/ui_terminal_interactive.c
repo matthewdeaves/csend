@@ -84,6 +84,7 @@ static void interactive_display_help(void *context)
     printf("  /send <peer_number> <msg> - Send <msg> to a specific peer from the list\n");
     printf("  /broadcast <message>      - Send <message> to all active peers\n");
     printf("  /debug                    - Toggle detailed debug message visibility\n");
+    printf("  /test                     - Run automated test sequence\n");
     printf("  /quit                     - Send quit notification and exit the application\n");
     printf("  /help                     - Show this help message\n\n");
     fflush(stdout);

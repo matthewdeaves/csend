@@ -29,7 +29,7 @@ extern OSErr AddrToStr(unsigned long addr, char *addrStr);
 short gMacTCPRefNum = 0;
 ip_addr gMyLocalIP = 0;
 char gMyLocalIPStr[INET_ADDRSTRLEN] = "0.0.0.0";
-char gMyUsername[GLOBAL_USERNAME_BUFFER_SIZE] = "MacUser";
+char gMyUsername[GLOBAL_USERNAME_BUFFER_SIZE] = "MacTCP";
 
 /* Separate UPPs for listen and send streams */
 static TCPNotifyUPP gTCPListenASR_UPP = NULL;
