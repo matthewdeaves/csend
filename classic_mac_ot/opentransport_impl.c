@@ -329,6 +329,24 @@ void HandleUDPEvent(EndpointRef endpoint, OTResult event)
             HandleIncomingUDPData(endpoint);
             break;
 
+        case T_UDERR:
+            /* CRITICAL: Must call OTRcvUDErr to clear error state.
+             * Per NetworkingOpenTransport.txt: "It is important that you call the
+             * OTRcvUDErr function even if you are not interested in examining the
+             * cause of the error. Failing to do this leaves the endpoint in a state
+             * where it cannot do other sends." */
+            {
+                TUDErr udErr;
+                memset(&udErr, 0, sizeof(udErr));
+                OSStatus err = OTRcvUDErr(endpoint, &udErr);
+                if (err == noErr) {
+                    log_debug_cat(LOG_CAT_NETWORKING, "T_UDERR: UDP send error %ld cleared", udErr.error);
+                } else {
+                    log_error_cat(LOG_CAT_NETWORKING, "T_UDERR: Failed to clear error: %ld", err);
+                }
+            }
+            break;
+
         case T_ERROR:
             log_error_cat(LOG_CAT_NETWORKING, "T_ERROR: UDP error occurred");
             break;
@@ -597,9 +615,9 @@ void PollActiveConnections(void)
 
         EndpointRef ep = gActiveConnections[i].endpoint;
 
-        /* Per NetworkingOpenTransport.txt: OTLook prioritizes T_ORDREL over T_DATA.
-         * We MUST try to receive data first before checking OTLook, otherwise we'll
-         * miss data that arrived before the orderly disconnect. */
+        /* IMPORTANT: Always try to receive data first before checking for disconnect events.
+         * When sender uses OTSndOrderlyDisconnect after sending data, reading data first
+         * ensures we process all buffered data before handling the disconnect. */
 
         /* Get peer IP once for all data processing */
         TBind peerAddr;
@@ -799,10 +817,10 @@ void HandleIncomingTCPData(EndpointRef endpoint)
         OTInetHostToString(peerInetAddr.fHost, peerIPStr);
     }
 
-    /* Per NetworkingOpenTransport.txt: OTLook prioritizes T_ORDREL over T_DATA.
-     * When sender uses OTSndOrderlyDisconnect after sending data, OTLook returns
-     * T_ORDREL first, even if data is pending. We must try to receive data FIRST
-     * before checking for disconnect events. */
+    /* IMPORTANT: Always try to receive data first before checking for disconnect events.
+     * When sender uses OTSndOrderlyDisconnect after sending data, OTRcv will return
+     * the buffered data first, then signal kOTLookErr when disconnect occurs. This
+     * pattern ensures we process all data before handling the disconnect. */
 
     /* CRITICAL: Read until kOTNoDataErr to clear T_DATA event */
     do {
@@ -1105,6 +1123,13 @@ OSErr SendTCPMessage(const char* message, const char* targetIP, tcp_port targetP
 
         if (bytesSent == kOTFlowErr) {
             log_error_cat(LOG_CAT_MESSAGING, "Flow control timeout after %d retries", flowRetries);
+            /* CRITICAL: Clear any pending T_GODATA event to prevent endpoint hang.
+             * Per NetworkingOpenTransport.txt: "Until the T_GODATA... events are cleared,
+             * Open Transport cannot send you another T_DATA event." */
+            lookResult = OTLook(ep);
+            if (lookResult == T_GODATA) {
+                log_debug_cat(LOG_CAT_MESSAGING, "Cleared lingering T_GODATA after timeout");
+            }
             err = kOTFlowErr;
         }
     }
