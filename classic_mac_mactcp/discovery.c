@@ -95,13 +95,16 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum)
     gUDPSendHandle = NULL;
     gLastBroadcastTimeTicks = 0;
 
-    /* Allocate receive buffer */
-    gUDPRecvBuffer = NewPtrClear(kMinUDPBufSize);
+    /* Allocate receive buffer using non-relocatable memory
+     * Per MacTCP Programmer's Guide p.2789: "The receive buffer area belongs to UDP
+     * while the stream is open and cannot be modified or relocated until UDPRelease
+     * is called." We use NewPtrSysClear to allocate from system heap (non-relocatable). */
+    gUDPRecvBuffer = NewPtrSysClear(kMinUDPBufSize);
     if (gUDPRecvBuffer == NULL) {
         log_app_event("Fatal Error: Could not allocate UDP receive buffer (%ld bytes).", (long)kMinUDPBufSize);
         return memFullErr;
     }
-    log_debug_cat(LOG_CAT_DISCOVERY, "Allocated %ld bytes for UDP receive buffer at 0x%lX.", (long)kMinUDPBufSize, (unsigned long)gUDPRecvBuffer);
+    log_debug_cat(LOG_CAT_DISCOVERY, "Allocated %ld bytes for UDP receive buffer (non-relocatable) at 0x%lX.", (long)kMinUDPBufSize, (unsigned long)gUDPRecvBuffer);
 
     /* Create UDP endpoint using MacTCPImpl */
     err = MacTCPImpl_UDPCreate(macTCPRefNum, &gUDPEndpoint, PORT_UDP, gUDPRecvBuffer, kMinUDPBufSize);
