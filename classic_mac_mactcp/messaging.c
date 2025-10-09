@@ -58,9 +58,12 @@ static QueuedMessage gMessageQueue[MAX_QUEUED_MESSAGES];
 static int gQueueHead = 0;
 static int gQueueTail = 0;
 
-/* Timeout constants */
+/* Timeout constants
+ * Per MacTCP Programmer's Guide p.2849: Minimum timeout is 2 seconds.
+ * Values less than 2 will be rounded up to 2 seconds by MacTCP.
+ */
 #define TCP_CLOSE_ULP_TIMEOUT_S 5
-#define TCP_RECEIVE_CMD_TIMEOUT_S 1
+#define TCP_RECEIVE_CMD_TIMEOUT_S 2  /* Minimum is 2 seconds per MacTCP spec */
 
 /* Forward declarations */
 void StartPassiveListen(void);
