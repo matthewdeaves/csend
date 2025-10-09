@@ -23,6 +23,9 @@
 /* Forward declarations for internal functions */
 static OSErr StartAsyncUDPRead(void);
 static OSErr ReturnUDPBufferAsync(Ptr dataPtr, unsigned short bufferSize);
+static Boolean EnqueueUDPSend(const char *message, ip_addr destIP, udp_port destPort);
+static Boolean DequeueUDPSend(UDPQueuedMessage *msg);
+static void ProcessUDPSendQueue(void);
 
 /* Internal state - MacTCP UDP endpoint */
 static UDPEndpointRef gUDPEndpoint = NULL;
@@ -35,6 +38,20 @@ static unsigned long gLastBroadcastTimeTicks = 0;
 /* Buffers for messages */
 static char gBroadcastBuffer[BUFFER_SIZE];
 static char gResponseBuffer[BUFFER_SIZE];
+
+/* UDP send queue - Per MacTCP Programmer's Guide p.2798: "No way to abort UDPWrite"
+ * Messages must be queued when send is busy rather than dropped */
+#define MAX_UDP_SEND_QUEUE 8
+typedef struct {
+    char message[BUFFER_SIZE];
+    ip_addr destIP;
+    udp_port destPort;
+    Boolean inUse;
+} UDPQueuedMessage;
+
+static UDPQueuedMessage gUDPSendQueue[MAX_UDP_SEND_QUEUE];
+static int gUDPSendQueueHead = 0;
+static int gUDPSendQueueTail = 0;
 
 /* Platform callbacks */
 static void mac_send_discovery_response(uint32_t dest_ip_addr_host_order, uint16_t dest_port_host_order, void *platform_context)
@@ -94,6 +111,11 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum)
     gUDPReturnHandle = NULL;
     gUDPSendHandle = NULL;
     gLastBroadcastTimeTicks = 0;
+
+    /* Initialize send queue */
+    memset(gUDPSendQueue, 0, sizeof(gUDPSendQueue));
+    gUDPSendQueueHead = 0;
+    gUDPSendQueueTail = 0;
 
     /* Allocate receive buffer using non-relocatable memory
      * Per MacTCP Programmer's Guide p.2789: "The receive buffer area belongs to UDP
@@ -185,12 +207,6 @@ OSErr SendDiscoveryBroadcastSync(short macTCPRefNum, const char *myUsername, con
     if (gUDPEndpoint == NULL) return notOpenErr;
     if (myUsername == NULL || myLocalIPStr == NULL) return paramErr;
 
-    /* Check if a send is already pending */
-    if (gUDPSendHandle != NULL) {
-        log_debug_cat(LOG_CAT_DISCOVERY, "SendDiscoveryBroadcastSync: Send already pending, skipping");
-        return 1;  /* Indicate busy */
-    }
-
     log_debug_cat(LOG_CAT_DISCOVERY, "Sending Discovery Broadcast...");
 
     /* Format the message */
@@ -199,6 +215,16 @@ OSErr SendDiscoveryBroadcastSync(short macTCPRefNum, const char *myUsername, con
     if (formatted_len <= 0) {
         log_error_cat(LOG_CAT_DISCOVERY, "Error: format_message failed for DISCOVERY");
         return paramErr;
+    }
+
+    /* Check if a send is already pending - queue if busy */
+    if (gUDPSendHandle != NULL) {
+        log_debug_cat(LOG_CAT_DISCOVERY, "SendDiscoveryBroadcastSync: Send pending, queueing broadcast");
+        if (EnqueueUDPSend(gBroadcastBuffer, BROADCAST_IP, PORT_UDP)) {
+            return noErr;  /* Successfully queued */
+        } else {
+            return memFullErr;  /* Queue full */
+        }
     }
 
     /* Send using MacTCPImpl async UDP send */
@@ -226,12 +252,6 @@ OSErr SendDiscoveryResponseSync(short macTCPRefNum, const char *myUsername, cons
     if (gUDPEndpoint == NULL) return notOpenErr;
     if (myUsername == NULL || myLocalIPStr == NULL) return paramErr;
 
-    /* Check if a send is already pending */
-    if (gUDPSendHandle != NULL) {
-        log_debug_cat(LOG_CAT_DISCOVERY, "SendDiscoveryResponseSync: Send already pending, skipping response");
-        return 1;  /* Indicate busy */
-    }
-
     log_debug_cat(LOG_CAT_DISCOVERY, "Sending Discovery Response to IP 0x%lX:%u...", (unsigned long)destIP, destPort);
 
     /* Format the message */
@@ -240,6 +260,16 @@ OSErr SendDiscoveryResponseSync(short macTCPRefNum, const char *myUsername, cons
     if (formatted_len <= 0) {
         log_error_cat(LOG_CAT_DISCOVERY, "Error: format_message failed for DISCOVERY_RESPONSE");
         return paramErr;
+    }
+
+    /* Check if a send is already pending - queue if busy */
+    if (gUDPSendHandle != NULL) {
+        log_debug_cat(LOG_CAT_DISCOVERY, "SendDiscoveryResponseSync: Send pending, queueing response");
+        if (EnqueueUDPSend(gResponseBuffer, destIP, destPort)) {
+            return noErr;  /* Successfully queued */
+        } else {
+            return memFullErr;  /* Queue full */
+        }
     }
 
     /* Send using MacTCPImpl async UDP send */
@@ -505,5 +535,70 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
         if (startErr != noErr && startErr != 1) {
             log_error_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Failed to start new UDP read in idle fallback. Error: %d", startErr);
         }
+    }
+
+    /* Process queued sends if send is idle */
+    ProcessUDPSendQueue();
+}
+
+/* Enqueue a UDP send when send is busy */
+static Boolean EnqueueUDPSend(const char *message, ip_addr destIP, udp_port destPort)
+{
+    int nextTail = (gUDPSendQueueTail + 1) % MAX_UDP_SEND_QUEUE;
+
+    if (nextTail == gUDPSendQueueHead) {
+        log_error_cat(LOG_CAT_DISCOVERY, "EnqueueUDPSend: Queue full, dropping message");
+        return false;
+    }
+
+    strncpy(gUDPSendQueue[gUDPSendQueueTail].message, message, BUFFER_SIZE - 1);
+    gUDPSendQueue[gUDPSendQueueTail].message[BUFFER_SIZE - 1] = '\0';
+    gUDPSendQueue[gUDPSendQueueTail].destIP = destIP;
+    gUDPSendQueue[gUDPSendQueueTail].destPort = destPort;
+    gUDPSendQueue[gUDPSendQueueTail].inUse = true;
+    gUDPSendQueueTail = nextTail;
+
+    log_debug_cat(LOG_CAT_DISCOVERY, "EnqueueUDPSend: Queued message to 0x%lX:%u", (unsigned long)destIP, destPort);
+    return true;
+}
+
+/* Dequeue a UDP send */
+static Boolean DequeueUDPSend(UDPQueuedMessage *msg)
+{
+    if (gUDPSendQueueHead == gUDPSendQueueTail) {
+        return false;  /* Queue empty */
+    }
+
+    *msg = gUDPSendQueue[gUDPSendQueueHead];
+    gUDPSendQueue[gUDPSendQueueHead].inUse = false;
+    gUDPSendQueueHead = (gUDPSendQueueHead + 1) % MAX_UDP_SEND_QUEUE;
+    return true;
+}
+
+/* Process queued UDP sends when send is idle */
+static void ProcessUDPSendQueue(void)
+{
+    UDPQueuedMessage msg;
+    OSErr err;
+
+    /* Only process queue if send is idle */
+    if (gUDPSendHandle != NULL) {
+        return;
+    }
+
+    if (!DequeueUDPSend(&msg)) {
+        return;  /* Queue empty */
+    }
+
+    log_debug_cat(LOG_CAT_DISCOVERY, "ProcessUDPSendQueue: Sending queued message to 0x%lX:%u",
+                  (unsigned long)msg.destIP, msg.destPort);
+
+    /* Send using MacTCPImpl async UDP send */
+    err = MacTCPImpl_UDPSendAsync(gUDPEndpoint, msg.destIP, msg.destPort,
+                                  (Ptr)msg.message, strlen(msg.message),
+                                  &gUDPSendHandle);
+    if (err != noErr) {
+        log_error_cat(LOG_CAT_DISCOVERY, "ProcessUDPSendQueue: Failed to send queued message: %d", err);
+        gUDPSendHandle = NULL;
     }
 }
