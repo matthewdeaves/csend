@@ -245,6 +245,20 @@ OSErr MacTCP_QueueMessage(const char *peerIPStr, const char *message_content, co
     }
 }
 
+/* ASR (Asynchronous Status Routine) for Listen Stream
+ *
+ * CRITICAL WARNING - INTERRUPT LEVEL EXECUTION:
+ * Per Inside Macintosh Vol IV, ASR handlers are called at INTERRUPT LEVEL and MUST:
+ * - Preserve all registers except A0-A2, D0-D2
+ * - NEVER call Memory Manager (NewHandle, DisposPtr, NewPtr, etc.)
+ * - NEVER move or purge memory
+ * - NEVER depend on validity of handles to unlocked blocks
+ * - NEVER make synchronous MacTCP calls
+ * - Set up A5 register properly if accessing application globals
+ *
+ * SAFE operations: Set flags, store simple values, call async MacTCP functions
+ * UNSAFE operations: Memory allocation, moving memory, synchronous calls, Toolbox calls
+ */
 pascal void TCP_Listen_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr,
                                    unsigned short terminReason, struct ICMPReport *icmpMsg)
 {
@@ -271,6 +285,18 @@ pascal void TCP_Listen_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode
 /* Pool-aware Send ASR Handler
  * Identifies which pool entry triggered the event and stores event in that entry
  * Reference: MacTCP Programmer's Guide Section 4-3 "Using Asynchronous Routines"
+ *
+ * CRITICAL WARNING - INTERRUPT LEVEL EXECUTION:
+ * Per Inside Macintosh Vol IV, ASR handlers are called at INTERRUPT LEVEL and MUST:
+ * - Preserve all registers except A0-A2, D0-D2
+ * - NEVER call Memory Manager (NewHandle, DisposPtr, NewPtr, etc.)
+ * - NEVER move or purge memory
+ * - NEVER depend on validity of handles to unlocked blocks
+ * - NEVER make synchronous MacTCP calls
+ * - Set up A5 register properly if accessing application globals
+ *
+ * SAFE operations: Set flags, store simple values, call async MacTCP functions
+ * UNSAFE operations: Memory allocation, moving memory, synchronous calls, Toolbox calls
  */
 pascal void TCP_Send_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr,
                                  unsigned short terminReason, struct ICMPReport *icmpMsg)
