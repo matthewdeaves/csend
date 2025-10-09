@@ -347,15 +347,18 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
 
     gTCPStreamRcvBufferSize = streamReceiveBufferSize;
 
-    /* Allocate receive buffer for listen stream */
-    gTCPListenRcvBuffer = NewPtrClear(gTCPStreamRcvBufferSize);
+    /* Allocate receive buffer for listen stream using non-relocatable memory
+     * Per MacTCP Programmer's Guide p.2832: "The receive buffer area passes to TCP
+     * on TCPCreate and cannot be modified or relocated until TCPRelease is called."
+     * We use NewPtrSysClear to allocate from system heap (non-relocatable). */
+    gTCPListenRcvBuffer = NewPtrSysClear(gTCPStreamRcvBufferSize);
     if (gTCPListenRcvBuffer == NULL) {
         log_app_event("Fatal Error: Could not allocate TCP listen stream receive buffer (%lu bytes).",
                       gTCPStreamRcvBufferSize);
         return memFullErr;
     }
 
-    log_debug_cat(LOG_CAT_MESSAGING, "Allocated TCP listen stream receive buffer: %lu bytes", gTCPStreamRcvBufferSize);
+    log_debug_cat(LOG_CAT_MESSAGING, "Allocated TCP listen stream receive buffer (non-relocatable): %lu bytes", gTCPStreamRcvBufferSize);
 
     /* Create listen stream */
     err = MacTCPImpl_TCPCreate(macTCPRefNum, &gTCPListenStream, gTCPStreamRcvBufferSize,
@@ -375,8 +378,9 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
     memset(gSendStreamPool, 0, sizeof(gSendStreamPool));
 
     for (i = 0; i < TCP_SEND_STREAM_POOL_SIZE; i++) {
-        /* Allocate receive buffer for this pool entry */
-        gSendStreamPool[i].rcvBuffer = NewPtrClear(gTCPStreamRcvBufferSize);
+        /* Allocate receive buffer for this pool entry using non-relocatable memory
+         * Per MacTCP Programmer's Guide p.2832: Buffer cannot be relocated during stream lifetime. */
+        gSendStreamPool[i].rcvBuffer = NewPtrSysClear(gTCPStreamRcvBufferSize);
         if (gSendStreamPool[i].rcvBuffer == NULL) {
             log_app_event("Fatal Error: Could not allocate pool[%d] receive buffer (%lu bytes).", i, gTCPStreamRcvBufferSize);
 
