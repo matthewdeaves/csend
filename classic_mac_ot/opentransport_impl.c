@@ -601,31 +601,51 @@ void PollActiveConnections(void)
          * We MUST try to receive data first before checking OTLook, otherwise we'll
          * miss data that arrived before the orderly disconnect. */
 
-        /* Try to receive data first */
+        /* Get peer IP once for all data processing */
+        TBind peerAddr;
+        InetAddress peerInetAddr;
+        char peerIPStr[16] = "unknown";
+        peerAddr.addr.buf = (UInt8*)&peerInetAddr;
+        peerAddr.addr.maxlen = sizeof(InetAddress);
+
+        OSStatus err = OTGetProtAddress(ep, NULL, &peerAddr);
+        if (err == noErr && peerAddr.addr.len > 0) {
+            OTInetHostToString(peerInetAddr.fHost, peerIPStr);
+        }
+
+        /* CRITICAL: Read until kOTNoDataErr to clear T_DATA event */
         char buffer[BUFFER_SIZE];
-        UInt32 flags = 0;
-        OTResult bytesReceived = OTRcv(ep, buffer, sizeof(buffer) - 1, &flags);
+        UInt32 flags;
+        OTResult bytesReceived;
+        int receiveCount = 0;
+        int totalBytesReceived = 0;
+        Boolean dataWasReceived = false;
 
-        if (bytesReceived > 0) {
-            /* Data received! Process it */
-            buffer[bytesReceived] = '\0';
-            log_debug_cat(LOG_CAT_NETWORKING, "Poll: Received %ld bytes on active connection %d (endpoint %ld)", bytesReceived, i, (long)ep);
+        do {
+            flags = 0;
+            bytesReceived = OTRcv(ep, buffer, sizeof(buffer) - 1, &flags);
 
-            /* Get peer IP for processing */
-            TBind peerAddr;
-            InetAddress peerInetAddr;
-            char peerIPStr[16] = "unknown";
-            peerAddr.addr.buf = (UInt8*)&peerInetAddr;
-            peerAddr.addr.maxlen = sizeof(InetAddress);
+            if (bytesReceived > 0) {
+                dataWasReceived = true;
+                receiveCount++;
+                totalBytesReceived += bytesReceived;
+                buffer[bytesReceived] = '\0';
+                log_debug_cat(LOG_CAT_NETWORKING, "Poll: Received chunk %d (%ld bytes) on connection %d",
+                              receiveCount, bytesReceived, i);
 
-            OSStatus err = OTGetProtAddress(ep, NULL, &peerAddr);
-            if (err == noErr && peerAddr.addr.len > 0) {
-                OTInetHostToString(peerInetAddr.fHost, peerIPStr);
+                ProcessIncomingMessage(buffer, peerIPStr);
+            } else if (bytesReceived < 0 && bytesReceived != kOTNoDataErr && bytesReceived != -3158) {
+                log_error_cat(LOG_CAT_NETWORKING, "Poll: OTRcv error on connection %d: %ld", i, bytesReceived);
+                break;
             }
+        } while (bytesReceived != kOTNoDataErr && bytesReceived != -3158);
 
-            ProcessIncomingMessage(buffer, peerIPStr);
-
-            /* After receiving data, release the endpoint */
+        if (dataWasReceived) {
+            if (receiveCount > 1) {
+                log_debug_cat(LOG_CAT_NETWORKING, "Poll: Received %d chunks (%d total bytes) on connection %d",
+                              receiveCount, totalBytesReceived, i);
+            }
+            /* After receiving all data, release the endpoint */
             RemoveActiveConnection(ep);
             ReleaseEndpointToPool(ep);
         } else if (bytesReceived == kOTNoDataErr || bytesReceived == -3158) {
