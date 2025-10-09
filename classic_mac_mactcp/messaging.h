@@ -7,11 +7,13 @@
 #include <MacTypes.h>
 #include <MacTCP.h>
 #include "common_defs.h"
+#include "mactcp_impl.h"  /* For MacTCPAsyncHandle and NetworkTCPInfo types */
 
 typedef void (*GiveTimePtr)(void);
 
 #define streamBusyErr (-23050)
 #define kTCPDefaultTimeout 0
+#define kInvalidStreamPtr 0  /* StreamPtr is unsigned long, not a pointer - use 0 instead of NULL */
 
 typedef enum {
     TCP_STATE_UNINITIALIZED,
@@ -30,12 +32,43 @@ typedef enum {
 #define MAX_RDS_ENTRIES 10
 #define MAX_QUEUED_MESSAGES 64  /* Increased from 10 to handle burst sends: 4 rounds × 12 msg/round = 48 messages */
 
+/* MacTCP Connection Pool Configuration
+ * Based on MacTCP Programmer's Guide Chapter 4: "Using Asynchronous Routines"
+ * Using pool of 4 concurrent send streams to eliminate single-stream bottleneck
+ */
+#define TCP_SEND_STREAM_POOL_SIZE 4
+
+/* Connection timeout for stale connections (30 seconds at 60Hz ticks) */
+#define TCP_STREAM_CONNECTION_TIMEOUT_TICKS (30 * 60)
+
 typedef struct {
     Boolean eventPending;
     TCPEventCode eventCode;
     unsigned short termReason;
     ICMPReport icmpReport;
 } ASR_Event_Info;
+
+/* TCP Send Stream Pool Entry
+ * Each entry represents one reusable TCP stream that can handle one connection at a time
+ * Pool allocation strategy: find first IDLE stream, or queue if none available
+ * Reference: MacTCP Programmer's Guide Section 4-18 "TCPActiveOpen" async mode
+ */
+typedef struct {
+    StreamPtr stream;                  /* TCP stream handle (unsigned long) */
+    Ptr rcvBuffer;                     /* Dedicated receive buffer for this stream */
+    TCPStreamState state;              /* Current state of this pool entry */
+    ip_addr targetIP;                  /* Target IP address for active connection */
+    tcp_port targetPort;               /* Target port for active connection */
+    char peerIPStr[INET_ADDRSTRLEN];   /* String representation of target IP */
+    char message[BUFFER_SIZE];         /* Message being sent */
+    char msgType[32];                  /* Message type */
+    unsigned long connectStartTime;    /* TickCount() when connection started */
+    unsigned long sendStartTime;       /* TickCount() when send started */
+    MacTCPAsyncHandle connectHandle;   /* Async handle for TCPActiveOpen */
+    MacTCPAsyncHandle sendHandle;      /* Async handle for TCPSend */
+    ASR_Event_Info asrEvent;           /* ASR event for this stream */
+    int poolIndex;                     /* Index in pool array (for debugging) */
+} TCPSendStreamPoolEntry;
 
 typedef struct {
     char peerIP[INET_ADDRSTRLEN];
@@ -44,7 +77,8 @@ typedef struct {
     Boolean inUse;
 } QueuedMessage;
 
-OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNotifyUPP listenAsrUPP, TCPNotifyUPP sendAsrUPP);
+OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNotifyUPP listenAsrUPP,
+              TCPNotifyUPP sendAsrUPP);
 void CleanupTCP(short macTCPRefNum);
 void ProcessTCPStateMachine(GiveTimePtr giveTime);
 OSErr MacTCP_QueueMessage(const char *peerIPStr,

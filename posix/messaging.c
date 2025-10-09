@@ -146,8 +146,8 @@ void *listener_thread(void *arg)
     while (state->running) {
         FD_ZERO(&readfds);
         FD_SET(state->tcp_socket, &readfds);
-        timeout.tv_sec = 1;
-        timeout.tv_usec = 0;
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 50000;  /* 50ms for more responsive shutdown */
         int activity = select(state->tcp_socket + 1, &readfds, NULL, NULL, &timeout);
         if (activity < 0 && errno != EINTR) {
             perror("Select error in listener thread");

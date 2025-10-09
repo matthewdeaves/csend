@@ -2,7 +2,7 @@
 #define TCP_STATE_HANDLERS_H
 
 #include "messaging.h"
-#include "network_abstraction.h"
+#include "mactcp_impl.h"
 #include <MacTCP.h>
 
 /* State handler function type */

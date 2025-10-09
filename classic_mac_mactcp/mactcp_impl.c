@@ -53,7 +53,7 @@ typedef struct {
 typedef struct {
     UDPiopb pb;
     Boolean inUse;
-    NetworkEndpointRef endpoint;
+    UDPEndpointRef endpoint;
     Boolean isReturnBuffer;  /* true for buffer return, false for receive */
     Boolean isSend;          /* true for send operation */
     wdsEntry *wdsArray;      /* For send operations */
@@ -72,7 +72,7 @@ typedef enum {
 typedef struct {
     TCPiopb pb;
     Boolean inUse;
-    NetworkStreamRef stream;
+    StreamPtr stream;
     TCPAsyncOpType opType;
     Ptr dataBuffer;           /* For send/receive operations */
     unsigned short dataLength;
@@ -86,74 +86,6 @@ static MacTCPAsyncOp gAsyncOps[MAX_ASYNC_OPS];
 static TCPAsyncOp gTCPAsyncOps[MAX_TCP_ASYNC_OPS];
 static Boolean gAsyncOpsInitialized = false;
 static Boolean gTCPAsyncOpsInitialized = false;
-
-/* Forward declarations for all functions */
-static OSErr MacTCPImpl_Initialize(short *refNum, ip_addr *localIP, char *localIPStr);
-static void MacTCPImpl_Shutdown(short refNum);
-static OSErr MacTCPImpl_TCPCreate(short refNum, NetworkStreamRef *streamRef,
-                                  unsigned long rcvBufferSize, Ptr rcvBuffer,
-                                  NetworkNotifyProcPtr notifyProc);
-static OSErr MacTCPImpl_TCPRelease(short refNum, NetworkStreamRef streamRef);
-static OSErr MacTCPImpl_TCPListen(NetworkStreamRef streamRef, tcp_port localPort,
-                                  Byte timeout, Boolean async);
-static OSErr MacTCPImpl_TCPConnect(NetworkStreamRef streamRef, ip_addr remoteHost,
-                                   tcp_port remotePort, Byte timeout,
-                                   NetworkGiveTimeProcPtr giveTime);
-static OSErr MacTCPImpl_TCPSend(NetworkStreamRef streamRef, Ptr data, unsigned short length,
-                                Boolean push, Byte timeout, NetworkGiveTimeProcPtr giveTime);
-static OSErr MacTCPImpl_TCPReceiveNoCopy(NetworkStreamRef streamRef, Ptr rdsPtr,
-        short maxEntries, Byte timeout,
-        Boolean *urgent, Boolean *mark,
-        NetworkGiveTimeProcPtr giveTime);
-static OSErr MacTCPImpl_TCPReturnBuffer(NetworkStreamRef streamRef, Ptr rdsPtr,
-                                        NetworkGiveTimeProcPtr giveTime);
-static OSErr MacTCPImpl_TCPClose(NetworkStreamRef streamRef, Byte timeout,
-                                 NetworkGiveTimeProcPtr giveTime);
-static OSErr MacTCPImpl_TCPAbort(NetworkStreamRef streamRef);
-static OSErr MacTCPImpl_TCPStatus(NetworkStreamRef streamRef, NetworkTCPInfo *info);
-
-/* Async TCP operations */
-static OSErr MacTCPImpl_TCPListenAsync(NetworkStreamRef streamRef, tcp_port localPort,
-                                       NetworkAsyncHandle *asyncHandle);
-static OSErr MacTCPImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remoteHost,
-                                        tcp_port remotePort, NetworkAsyncHandle *asyncHandle);
-static OSErr MacTCPImpl_TCPSendAsync(NetworkStreamRef streamRef, Ptr data, unsigned short length,
-                                     Boolean push, NetworkAsyncHandle *asyncHandle);
-static OSErr MacTCPImpl_TCPReceiveAsync(NetworkStreamRef streamRef, Ptr rdsPtr,
-                                        short maxEntries, NetworkAsyncHandle *asyncHandle);
-static OSErr MacTCPImpl_TCPCheckAsyncStatus(NetworkAsyncHandle asyncHandle,
-        OSErr *operationResult, void **resultData);
-static void MacTCPImpl_TCPCancelAsync(NetworkAsyncHandle asyncHandle);
-
-static OSErr MacTCPImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
-                                  udp_port localPort, Ptr recvBuffer,
-                                  unsigned short bufferSize);
-static OSErr MacTCPImpl_UDPRelease(short refNum, NetworkEndpointRef endpointRef);
-static OSErr MacTCPImpl_UDPSend(NetworkEndpointRef endpointRef, ip_addr remoteHost,
-                                udp_port remotePort, Ptr data, unsigned short length);
-static OSErr MacTCPImpl_UDPReceive(NetworkEndpointRef endpointRef, ip_addr *remoteHost,
-                                   udp_port *remotePort, Ptr buffer,
-                                   unsigned short *length, Boolean async);
-static OSErr MacTCPImpl_UDPReturnBuffer(NetworkEndpointRef endpointRef, Ptr buffer,
-                                        unsigned short bufferSize, Boolean async);
-static OSErr MacTCPImpl_UDPSendAsync(NetworkEndpointRef endpointRef, ip_addr remoteHost,
-                                     udp_port remotePort, Ptr data, unsigned short length,
-                                     NetworkAsyncHandle *asyncHandle);
-static OSErr MacTCPImpl_UDPCheckSendStatus(NetworkAsyncHandle asyncHandle);
-static OSErr MacTCPImpl_UDPReceiveAsync(NetworkEndpointRef endpointRef,
-                                        NetworkAsyncHandle *asyncHandle);
-static OSErr MacTCPImpl_UDPCheckAsyncStatus(NetworkAsyncHandle asyncHandle,
-        ip_addr *remoteHost, udp_port *remotePort,
-        Ptr *dataPtr, unsigned short *dataLength);
-static OSErr MacTCPImpl_UDPReturnBufferAsync(NetworkEndpointRef endpointRef,
-        Ptr buffer, unsigned short bufferSize,
-        NetworkAsyncHandle *asyncHandle);
-static OSErr MacTCPImpl_UDPCheckReturnStatus(NetworkAsyncHandle asyncHandle);
-static void MacTCPImpl_UDPCancelAsync(NetworkAsyncHandle asyncHandle);
-static OSErr MacTCPImpl_ResolveAddress(const char *hostname, ip_addr *address);
-static OSErr MacTCPImpl_AddressToString(ip_addr address, char *addressStr);
-static const char *MacTCPImpl_GetImplementationName(void);
-static Boolean MacTCPImpl_IsAvailable(void);
 
 /* Helper functions */
 static void InitializeAsyncOps(void)
@@ -172,7 +104,7 @@ static void InitializeTCPAsyncOps(void)
     }
 }
 
-static NetworkAsyncHandle AllocateAsyncHandle(void)
+static MacTCPAsyncHandle AllocateAsyncHandle(void)
 {
     int i;
 
@@ -181,7 +113,7 @@ static NetworkAsyncHandle AllocateAsyncHandle(void)
     for (i = 0; i < MAX_ASYNC_OPS; i++) {
         if (!gAsyncOps[i].inUse) {
             gAsyncOps[i].inUse = true;
-            return (NetworkAsyncHandle)&gAsyncOps[i];
+            return (MacTCPAsyncHandle)&gAsyncOps[i];
         }
     }
 
@@ -189,7 +121,7 @@ static NetworkAsyncHandle AllocateAsyncHandle(void)
     return NULL;
 }
 
-static void FreeAsyncHandle(NetworkAsyncHandle handle)
+static void FreeAsyncHandle(MacTCPAsyncHandle handle)
 {
     MacTCPAsyncOp *op = (MacTCPAsyncOp *)handle;
 
@@ -206,7 +138,7 @@ static void FreeAsyncHandle(NetworkAsyncHandle handle)
     }
 }
 
-static NetworkAsyncHandle AllocateTCPAsyncHandle(void)
+static MacTCPAsyncHandle AllocateTCPAsyncHandle(void)
 {
     int i;
 
@@ -215,7 +147,7 @@ static NetworkAsyncHandle AllocateTCPAsyncHandle(void)
     for (i = 0; i < MAX_TCP_ASYNC_OPS; i++) {
         if (!gTCPAsyncOps[i].inUse) {
             gTCPAsyncOps[i].inUse = true;
-            return (NetworkAsyncHandle)&gTCPAsyncOps[i];
+            return (MacTCPAsyncHandle)&gTCPAsyncOps[i];
         }
     }
 
@@ -223,7 +155,7 @@ static NetworkAsyncHandle AllocateTCPAsyncHandle(void)
     return NULL;
 }
 
-static void FreeTCPAsyncHandle(NetworkAsyncHandle handle)
+static void FreeTCPAsyncHandle(MacTCPAsyncHandle handle)
 {
     TCPAsyncOp *op = (TCPAsyncOp *)handle;
 
@@ -261,8 +193,8 @@ static void FreeUDPEndpoint(MacTCPUDPEndpoint *endpoint)
 }
 
 /* Helper functions for TCP async operations */
-static TCPAsyncOp *setup_tcp_async_operation(NetworkAsyncHandle *handle,
-        NetworkStreamRef stream,
+static TCPAsyncOp *setup_tcp_async_operation(MacTCPAsyncHandle *handle,
+        StreamPtr stream,
         TCPAsyncOpType type)
 {
     TCPAsyncOp *op;
@@ -282,7 +214,7 @@ static TCPAsyncOp *setup_tcp_async_operation(NetworkAsyncHandle *handle,
 }
 
 static OSErr finalize_tcp_async_operation(TCPAsyncOp *op, OSErr err,
-        NetworkAsyncHandle *handle,
+        MacTCPAsyncHandle *handle,
         const char *operation_name)
 {
     (void)op;  /* Currently unused, but kept for potential future use */
@@ -298,7 +230,7 @@ static OSErr finalize_tcp_async_operation(TCPAsyncOp *op, OSErr err,
 
 /* Implementation of network operations for MacTCP */
 
-static OSErr MacTCPImpl_Initialize(short *refNum, ip_addr *localIP, char *localIPStr)
+OSErr MacTCPImpl_Initialize(short *refNum, ip_addr *localIP, char *localIPStr)
 {
     OSErr err;
     ParamBlockRec pbOpen;
@@ -360,7 +292,7 @@ static OSErr MacTCPImpl_Initialize(short *refNum, ip_addr *localIP, char *localI
     return noErr;
 }
 
-static void MacTCPImpl_Shutdown(short refNum)
+void MacTCPImpl_Shutdown(short refNum)
 {
     (void)refNum; /* Unused parameter */
 
@@ -371,29 +303,71 @@ static void MacTCPImpl_Shutdown(short refNum)
     log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_Shutdown: Complete (driver remains open for system)");
 }
 
-/* Global storage for the notify proc wrapper */
-static NetworkNotifyProcPtr gStoredNotifyProc = NULL;
+/* Storage for per-stream notify procs
+ * We need to map StreamPtr -> NotifyProc since MacTCP ASR only gives us StreamPtr.
+ * Maximum: 1 listen stream + 4 pool streams + 1 discovery = 6 total
+ */
+#define MAX_STREAM_NOTIFIERS 8
+typedef struct {
+    StreamPtr stream;
+    NetworkNotifyProcPtr notifyProc;
+} StreamNotifierEntry;
 
-/* Pascal wrapper that calls the C notify proc */
+static StreamNotifierEntry gStreamNotifiers[MAX_STREAM_NOTIFIERS];
+static int gStreamNotifierCount = 0;
+
+/* Register a stream's notify proc */
+static void RegisterStreamNotifier(StreamPtr stream, NetworkNotifyProcPtr notifyProc)
+{
+    int i;
+
+    /* Check if stream already registered (update case) */
+    for (i = 0; i < gStreamNotifierCount; i++) {
+        if (gStreamNotifiers[i].stream == stream) {
+            gStreamNotifiers[i].notifyProc = notifyProc;
+            return;
+        }
+    }
+
+    /* Add new entry if room available */
+    if (gStreamNotifierCount < MAX_STREAM_NOTIFIERS) {
+        gStreamNotifiers[gStreamNotifierCount].stream = stream;
+        gStreamNotifiers[gStreamNotifierCount].notifyProc = notifyProc;
+        gStreamNotifierCount++;
+    }
+}
+
+/* Pascal wrapper that dispatches to correct C notify proc based on stream */
 static pascal void MacTCPNotifyWrapper(StreamPtr tcpStream, unsigned short eventCode,
                                        Ptr userDataPtr, unsigned short terminReason,
                                        ICMPReport *icmpMsg)
 {
-    if (gStoredNotifyProc) {
-        gStoredNotifyProc((void *)tcpStream, eventCode, userDataPtr, terminReason,
-                          (struct ICMPReport *)icmpMsg);
+    int i;
+
+    /* Find the notify proc for this stream */
+    for (i = 0; i < gStreamNotifierCount; i++) {
+        if (gStreamNotifiers[i].stream == tcpStream) {
+            if (gStreamNotifiers[i].notifyProc) {
+                gStreamNotifiers[i].notifyProc((void *)tcpStream, eventCode, userDataPtr,
+                                               terminReason, (struct ICMPReport *)icmpMsg);
+            }
+            return;
+        }
     }
+
+    /* Stream not found - this shouldn't happen but log it */
+    log_warning_cat(LOG_CAT_NETWORKING, "MacTCPNotifyWrapper: Unknown stream 0x%lX",
+                   (unsigned long)tcpStream);
 }
 
-static OSErr MacTCPImpl_TCPCreate(short refNum, NetworkStreamRef *streamRef,
+OSErr MacTCPImpl_TCPCreate(short refNum, StreamPtr *streamRef,
                                   unsigned long rcvBufferSize, Ptr rcvBuffer,
                                   NetworkNotifyProcPtr notifyProc)
 {
     TCPiopb pb;
     OSErr err;
 
-    /* Store the C notify proc for the wrapper to call */
-    gStoredNotifyProc = notifyProc;
+    /* Don't store globally - will register after stream is created */
 
     memset(&pb, 0, sizeof(TCPiopb));
     pb.ioCRefNum = refNum;
@@ -404,8 +378,11 @@ static OSErr MacTCPImpl_TCPCreate(short refNum, NetworkStreamRef *streamRef,
 
     err = PBControlSync((ParmBlkPtr)&pb);
     if (err == noErr) {
-        *streamRef = (NetworkStreamRef)pb.tcpStream;
-        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPCreate: Created stream 0x%lX", (unsigned long)*streamRef);
+        *streamRef = (StreamPtr)pb.tcpStream;
+        /* Register this stream's notify proc for dispatch */
+        RegisterStreamNotifier(*streamRef, notifyProc);
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPCreate: Created stream 0x%lX (registered notifier)",
+                     (unsigned long)*streamRef);
     } else {
         *streamRef = NULL;
         log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPCreate: Failed: %d", err);
@@ -414,7 +391,7 @@ static OSErr MacTCPImpl_TCPCreate(short refNum, NetworkStreamRef *streamRef,
     return err;
 }
 
-static OSErr MacTCPImpl_TCPRelease(short refNum, NetworkStreamRef streamRef)
+OSErr MacTCPImpl_TCPRelease(short refNum, StreamPtr streamRef)
 {
     TCPiopb pb;
 
@@ -426,7 +403,7 @@ static OSErr MacTCPImpl_TCPRelease(short refNum, NetworkStreamRef streamRef)
     return PBControlSync((ParmBlkPtr)&pb);
 }
 
-static OSErr MacTCPImpl_TCPListen(NetworkStreamRef streamRef, tcp_port localPort,
+OSErr MacTCPImpl_TCPListen(StreamPtr streamRef, tcp_port localPort,
                                   Byte timeout, Boolean async)
 {
     TCPiopb pb;
@@ -461,8 +438,8 @@ static OSErr MacTCPImpl_TCPListen(NetworkStreamRef streamRef, tcp_port localPort
 }
 
 /* Async TCP Listen implementation */
-static OSErr MacTCPImpl_TCPListenAsync(NetworkStreamRef streamRef, tcp_port localPort,
-                                       NetworkAsyncHandle *asyncHandle)
+OSErr MacTCPImpl_TCPListenAsync(StreamPtr streamRef, tcp_port localPort,
+                                       MacTCPAsyncHandle *asyncHandle)
 {
     TCPAsyncOp *op;
     OSErr err;
@@ -504,7 +481,7 @@ static OSErr MacTCPImpl_TCPListenAsync(NetworkStreamRef streamRef, tcp_port loca
     return err;
 }
 
-static OSErr MacTCPImpl_TCPConnect(NetworkStreamRef streamRef, ip_addr remoteHost,
+OSErr MacTCPImpl_TCPConnect(StreamPtr streamRef, ip_addr remoteHost,
                                    tcp_port remotePort, Byte timeout,
                                    NetworkGiveTimeProcPtr giveTime)
 {
@@ -534,8 +511,8 @@ static OSErr MacTCPImpl_TCPConnect(NetworkStreamRef streamRef, ip_addr remoteHos
 }
 
 /* Async TCP Connect implementation */
-static OSErr MacTCPImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remoteHost,
-                                        tcp_port remotePort, NetworkAsyncHandle *asyncHandle)
+OSErr MacTCPImpl_TCPConnectAsync(StreamPtr streamRef, ip_addr remoteHost,
+                                        tcp_port remotePort, MacTCPAsyncHandle *asyncHandle)
 {
     TCPAsyncOp *op;
     OSErr err;
@@ -554,8 +531,11 @@ static OSErr MacTCPImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remo
     memset(&op->pb, 0, sizeof(TCPiopb));
     op->pb.tcpStream = (StreamPtr)streamRef;
     op->pb.csCode = TCPActiveOpen;
-    op->pb.csParam.open.ulpTimeoutValue = 30;  /* Default timeout */
-    op->pb.csParam.open.ulpTimeoutAction = 1;
+    /* Per MacTCP Programmer's Guide p.2832: ulpTimeoutValue is when connection fails
+     * For LAN connections, 3 seconds is reasonable - much shorter than default 30s
+     * This prevents pool entries from blocking for extended periods */
+    op->pb.csParam.open.ulpTimeoutValue = 3;  /* 3 second timeout for LAN */
+    op->pb.csParam.open.ulpTimeoutAction = 1;  /* 1 = abort on timeout */
     op->pb.csParam.open.validityFlags = timeoutValue | timeoutAction;
     op->pb.csParam.open.remoteHost = remoteHost;
     op->pb.csParam.open.remotePort = remotePort;
@@ -577,7 +557,7 @@ static OSErr MacTCPImpl_TCPConnectAsync(NetworkStreamRef streamRef, ip_addr remo
     return err;
 }
 
-static OSErr MacTCPImpl_TCPSend(NetworkStreamRef streamRef, Ptr data, unsigned short length,
+OSErr MacTCPImpl_TCPSend(StreamPtr streamRef, Ptr data, unsigned short length,
                                 Boolean push, Byte timeout, NetworkGiveTimeProcPtr giveTime)
 {
     TCPiopb pb;
@@ -608,8 +588,8 @@ static OSErr MacTCPImpl_TCPSend(NetworkStreamRef streamRef, Ptr data, unsigned s
 }
 
 /* Async TCP Send implementation */
-static OSErr MacTCPImpl_TCPSendAsync(NetworkStreamRef streamRef, Ptr data, unsigned short length,
-                                     Boolean push, NetworkAsyncHandle *asyncHandle)
+OSErr MacTCPImpl_TCPSendAsync(StreamPtr streamRef, Ptr data, unsigned short length,
+                                     Boolean push, MacTCPAsyncHandle *asyncHandle)
 {
     TCPAsyncOp *op;
     OSErr err;
@@ -673,7 +653,7 @@ static OSErr MacTCPImpl_TCPSendAsync(NetworkStreamRef streamRef, Ptr data, unsig
     return noErr;
 }
 
-static OSErr MacTCPImpl_TCPReceiveNoCopy(NetworkStreamRef streamRef, Ptr rdsPtr,
+OSErr MacTCPImpl_TCPReceiveNoCopy(StreamPtr streamRef, Ptr rdsPtr,
         short maxEntries, Byte timeout,
         Boolean *urgent, Boolean *mark,
         NetworkGiveTimeProcPtr giveTime)
@@ -707,8 +687,8 @@ static OSErr MacTCPImpl_TCPReceiveNoCopy(NetworkStreamRef streamRef, Ptr rdsPtr,
 }
 
 /* Async TCP Receive implementation */
-static OSErr MacTCPImpl_TCPReceiveAsync(NetworkStreamRef streamRef, Ptr rdsPtr,
-                                        short maxEntries, NetworkAsyncHandle *asyncHandle)
+OSErr MacTCPImpl_TCPReceiveAsync(StreamPtr streamRef, Ptr rdsPtr,
+                                        short maxEntries, MacTCPAsyncHandle *asyncHandle)
 {
     TCPAsyncOp *op;
     OSErr err;
@@ -753,7 +733,7 @@ static OSErr MacTCPImpl_TCPReceiveAsync(NetworkStreamRef streamRef, Ptr rdsPtr,
     return noErr;
 }
 
-static OSErr MacTCPImpl_TCPReturnBuffer(NetworkStreamRef streamRef, Ptr rdsPtr,
+OSErr MacTCPImpl_TCPReturnBuffer(StreamPtr streamRef, Ptr rdsPtr,
                                         NetworkGiveTimeProcPtr giveTime)
 {
     TCPiopb pb;
@@ -774,7 +754,7 @@ static OSErr MacTCPImpl_TCPReturnBuffer(NetworkStreamRef streamRef, Ptr rdsPtr,
     return PBControlSync((ParmBlkPtr)&pb);
 }
 
-static OSErr MacTCPImpl_TCPClose(NetworkStreamRef streamRef, Byte timeout,
+OSErr MacTCPImpl_TCPClose(StreamPtr streamRef, Byte timeout,
                                  NetworkGiveTimeProcPtr giveTime)
 {
     TCPiopb pb;
@@ -797,7 +777,7 @@ static OSErr MacTCPImpl_TCPClose(NetworkStreamRef streamRef, Byte timeout,
     return PBControlSync((ParmBlkPtr)&pb);
 }
 
-static OSErr MacTCPImpl_TCPAbort(NetworkStreamRef streamRef)
+OSErr MacTCPImpl_TCPAbort(StreamPtr streamRef)
 {
     TCPiopb pb;
 
@@ -815,7 +795,7 @@ static OSErr MacTCPImpl_TCPAbort(NetworkStreamRef streamRef)
     return PBControlSync((ParmBlkPtr)&pb);
 }
 
-static OSErr MacTCPImpl_TCPStatus(NetworkStreamRef streamRef, NetworkTCPInfo *info)
+OSErr MacTCPImpl_TCPStatus(StreamPtr streamRef, NetworkTCPInfo *info)
 {
     TCPiopb pb;
     OSErr err;
@@ -847,7 +827,7 @@ static OSErr MacTCPImpl_TCPStatus(NetworkStreamRef streamRef, NetworkTCPInfo *in
 
 /* UDP Operations */
 
-static OSErr MacTCPImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
+OSErr MacTCPImpl_UDPCreate(short refNum, UDPEndpointRef *endpointRef,
                                   udp_port localPort, Ptr recvBuffer,
                                   unsigned short bufferSize)
 {
@@ -899,7 +879,7 @@ static OSErr MacTCPImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
     /* Store the actual stream pointer returned by MacTCP */
     endpoint->stream = pb.udpStream;
     endpoint->isCreated = true;
-    *endpointRef = (NetworkEndpointRef)endpoint;
+    *endpointRef = (UDPEndpointRef)endpoint;
 
     log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_UDPCreate: Success. Stream: 0x%lX (endpoint: 0x%lX), Port: %u",
                   (unsigned long)endpoint->stream, (unsigned long)endpoint, pb.csParam.create.localPort);
@@ -907,7 +887,7 @@ static OSErr MacTCPImpl_UDPCreate(short refNum, NetworkEndpointRef *endpointRef,
     return noErr;
 }
 
-static OSErr MacTCPImpl_UDPRelease(short refNum, NetworkEndpointRef endpointRef)
+OSErr MacTCPImpl_UDPRelease(short refNum, UDPEndpointRef endpointRef)
 {
     MacTCPUDPEndpoint *endpoint = (MacTCPUDPEndpoint *)endpointRef;
     UDPiopb pb;
@@ -932,7 +912,7 @@ static OSErr MacTCPImpl_UDPRelease(short refNum, NetworkEndpointRef endpointRef)
     return err;
 }
 
-static OSErr MacTCPImpl_UDPSend(NetworkEndpointRef endpointRef, ip_addr remoteHost,
+OSErr MacTCPImpl_UDPSend(UDPEndpointRef endpointRef, ip_addr remoteHost,
                                 udp_port remotePort, Ptr data, unsigned short length)
 {
     MacTCPUDPEndpoint *endpoint = (MacTCPUDPEndpoint *)endpointRef;
@@ -960,7 +940,7 @@ static OSErr MacTCPImpl_UDPSend(NetworkEndpointRef endpointRef, ip_addr remoteHo
     return PBControlSync((ParmBlkPtr)&pb);
 }
 
-static OSErr MacTCPImpl_UDPReceive(NetworkEndpointRef endpointRef, ip_addr *remoteHost,
+OSErr MacTCPImpl_UDPReceive(UDPEndpointRef endpointRef, ip_addr *remoteHost,
                                    udp_port *remotePort, Ptr buffer,
                                    unsigned short *length, Boolean async)
 {
@@ -1000,7 +980,7 @@ static OSErr MacTCPImpl_UDPReceive(NetworkEndpointRef endpointRef, ip_addr *remo
     return err;
 }
 
-static OSErr MacTCPImpl_UDPReturnBuffer(NetworkEndpointRef endpointRef, Ptr buffer,
+OSErr MacTCPImpl_UDPReturnBuffer(UDPEndpointRef endpointRef, Ptr buffer,
                                         unsigned short bufferSize, Boolean async)
 {
     MacTCPUDPEndpoint *endpoint = (MacTCPUDPEndpoint *)endpointRef;
@@ -1027,9 +1007,9 @@ static OSErr MacTCPImpl_UDPReturnBuffer(NetworkEndpointRef endpointRef, Ptr buff
 
 /* Async UDP operations */
 
-static OSErr MacTCPImpl_UDPSendAsync(NetworkEndpointRef endpointRef, ip_addr remoteHost,
+OSErr MacTCPImpl_UDPSendAsync(UDPEndpointRef endpointRef, ip_addr remoteHost,
                                      udp_port remotePort, Ptr data, unsigned short length,
-                                     NetworkAsyncHandle *asyncHandle)
+                                     MacTCPAsyncHandle *asyncHandle)
 {
     MacTCPUDPEndpoint *endpoint = (MacTCPUDPEndpoint *)endpointRef;
     MacTCPAsyncOp *op;
@@ -1090,7 +1070,7 @@ static OSErr MacTCPImpl_UDPSendAsync(NetworkEndpointRef endpointRef, ip_addr rem
     return err;
 }
 
-static OSErr MacTCPImpl_UDPCheckSendStatus(NetworkAsyncHandle asyncHandle)
+OSErr MacTCPImpl_UDPCheckSendStatus(MacTCPAsyncHandle asyncHandle)
 {
     MacTCPAsyncOp *op = (MacTCPAsyncOp *)asyncHandle;
     OSErr ioResult;
@@ -1110,8 +1090,8 @@ static OSErr MacTCPImpl_UDPCheckSendStatus(NetworkAsyncHandle asyncHandle)
     return ioResult;
 }
 
-static OSErr MacTCPImpl_UDPReceiveAsync(NetworkEndpointRef endpointRef,
-                                        NetworkAsyncHandle *asyncHandle)
+OSErr MacTCPImpl_UDPReceiveAsync(UDPEndpointRef endpointRef,
+                                        MacTCPAsyncHandle *asyncHandle)
 {
     MacTCPUDPEndpoint *endpoint = (MacTCPUDPEndpoint *)endpointRef;
     MacTCPAsyncOp *op;
@@ -1153,7 +1133,7 @@ static OSErr MacTCPImpl_UDPReceiveAsync(NetworkEndpointRef endpointRef,
     return err;
 }
 
-static OSErr MacTCPImpl_UDPCheckAsyncStatus(NetworkAsyncHandle asyncHandle,
+OSErr MacTCPImpl_UDPCheckAsyncStatus(MacTCPAsyncHandle asyncHandle,
         ip_addr *remoteHost, udp_port *remotePort,
         Ptr *dataPtr, unsigned short *dataLength)
 {
@@ -1182,9 +1162,9 @@ static OSErr MacTCPImpl_UDPCheckAsyncStatus(NetworkAsyncHandle asyncHandle,
     return ioResult;
 }
 
-static OSErr MacTCPImpl_UDPReturnBufferAsync(NetworkEndpointRef endpointRef,
+OSErr MacTCPImpl_UDPReturnBufferAsync(UDPEndpointRef endpointRef,
         Ptr buffer, unsigned short bufferSize,
-        NetworkAsyncHandle *asyncHandle)
+        MacTCPAsyncHandle *asyncHandle)
 {
     MacTCPUDPEndpoint *endpoint = (MacTCPUDPEndpoint *)endpointRef;
     MacTCPAsyncOp *op;
@@ -1225,7 +1205,7 @@ static OSErr MacTCPImpl_UDPReturnBufferAsync(NetworkEndpointRef endpointRef,
     return err;
 }
 
-static OSErr MacTCPImpl_UDPCheckReturnStatus(NetworkAsyncHandle asyncHandle)
+OSErr MacTCPImpl_UDPCheckReturnStatus(MacTCPAsyncHandle asyncHandle)
 {
     MacTCPAsyncOp *op = (MacTCPAsyncOp *)asyncHandle;
     OSErr ioResult;
@@ -1245,7 +1225,7 @@ static OSErr MacTCPImpl_UDPCheckReturnStatus(NetworkAsyncHandle asyncHandle)
     return ioResult;
 }
 
-static void MacTCPImpl_UDPCancelAsync(NetworkAsyncHandle asyncHandle)
+void MacTCPImpl_UDPCancelAsync(MacTCPAsyncHandle asyncHandle)
 {
     MacTCPAsyncOp *op = (MacTCPAsyncOp *)asyncHandle;
 
@@ -1257,23 +1237,23 @@ static void MacTCPImpl_UDPCancelAsync(NetworkAsyncHandle asyncHandle)
     }
 }
 
-static OSErr MacTCPImpl_ResolveAddress(const char *hostname, ip_addr *address)
+OSErr MacTCPImpl_ResolveAddress(const char *hostname, ip_addr *address)
 {
     /* For now, just try to parse as IP address */
     return ParseIPv4(hostname, address);
 }
 
-static OSErr MacTCPImpl_AddressToString(ip_addr address, char *addressStr)
+OSErr MacTCPImpl_AddressToString(ip_addr address, char *addressStr)
 {
     return AddrToStr(address, addressStr);
 }
 
-static const char *MacTCPImpl_GetImplementationName(void)
+const char *MacTCPImpl_GetImplementationName(void)
 {
     return "MacTCP";
 }
 
-static Boolean MacTCPImpl_IsAvailable(void)
+Boolean MacTCPImpl_IsAvailable(void)
 {
     /* Check if MacTCP driver can be opened */
     ParamBlockRec pb;
@@ -1296,7 +1276,7 @@ static Boolean MacTCPImpl_IsAvailable(void)
 }
 
 /* TCP Async Status Checking */
-static OSErr MacTCPImpl_TCPCheckAsyncStatus(NetworkAsyncHandle asyncHandle,
+OSErr MacTCPImpl_TCPCheckAsyncStatus(MacTCPAsyncHandle asyncHandle,
         OSErr *operationResult, void **resultData)
 {
     TCPAsyncOp *op = (TCPAsyncOp *)asyncHandle;
@@ -1363,7 +1343,7 @@ static OSErr MacTCPImpl_TCPCheckAsyncStatus(NetworkAsyncHandle asyncHandle,
 }
 
 /* TCP Async Cancel */
-static void MacTCPImpl_TCPCancelAsync(NetworkAsyncHandle asyncHandle)
+void MacTCPImpl_TCPCancelAsync(MacTCPAsyncHandle asyncHandle)
 {
     TCPAsyncOp *op = (TCPAsyncOp *)asyncHandle;
 
@@ -1383,59 +1363,3 @@ static void MacTCPImpl_TCPCancelAsync(NetworkAsyncHandle asyncHandle)
     }
 }
 
-/* Static operations table for MacTCP */
-static NetworkOperations gMacTCPOperations = {
-    /* System operations */
-    MacTCPImpl_Initialize,
-    MacTCPImpl_Shutdown,
-
-    /* TCP operations */
-    MacTCPImpl_TCPCreate,
-    MacTCPImpl_TCPRelease,
-    MacTCPImpl_TCPListen,
-    MacTCPImpl_TCPConnect,
-    MacTCPImpl_TCPSend,
-    MacTCPImpl_TCPReceiveNoCopy,
-    MacTCPImpl_TCPReturnBuffer,
-    MacTCPImpl_TCPClose,
-    MacTCPImpl_TCPAbort,
-    MacTCPImpl_TCPStatus,
-
-    /* Async TCP operations */
-    MacTCPImpl_TCPListenAsync,
-    MacTCPImpl_TCPConnectAsync,
-    MacTCPImpl_TCPSendAsync,
-    MacTCPImpl_TCPReceiveAsync,
-    MacTCPImpl_TCPCheckAsyncStatus,
-    MacTCPImpl_TCPCancelAsync,
-
-    /* UDP operations */
-    MacTCPImpl_UDPCreate,
-    MacTCPImpl_UDPRelease,
-    MacTCPImpl_UDPSend,
-    MacTCPImpl_UDPReceive,
-    MacTCPImpl_UDPReturnBuffer,
-
-    /* Async UDP operations */
-    MacTCPImpl_UDPSendAsync,
-    MacTCPImpl_UDPCheckSendStatus,
-    MacTCPImpl_UDPReceiveAsync,
-    MacTCPImpl_UDPCheckAsyncStatus,
-    MacTCPImpl_UDPReturnBufferAsync,
-    MacTCPImpl_UDPCheckReturnStatus,
-    MacTCPImpl_UDPCancelAsync,
-
-    /* Utility operations */
-    MacTCPImpl_ResolveAddress,
-    MacTCPImpl_AddressToString,
-
-    /* Implementation info */
-    MacTCPImpl_GetImplementationName,
-    MacTCPImpl_IsAvailable
-};
-
-/* Get MacTCP operations table */
-NetworkOperations *GetMacTCPOperations(void)
-{
-    return &gMacTCPOperations;
-}

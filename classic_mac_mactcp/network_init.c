@@ -3,7 +3,7 @@
 //====================================
 
 #include "network_init.h"
-#include "network_abstraction.h"
+#include "mactcp_impl.h"
 #include "../shared/logging.h"
 #include "../shared/logging.h"
 #include "discovery.h"
@@ -40,30 +40,16 @@ OSErr InitializeNetworking(void)
     OSErr err;
     unsigned long tcpStreamBufferSize;
 
-    log_info_cat(LOG_CAT_NETWORKING, "InitializeNetworking: Starting network initialization");
+    log_info_cat(LOG_CAT_NETWORKING, "InitializeNetworking: Starting MacTCP initialization");
 
-    /* Initialize the network abstraction layer */
-    err = InitNetworkAbstraction();
+    /* Initialize MacTCP directly */
+    err = MacTCPImpl_Initialize(&gMacTCPRefNum, &gMyLocalIP, gMyLocalIPStr);
     if (err != noErr) {
-        log_app_event("Fatal Error: Failed to initialize network abstraction: %d", err);
+        log_app_event("Fatal Error: MacTCP initialization failed: %d", err);
         return err;
     }
 
-    log_info_cat(LOG_CAT_NETWORKING, "InitializeNetworking: Network abstraction initialized with %s",
-                 GetNetworkImplementationName());
-
-    /* Initialize the underlying network implementation */
-    if (gNetworkOps == NULL || gNetworkOps->Initialize == NULL) {
-        log_app_event("Fatal Error: Network operations not available");
-        return notOpenErr;
-    }
-
-    err = gNetworkOps->Initialize(&gMacTCPRefNum, &gMyLocalIP, gMyLocalIPStr);
-    if (err != noErr) {
-        log_app_event("Fatal Error: Network initialization failed: %d", err);
-        ShutdownNetworkAbstraction();
-        return err;
-    }
+    log_info_cat(LOG_CAT_NETWORKING, "InitializeNetworking: MacTCP initialized successfully");
 
     if (gMyLocalIP == 0) {
         log_app_event("Critical Warning: Local IP address is 0.0.0.0. Check network configuration.");
@@ -73,10 +59,7 @@ OSErr InitializeNetworking(void)
     err = InitUDPDiscoveryEndpoint(gMacTCPRefNum);
     if (err != noErr) {
         log_app_event("Fatal: UDP Discovery initialization failed (%d).", err);
-        if (gNetworkOps && gNetworkOps->Shutdown) {
-            gNetworkOps->Shutdown(gMacTCPRefNum);
-        }
-        ShutdownNetworkAbstraction();
+        MacTCPImpl_Shutdown(gMacTCPRefNum);
         gMacTCPRefNum = 0;
         return err;
     }
@@ -96,10 +79,7 @@ OSErr InitializeNetworking(void)
         if (gTCPListenASR_UPP == NULL) {
             log_app_event("Fatal: Failed to create UPP for TCP_Listen_ASR_Handler.");
             CleanupUDPDiscoveryEndpoint(gMacTCPRefNum);
-            if (gNetworkOps && gNetworkOps->Shutdown) {
-                gNetworkOps->Shutdown(gMacTCPRefNum);
-            }
-            ShutdownNetworkAbstraction();
+            MacTCPImpl_Shutdown(gMacTCPRefNum);
             gMacTCPRefNum = 0;
             return memFullErr;
         }
@@ -113,10 +93,7 @@ OSErr InitializeNetworking(void)
             DisposeRoutineDescriptor(gTCPListenASR_UPP);
             gTCPListenASR_UPP = NULL;
             CleanupUDPDiscoveryEndpoint(gMacTCPRefNum);
-            if (gNetworkOps && gNetworkOps->Shutdown) {
-                gNetworkOps->Shutdown(gMacTCPRefNum);
-            }
-            ShutdownNetworkAbstraction();
+            MacTCPImpl_Shutdown(gMacTCPRefNum);
             gMacTCPRefNum = 0;
             return memFullErr;
         }
@@ -135,17 +112,14 @@ OSErr InitializeNetworking(void)
             gTCPSendASR_UPP = NULL;
         }
         CleanupUDPDiscoveryEndpoint(gMacTCPRefNum);
-        if (gNetworkOps && gNetworkOps->Shutdown) {
-            gNetworkOps->Shutdown(gMacTCPRefNum);
-        }
-        ShutdownNetworkAbstraction();
+        MacTCPImpl_Shutdown(gMacTCPRefNum);
         gMacTCPRefNum = 0;
         return err;
     }
 
-    log_info_cat(LOG_CAT_MESSAGING, "TCP Messaging Initialized with dual streams.");
-    log_app_event("Networking initialization complete. Local IP: %s using %s",
-                  gMyLocalIPStr, GetNetworkImplementationName());
+    log_info_cat(LOG_CAT_MESSAGING, "TCP Messaging Initialized with connection pool.");
+    log_app_event("Networking initialization complete. Local IP: %s using MacTCP",
+                  gMyLocalIPStr);
 
     return noErr;
 }
@@ -175,13 +149,8 @@ void CleanupNetworking(void)
         gTCPSendASR_UPP = NULL;
     }
 
-    /* Shutdown network implementation */
-    if (gNetworkOps != NULL && gNetworkOps->Shutdown != NULL) {
-        gNetworkOps->Shutdown(gMacTCPRefNum);
-    }
-
-    /* Shutdown abstraction layer */
-    ShutdownNetworkAbstraction();
+    /* Shutdown MacTCP */
+    MacTCPImpl_Shutdown(gMacTCPRefNum);
 
     gMacTCPRefNum = 0;
     gMyLocalIP = 0;

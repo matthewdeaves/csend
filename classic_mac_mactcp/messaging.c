@@ -4,7 +4,7 @@
 
 #include "messaging.h"
 #include "tcp_state_handlers.h"
-#include "network_abstraction.h"
+#include "mactcp_impl.h"
 #include "../shared/logging.h"
 #include "../shared/logging.h"
 #include "protocol.h"
@@ -25,37 +25,28 @@
 #include <OSUtils.h>
 #include <MixedMode.h>
 
-/* Separate streams for listening and sending */
-NetworkStreamRef gTCPListenStream = NULL;
-static NetworkStreamRef gTCPSendStream = NULL;
-
-/* Separate buffers for each stream */
+/* Listen stream for incoming connections */
+StreamPtr gTCPListenStream = kInvalidStreamPtr;
 static Ptr gTCPListenRcvBuffer = NULL;
-static Ptr gTCPSendRcvBuffer = NULL;
 static unsigned long gTCPStreamRcvBufferSize = 0;
-
-/* Separate state tracking */
 TCPStreamState gTCPListenState = TCP_STATE_UNINITIALIZED;
-static TCPStreamState gTCPSendState = TCP_STATE_UNINITIALIZED;
 
-/* Async send operation tracking */
-static NetworkAsyncHandle gSendConnectHandle = NULL;
-static NetworkAsyncHandle gSendDataHandle = NULL;
-static char gCurrentSendPeerIP[INET_ADDRSTRLEN];
-static char gCurrentSendMessage[BUFFER_SIZE];
-static char gCurrentSendMsgType[32];
-static ip_addr gCurrentSendTargetIP = 0;
-
-/* ASR event handling - separate for each stream */
+/* ASR event handling for listen stream */
 static volatile ASR_Event_Info gListenAsrEvent;
-static volatile ASR_Event_Info gSendAsrEvent;
+
+/* Connection pool for outgoing connections
+ * Replaces single send stream to enable concurrent message sending
+ * Reference: MacTCP Programmer's Guide Chapter 4 - async connection patterns
+ */
+static TCPSendStreamPoolEntry gSendStreamPool[TCP_SEND_STREAM_POOL_SIZE];
+static int gPoolInitialized = 0;
 
 /* Receive data structures */
 wdsEntry gListenNoCopyRDS[MAX_RDS_ENTRIES + 1];
 Boolean gListenNoCopyRdsPendingReturn = false;
 
 /* For async operations we need handles */
-NetworkAsyncHandle gListenAsyncHandle = NULL;
+MacTCPAsyncHandle gListenAsyncHandle = NULL;
 Boolean gListenAsyncOperationInProgress = false;
 
 /* Connection cleanup tracking */
@@ -74,13 +65,16 @@ static int gQueueTail = 0;
 /* Forward declarations */
 void StartPassiveListen(void);
 static void HandleListenASREvents(GiveTimePtr giveTime);
-static void HandleSendASREvents(GiveTimePtr giveTime);
+static void HandlePoolEntryASREvents(int poolIndex, GiveTimePtr giveTime);
 void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status, tcp_port remote_port_from_status);
 static Boolean EnqueueMessage(const char *peerIP, const char *msgType, const char *content);
 static Boolean DequeueMessage(QueuedMessage *msg);
+static int AllocatePoolEntry(void);
 static void ProcessMessageQueue(GiveTimePtr giveTime);
-static OSErr StartAsyncSend(const char *peerIPStr, const char *message_content, const char *msg_type);
-static void ProcessSendStateMachine(GiveTimePtr giveTime);
+static OSErr StartAsyncSendOnPoolEntry(int poolIndex, const char *peerIPStr, const char *message_content,
+                                       const char *msg_type);
+static void ProcessPoolEntryStateMachine(int poolIndex, GiveTimePtr giveTime);
+static void CheckPoolEntryTimeout(int poolIndex);
 
 /* Platform callbacks */
 static int mac_tcp_add_or_update_peer_callback(const char *ip, const char *username, void *platform_context)
@@ -98,7 +92,8 @@ static int mac_tcp_add_or_update_peer_callback(const char *ip, const char *usern
     return addResult;
 }
 
-static void mac_tcp_display_text_message_callback(const char *username, const char *ip, const char *message_content, void *platform_context)
+static void mac_tcp_display_text_message_callback(const char *username, const char *ip, const char *message_content,
+        void *platform_context)
 {
     (void)platform_context;
     (void)ip;
@@ -162,15 +157,40 @@ static Boolean DequeueMessage(QueuedMessage *msg)
     return true;
 }
 
+/* Find an IDLE pool entry for sending a message
+ * Returns pool index if found, -1 if no IDLE entries available
+ */
+static int AllocatePoolEntry(void)
+{
+    int i;
+
+    if (!gPoolInitialized) return -1;
+
+    for (i = 0; i < TCP_SEND_STREAM_POOL_SIZE; i++) {
+        if (gSendStreamPool[i].state == TCP_STATE_IDLE) {
+            return i;
+        }
+    }
+
+    return -1; /* No IDLE entries available */
+}
+
 static void ProcessMessageQueue(GiveTimePtr giveTime)
 {
     QueuedMessage msg;
+    int poolIndex;
+
     (void)giveTime; /* Unused parameter */
 
-    if (gTCPSendState == TCP_STATE_IDLE) {
+    if (!gPoolInitialized) return;
+
+    /* Try to process one queued message per call */
+    poolIndex = AllocatePoolEntry();
+    if (poolIndex >= 0) {
         if (DequeueMessage(&msg)) {
-            log_debug_cat(LOG_CAT_MESSAGING, "ProcessMessageQueue: Processing queued message to %s", msg.peerIP);
-            StartAsyncSend(msg.peerIP, msg.content, msg.messageType);
+            log_debug_cat(LOG_CAT_MESSAGING, "ProcessMessageQueue: Pool[%d] processing queued message to %s",
+                          poolIndex, msg.peerIP);
+            StartAsyncSendOnPoolEntry(poolIndex, msg.peerIP, msg.content, msg.messageType);
         }
     }
 }
@@ -190,19 +210,34 @@ int GetQueuedMessageCount(void)
 
 OSErr MacTCP_QueueMessage(const char *peerIPStr, const char *message_content, const char *msg_type)
 {
+    int poolIndex;
+    int queuedCount;
+
     if (peerIPStr == NULL || msg_type == NULL) {
         return paramErr;
     }
 
-    /* Try to send immediately if send stream is idle */
-    if (gTCPSendState == TCP_STATE_IDLE) {
-        log_debug_cat(LOG_CAT_MESSAGING, "MacTCP_QueueMessage: Send stream idle, attempting immediate send to %s", peerIPStr);
-        return StartAsyncSend(peerIPStr, message_content, msg_type);
+    if (!gPoolInitialized) {
+        log_error_cat(LOG_CAT_MESSAGING, "MacTCP_QueueMessage: Pool not initialized");
+        return notOpenErr;
     }
 
-    /* Otherwise queue it */
+    /* Try to allocate a pool entry for immediate send */
+    poolIndex = AllocatePoolEntry();
+    if (poolIndex >= 0) {
+        log_debug_cat(LOG_CAT_MESSAGING, "MacTCP_QueueMessage: Pool[%d] available, attempting immediate send to %s",
+                      poolIndex, peerIPStr);
+        return StartAsyncSendOnPoolEntry(poolIndex, peerIPStr, message_content, msg_type);
+    }
+
+    /* No pool entry available - queue the message */
+    queuedCount = GetQueuedMessageCount();
+    log_debug_cat(LOG_CAT_MESSAGING, "MacTCP_QueueMessage: All pool entries busy (%d queued), queueing message to %s",
+                  queuedCount, peerIPStr);
+
     if (EnqueueMessage(peerIPStr, msg_type, message_content)) {
-        log_debug_cat(LOG_CAT_MESSAGING, "MacTCP_QueueMessage: Message queued for later delivery to %s", peerIPStr);
+        log_debug_cat(LOG_CAT_MESSAGING, "MacTCP_QueueMessage: Message queued (queue: %d/%d)",
+                      queuedCount + 1, MAX_QUEUED_MESSAGES);
         return noErr;
     } else {
         log_error_cat(LOG_CAT_MESSAGING, "MacTCP_QueueMessage: Failed to queue message - queue full");
@@ -210,11 +245,12 @@ OSErr MacTCP_QueueMessage(const char *peerIPStr, const char *message_content, co
     }
 }
 
-pascal void TCP_Listen_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr, unsigned short terminReason, struct ICMPReport *icmpMsg)
+pascal void TCP_Listen_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr,
+                                   unsigned short terminReason, struct ICMPReport *icmpMsg)
 {
     (void)userDataPtr; /* Unused parameter */
 
-    if (gTCPListenStream == NULL || tcpStream != (StreamPtr)gTCPListenStream) {
+    if (gTCPListenStream == kInvalidStreamPtr || tcpStream != (StreamPtr)gTCPListenStream) {
         return;
     }
 
@@ -232,26 +268,45 @@ pascal void TCP_Listen_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode
     gListenAsrEvent.eventPending = true;
 }
 
-pascal void TCP_Send_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr, unsigned short terminReason, struct ICMPReport *icmpMsg)
+/* Pool-aware Send ASR Handler
+ * Identifies which pool entry triggered the event and stores event in that entry
+ * Reference: MacTCP Programmer's Guide Section 4-3 "Using Asynchronous Routines"
+ */
+pascal void TCP_Send_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr,
+                                 unsigned short terminReason, struct ICMPReport *icmpMsg)
 {
+    int i;
     (void)userDataPtr; /* Unused parameter */
 
-    if (gTCPSendStream == NULL || tcpStream != (StreamPtr)gTCPSendStream) {
+    if (!gPoolInitialized || tcpStream == NULL) {
         return;
     }
 
-    if (gSendAsrEvent.eventPending) {
-        return;
+    /* Find which pool entry this stream belongs to */
+    for (i = 0; i < TCP_SEND_STREAM_POOL_SIZE; i++) {
+        if (gSendStreamPool[i].stream == (StreamPtr)tcpStream) {
+            /* Found the pool entry - check if event already pending */
+            if (gSendStreamPool[i].asrEvent.eventPending) {
+                /* Event already pending, drop this one to avoid overwriting */
+                log_warning_cat(LOG_CAT_MESSAGING, "Pool[%d]: ASR event dropped (event pending)", i);
+                return;
+            }
+
+            /* Store event in pool entry */
+            gSendStreamPool[i].asrEvent.eventCode = (TCPEventCode)eventCode;
+            gSendStreamPool[i].asrEvent.termReason = terminReason;
+            if (eventCode == TCPICMPReceived && icmpMsg != NULL) {
+                BlockMoveData(icmpMsg, (void *)&gSendStreamPool[i].asrEvent.icmpReport, sizeof(ICMPReport));
+            } else {
+                memset((void *)&gSendStreamPool[i].asrEvent.icmpReport, 0, sizeof(ICMPReport));
+            }
+            gSendStreamPool[i].asrEvent.eventPending = true;
+            return;
+        }
     }
 
-    gSendAsrEvent.eventCode = (TCPEventCode)eventCode;
-    gSendAsrEvent.termReason = terminReason;
-    if (eventCode == TCPICMPReceived && icmpMsg != NULL) {
-        BlockMoveData(icmpMsg, (void *)&gSendAsrEvent.icmpReport, sizeof(ICMPReport));
-    } else {
-        memset((void *)&gSendAsrEvent.icmpReport, 0, sizeof(ICMPReport));
-    }
-    gSendAsrEvent.eventPending = true;
+    /* Stream not found in pool - this shouldn't happen */
+    log_warning_cat(LOG_CAT_MESSAGING, "TCP_Send_ASR_Handler: Unknown stream 0x%lX", (unsigned long)tcpStream);
 }
 
 /* Wrapper functions to bridge Pascal calling convention to C calling convention */
@@ -271,18 +326,15 @@ static void SendNotifyWrapper(void *stream, unsigned short eventCode,
     TCP_Send_ASR_Handler((StreamPtr)stream, eventCode, userDataPtr, terminReason, icmpMsg);
 }
 
-OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNotifyUPP listenAsrUPP, TCPNotifyUPP sendAsrUPP)
+OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNotifyUPP listenAsrUPP,
+              TCPNotifyUPP sendAsrUPP)
 {
     OSErr err;
+    int i, j;
 
-    log_info_cat(LOG_CAT_MESSAGING, "Initializing TCP Messaging Subsystem with dual streams...");
+    log_info_cat(LOG_CAT_MESSAGING, "Initializing TCP Messaging Subsystem with connection pool...");
 
-    if (!gNetworkOps) {
-        log_app_event("Error: Network abstraction not initialized");
-        return notOpenErr;
-    }
-
-    if (gTCPListenState != TCP_STATE_UNINITIALIZED || gTCPSendState != TCP_STATE_UNINITIALIZED) {
+    if (gTCPListenState != TCP_STATE_UNINITIALIZED || gPoolInitialized) {
         log_debug_cat(LOG_CAT_MESSAGING, "InitTCP: Already initialized");
         return streamAlreadyOpen;
     }
@@ -303,45 +355,92 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
         return memFullErr;
     }
 
-    /* Allocate receive buffer for send stream */
-    gTCPSendRcvBuffer = NewPtrClear(gTCPStreamRcvBufferSize);
-    if (gTCPSendRcvBuffer == NULL) {
-        log_app_event("Fatal Error: Could not allocate TCP send stream receive buffer (%lu bytes).",
-                      gTCPStreamRcvBufferSize);
-        DisposePtr(gTCPListenRcvBuffer);
-        gTCPListenRcvBuffer = NULL;
-        return memFullErr;
-    }
-
-    log_debug_cat(LOG_CAT_MESSAGING, "Allocated TCP stream receive buffers: %lu bytes each", gTCPStreamRcvBufferSize);
+    log_debug_cat(LOG_CAT_MESSAGING, "Allocated TCP listen stream receive buffer: %lu bytes", gTCPStreamRcvBufferSize);
 
     /* Create listen stream */
-    err = gNetworkOps->TCPCreate(macTCPRefNum, &gTCPListenStream, gTCPStreamRcvBufferSize,
+    err = MacTCPImpl_TCPCreate(macTCPRefNum, &gTCPListenStream, gTCPStreamRcvBufferSize,
                                  gTCPListenRcvBuffer, ListenNotifyWrapper);
-    if (err != noErr || gTCPListenStream == NULL) {
+    if (err != noErr || gTCPListenStream == kInvalidStreamPtr) {
         log_app_event("Error: Failed to create TCP Listen Stream: %d", err);
         DisposePtr(gTCPListenRcvBuffer);
-        DisposePtr(gTCPSendRcvBuffer);
         gTCPListenRcvBuffer = NULL;
-        gTCPSendRcvBuffer = NULL;
         return err;
     }
 
-    /* Create send stream */
-    err = gNetworkOps->TCPCreate(macTCPRefNum, &gTCPSendStream, gTCPStreamRcvBufferSize,
-                                 gTCPSendRcvBuffer, SendNotifyWrapper);
-    if (err != noErr || gTCPSendStream == NULL) {
-        log_app_event("Error: Failed to create TCP Send Stream: %d", err);
-        gNetworkOps->TCPRelease(macTCPRefNum, gTCPListenStream);
-        DisposePtr(gTCPListenRcvBuffer);
-        DisposePtr(gTCPSendRcvBuffer);
-        gTCPListenStream = NULL;
-        gTCPListenRcvBuffer = NULL;
-        gTCPSendRcvBuffer = NULL;
-        return err;
+    /* Initialize connection pool for outgoing messages
+     * Based on MacTCP Programmer's Guide Chapter 4: pool of streams for concurrent sends
+     */
+    log_info_cat(LOG_CAT_MESSAGING, "Initializing TCP send stream pool (%d streams)...", TCP_SEND_STREAM_POOL_SIZE);
+
+    memset(gSendStreamPool, 0, sizeof(gSendStreamPool));
+
+    for (i = 0; i < TCP_SEND_STREAM_POOL_SIZE; i++) {
+        /* Allocate receive buffer for this pool entry */
+        gSendStreamPool[i].rcvBuffer = NewPtrClear(gTCPStreamRcvBufferSize);
+        if (gSendStreamPool[i].rcvBuffer == NULL) {
+            log_app_event("Fatal Error: Could not allocate pool[%d] receive buffer (%lu bytes).", i, gTCPStreamRcvBufferSize);
+
+            /* Clean up previously allocated buffers */
+            for (j = 0; j < i; j++) {
+                if (gSendStreamPool[j].stream) {
+                    MacTCPImpl_TCPRelease(macTCPRefNum, gSendStreamPool[j].stream);
+                }
+                if (gSendStreamPool[j].rcvBuffer) {
+                    DisposePtr(gSendStreamPool[j].rcvBuffer);
+                }
+            }
+            MacTCPImpl_TCPRelease(macTCPRefNum, gTCPListenStream);
+            DisposePtr(gTCPListenRcvBuffer);
+            gTCPListenStream = kInvalidStreamPtr;
+            gTCPListenRcvBuffer = NULL;
+            return memFullErr;
+        }
+
+        /* Create TCP stream for this pool entry */
+        err = MacTCPImpl_TCPCreate(macTCPRefNum, &gSendStreamPool[i].stream,
+                                     gTCPStreamRcvBufferSize, gSendStreamPool[i].rcvBuffer,
+                                     SendNotifyWrapper);
+        if (err != noErr || gSendStreamPool[i].stream == kInvalidStreamPtr) {
+            log_app_event("Error: Failed to create pool[%d] TCP stream: %d", i, err);
+
+            /* Clean up this entry's buffer */
+            DisposePtr(gSendStreamPool[i].rcvBuffer);
+
+            /* Clean up previously created entries */
+            for (j = 0; j < i; j++) {
+                if (gSendStreamPool[j].stream) {
+                    MacTCPImpl_TCPRelease(macTCPRefNum, gSendStreamPool[j].stream);
+                }
+                if (gSendStreamPool[j].rcvBuffer) {
+                    DisposePtr(gSendStreamPool[j].rcvBuffer);
+                }
+            }
+            MacTCPImpl_TCPRelease(macTCPRefNum, gTCPListenStream);
+            DisposePtr(gTCPListenRcvBuffer);
+            gTCPListenStream = kInvalidStreamPtr;
+            gTCPListenRcvBuffer = NULL;
+            return err;
+        }
+
+        /* Initialize pool entry state */
+        gSendStreamPool[i].state = TCP_STATE_IDLE;
+        gSendStreamPool[i].targetIP = 0;
+        gSendStreamPool[i].targetPort = 0;
+        gSendStreamPool[i].peerIPStr[0] = '\0';
+        gSendStreamPool[i].message[0] = '\0';
+        gSendStreamPool[i].msgType[0] = '\0';
+        gSendStreamPool[i].connectStartTime = 0;
+        gSendStreamPool[i].sendStartTime = 0;
+        gSendStreamPool[i].connectHandle = NULL;
+        gSendStreamPool[i].sendHandle = NULL;
+        gSendStreamPool[i].poolIndex = i;
+        memset((void *)&gSendStreamPool[i].asrEvent, 0, sizeof(ASR_Event_Info));
+
+        log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Stream created at 0x%lX", i, (unsigned long)gSendStreamPool[i].stream);
     }
 
-    log_info_cat(LOG_CAT_MESSAGING, "TCP Streams created successfully using network abstraction.");
+    gPoolInitialized = 1;
+    log_info_cat(LOG_CAT_MESSAGING, "TCP send stream pool initialized (%d streams)", TCP_SEND_STREAM_POOL_SIZE);
 
     /* Initialize message queue */
     memset(gMessageQueue, 0, sizeof(gMessageQueue));
@@ -350,13 +449,11 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
 
     /* Initialize states */
     gTCPListenState = TCP_STATE_IDLE;
-    gTCPSendState = TCP_STATE_IDLE;
     gListenAsyncOperationInProgress = false;
     gListenNoCopyRdsPendingReturn = false;
     gListenStreamNeedsReset = false;
     gListenStreamResetTime = 0;
     memset((Ptr)&gListenAsrEvent, 0, sizeof(ASR_Event_Info));
-    memset((Ptr)&gSendAsrEvent, 0, sizeof(ASR_Event_Info));
 
     /* Start listening */
     StartPassiveListen();
@@ -367,12 +464,9 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
 
 void CleanupTCP(short macTCPRefNum)
 {
-    log_debug_cat(LOG_CAT_MESSAGING, "Cleaning up TCP Messaging Subsystem...");
+    int i;
 
-    if (!gNetworkOps) {
-        log_debug_cat(LOG_CAT_MESSAGING, "Network abstraction not available during cleanup");
-        return;
-    }
+    log_debug_cat(LOG_CAT_MESSAGING, "Cleaning up TCP Messaging Subsystem...");
 
     /* Clear message queue */
     memset(gMessageQueue, 0, sizeof(gMessageQueue));
@@ -380,49 +474,64 @@ void CleanupTCP(short macTCPRefNum)
     gQueueTail = 0;
 
     /* Clean up listen stream */
-    if (gListenAsyncOperationInProgress && gTCPListenStream != NULL) {
+    if (gListenAsyncOperationInProgress && gTCPListenStream != kInvalidStreamPtr) {
         log_debug_cat(LOG_CAT_MESSAGING, "Listen async operation was in progress. Aborting.");
-        gNetworkOps->TCPAbort(gTCPListenStream);
+        MacTCPImpl_TCPAbort(gTCPListenStream);
         gListenAsyncOperationInProgress = false;
     }
 
-    if (gListenNoCopyRdsPendingReturn && gTCPListenStream != NULL) {
+    if (gListenNoCopyRdsPendingReturn && gTCPListenStream != kInvalidStreamPtr) {
         log_debug_cat(LOG_CAT_MESSAGING, "Listen RDS Buffers were pending return. Attempting return.");
-        gNetworkOps->TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, YieldTimeToSystem);
+        MacTCPImpl_TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, YieldTimeToSystem);
         gListenNoCopyRdsPendingReturn = false;
     }
 
-    if (gTCPListenStream != NULL) {
+    if (gTCPListenStream != kInvalidStreamPtr) {
         log_debug_cat(LOG_CAT_MESSAGING, "Releasing TCP Listen Stream...");
-        gNetworkOps->TCPRelease(macTCPRefNum, gTCPListenStream);
-        gTCPListenStream = NULL;
+        MacTCPImpl_TCPRelease(macTCPRefNum, gTCPListenStream);
+        gTCPListenStream = kInvalidStreamPtr;
     }
 
-    /* Clean up send stream */
-    if (gTCPSendStream != NULL) {
-        log_debug_cat(LOG_CAT_MESSAGING, "Releasing TCP Send Stream...");
-        gNetworkOps->TCPRelease(macTCPRefNum, gTCPSendStream);
-        gTCPSendStream = NULL;
+    /* Clean up send stream pool */
+    if (gPoolInitialized) {
+        log_debug_cat(LOG_CAT_MESSAGING, "Cleaning up TCP send stream pool (%d streams)...", TCP_SEND_STREAM_POOL_SIZE);
+
+        for (i = 0; i < TCP_SEND_STREAM_POOL_SIZE; i++) {
+            if (gSendStreamPool[i].stream != kInvalidStreamPtr) {
+                /* Abort any active connections */
+                if (gSendStreamPool[i].state != TCP_STATE_IDLE &&
+                        gSendStreamPool[i].state != TCP_STATE_UNINITIALIZED) {
+                    log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Aborting active connection", i);
+                    MacTCPImpl_TCPAbort(gSendStreamPool[i].stream);
+                }
+
+                log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Releasing TCP stream", i);
+                MacTCPImpl_TCPRelease(macTCPRefNum, gSendStreamPool[i].stream);
+                gSendStreamPool[i].stream = kInvalidStreamPtr;
+            }
+
+            if (gSendStreamPool[i].rcvBuffer != NULL) {
+                log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Disposing receive buffer", i);
+                DisposePtr(gSendStreamPool[i].rcvBuffer);
+                gSendStreamPool[i].rcvBuffer = NULL;
+            }
+        }
+
+        memset(gSendStreamPool, 0, sizeof(gSendStreamPool));
+        gPoolInitialized = 0;
+        log_debug_cat(LOG_CAT_MESSAGING, "TCP send stream pool cleaned up");
     }
 
-    /* Dispose buffers */
+    /* Dispose listen buffer */
     if (gTCPListenRcvBuffer != NULL) {
         log_debug_cat(LOG_CAT_MESSAGING, "Disposing TCP listen stream receive buffer.");
         DisposePtr(gTCPListenRcvBuffer);
         gTCPListenRcvBuffer = NULL;
     }
 
-    if (gTCPSendRcvBuffer != NULL) {
-        log_debug_cat(LOG_CAT_MESSAGING, "Disposing TCP send stream receive buffer.");
-        DisposePtr(gTCPSendRcvBuffer);
-        gTCPSendRcvBuffer = NULL;
-    }
-
     gTCPStreamRcvBufferSize = 0;
     memset((Ptr)&gListenAsrEvent, 0, sizeof(ASR_Event_Info));
-    memset((Ptr)&gSendAsrEvent, 0, sizeof(ASR_Event_Info));
     gTCPListenState = TCP_STATE_UNINITIALIZED;
-    gTCPSendState = TCP_STATE_UNINITIALIZED;
 
     log_debug_cat(LOG_CAT_MESSAGING, "TCP Messaging Subsystem cleanup finished.");
 }
@@ -431,14 +540,12 @@ void StartPassiveListen(void)
 {
     OSErr err;
 
-    if (!gNetworkOps) return;
-
     if (gTCPListenState != TCP_STATE_IDLE) {
         log_error_cat(LOG_CAT_MESSAGING, "StartPassiveListen: Cannot listen, current state is %d (not IDLE).", gTCPListenState);
         return;
     }
 
-    if (gTCPListenStream == NULL) {
+    if (gTCPListenStream == kInvalidStreamPtr) {
         log_error_cat(LOG_CAT_MESSAGING, "CRITICAL (StartPassiveListen): Listen stream is NULL. Cannot listen.");
         gTCPListenState = TCP_STATE_ERROR;
         return;
@@ -451,7 +558,7 @@ void StartPassiveListen(void)
 
     log_debug_cat(LOG_CAT_MESSAGING, "Attempting asynchronous TCPListenAsync on port %u...", PORT_TCP);
 
-    err = gNetworkOps->TCPListenAsync(gTCPListenStream, PORT_TCP, &gListenAsyncHandle);
+    err = MacTCPImpl_TCPListenAsync(gTCPListenStream, PORT_TCP, &gListenAsyncHandle);
 
     if (err == noErr) {
         log_debug_cat(LOG_CAT_MESSAGING, "TCPListenAsync successfully initiated.");
@@ -465,16 +572,26 @@ void StartPassiveListen(void)
 
 void ProcessTCPStateMachine(GiveTimePtr giveTime)
 {
-    if (!gNetworkOps) return;
+    int i;
 
-    /* Handle ASR events for both streams */
+    /* Handle ASR events for listen stream */
     HandleListenASREvents(giveTime);
-    HandleSendASREvents(giveTime);
 
-    /* Process send state machine */
-    ProcessSendStateMachine(giveTime);
+    /* Process send stream pool - handle ASR events and state machines for each entry */
+    if (gPoolInitialized) {
+        for (i = 0; i < TCP_SEND_STREAM_POOL_SIZE; i++) {
+            /* Handle ASR events for this pool entry */
+            HandlePoolEntryASREvents(i, giveTime);
 
-    /* Process message queue when send stream is available */
+            /* Process state machine for this pool entry */
+            ProcessPoolEntryStateMachine(i, giveTime);
+
+            /* Check for stale connections and timeout */
+            CheckPoolEntryTimeout(i);
+        }
+    }
+
+    /* Process message queue - allocate pool entries for queued messages */
     ProcessMessageQueue(giveTime);
 
     /* Process listen stream state using the dispatcher */
@@ -485,7 +602,6 @@ void ProcessTCPStateMachine(GiveTimePtr giveTime)
 
 static void HandleListenASREvents(GiveTimePtr giveTime)
 {
-    if (!gNetworkOps) return;
     if (!gListenAsrEvent.eventPending) return;
 
     ASR_Event_Info currentEvent = gListenAsrEvent;
@@ -499,14 +615,14 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
         if (gTCPListenState == TCP_STATE_CONNECTED_IN) {
             if (gListenNoCopyRdsPendingReturn) {
                 log_app_event("Listen ASR: TCPDataArrival while RDS buffers still pending return!");
-                gNetworkOps->TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, giveTime);
+                MacTCPImpl_TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, giveTime);
                 gListenNoCopyRdsPendingReturn = false;
             }
 
             NetworkTCPInfo tcpInfo;
-            if (gNetworkOps->TCPStatus(gTCPListenStream, &tcpInfo) != noErr) {
+            if (MacTCPImpl_TCPStatus(gTCPListenStream, &tcpInfo) != noErr) {
                 log_error_cat(LOG_CAT_MESSAGING, "Listen ASR: TCPDataArrival, but GetStatus failed.");
-                gNetworkOps->TCPAbort(gTCPListenStream);
+                MacTCPImpl_TCPAbort(gTCPListenStream);
                 gTCPListenState = TCP_STATE_IDLE;
                 gListenStreamNeedsReset = true;
                 gListenStreamResetTime = TickCount();
@@ -514,7 +630,7 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
             }
 
             Boolean urgentFlag, markFlag;
-            OSErr rcvErr = gNetworkOps->TCPReceiveNoCopy(gTCPListenStream, (Ptr)gListenNoCopyRDS,
+            OSErr rcvErr = MacTCPImpl_TCPReceiveNoCopy(gTCPListenStream, (Ptr)gListenNoCopyRDS,
                            MAX_RDS_ENTRIES, TCP_RECEIVE_CMD_TIMEOUT_S,
                            &urgentFlag, &markFlag, giveTime);
 
@@ -524,24 +640,24 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
                     ProcessIncomingTCPData(gListenNoCopyRDS, tcpInfo.remoteHost, tcpInfo.remotePort);
                     gListenNoCopyRdsPendingReturn = true;
 
-                    OSErr bfrReturnErr = gNetworkOps->TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, giveTime);
+                    OSErr bfrReturnErr = MacTCPImpl_TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, giveTime);
                     if (bfrReturnErr == noErr) {
                         gListenNoCopyRdsPendingReturn = false;
                     } else {
                         log_app_event("CRITICAL: Listen TCPBfrReturn FAILED: %d", bfrReturnErr);
                         gTCPListenState = TCP_STATE_ERROR;
-                        gNetworkOps->TCPAbort(gTCPListenStream);
+                        MacTCPImpl_TCPAbort(gTCPListenStream);
                     }
                 }
             } else if (rcvErr == connectionClosing) {
                 log_app_event("Listen connection closing by peer.");
-                gNetworkOps->TCPAbort(gTCPListenStream);
+                MacTCPImpl_TCPAbort(gTCPListenStream);
                 gTCPListenState = TCP_STATE_IDLE;
                 gListenStreamNeedsReset = true;
                 gListenStreamResetTime = TickCount();
             } else if (rcvErr != commandTimeout) {
                 log_app_event("Error during Listen TCPNoCopyRcv: %d", rcvErr);
-                gNetworkOps->TCPAbort(gTCPListenStream);
+                MacTCPImpl_TCPAbort(gTCPListenStream);
                 gTCPListenState = TCP_STATE_IDLE;
                 gListenStreamNeedsReset = true;
                 gListenStreamResetTime = TickCount();
@@ -552,7 +668,7 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
     case TCPTerminate:
         log_app_event("Listen ASR: TCPTerminate. Reason: %u.", currentEvent.termReason);
         if (gListenNoCopyRdsPendingReturn) {
-            gNetworkOps->TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, giveTime);
+            MacTCPImpl_TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, giveTime);
             gListenNoCopyRdsPendingReturn = false;
         }
         gListenAsyncOperationInProgress = false;
@@ -564,7 +680,7 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
 
     case TCPClosing:
         log_app_event("Listen ASR: Remote peer closed connection.");
-        gNetworkOps->TCPAbort(gTCPListenStream);
+        MacTCPImpl_TCPAbort(gTCPListenStream);
         gTCPListenState = TCP_STATE_IDLE;
         gListenStreamNeedsReset = true;
         gListenStreamResetTime = TickCount();
@@ -575,26 +691,38 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
     }
 }
 
-static void HandleSendASREvents(GiveTimePtr giveTime)
+/* Handle ASR events for a specific pool entry
+ * Reference: MacTCP Programmer's Guide Section 4-3 - ASR handler patterns
+ */
+static void HandlePoolEntryASREvents(int poolIndex, GiveTimePtr giveTime)
 {
+    TCPSendStreamPoolEntry *entry;
+    ASR_Event_Info currentEvent;
+
     (void)giveTime; /* Unused parameter */
 
-    if (!gNetworkOps) return;
-    if (!gSendAsrEvent.eventPending) return;
+    if (!gPoolInitialized) return;
+    if (poolIndex < 0 || poolIndex >= TCP_SEND_STREAM_POOL_SIZE) return;
 
-    ASR_Event_Info currentEvent = gSendAsrEvent;
-    gSendAsrEvent.eventPending = false;
+    entry = &gSendStreamPool[poolIndex];
 
-    log_debug_cat(LOG_CAT_MESSAGING, "Send ASR Event: Code %u, Reason %u (State: %d)",
-                  currentEvent.eventCode, currentEvent.termReason, gTCPSendState);
+    if (!entry->asrEvent.eventPending) return;
+
+    /* Copy and clear event */
+    currentEvent = entry->asrEvent;
+    entry->asrEvent.eventPending = false;
+
+    log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: ASR Event: Code %u, Reason %u (State: %d)",
+                  poolIndex, currentEvent.eventCode, currentEvent.termReason, entry->state);
 
     switch (currentEvent.eventCode) {
     case TCPTerminate:
-        log_debug_cat(LOG_CAT_MESSAGING, "Send ASR: TCPTerminate. Reason: %u.", currentEvent.termReason);
+        log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: TCPTerminate. Reason: %u.", poolIndex, currentEvent.termReason);
         /* Only set to IDLE if we were expecting the termination */
-        if (gTCPSendState == TCP_STATE_CLOSING_GRACEFUL ||
-                gTCPSendState == TCP_STATE_IDLE) {
-            gTCPSendState = TCP_STATE_IDLE;
+        if (entry->state == TCP_STATE_CLOSING_GRACEFUL || entry->state == TCP_STATE_IDLE) {
+            entry->state = TCP_STATE_IDLE;
+            entry->connectHandle = NULL;
+            entry->sendHandle = NULL;
         }
         break;
 
@@ -603,109 +731,159 @@ static void HandleSendASREvents(GiveTimePtr giveTime)
     }
 }
 
-/* Process the send state machine for async operations */
-static void ProcessSendStateMachine(GiveTimePtr giveTime)
+/* Process the state machine for a specific pool entry
+ * Reference: MacTCP Programmer's Guide Section 4-18 - async operation completion
+ */
+static void ProcessPoolEntryStateMachine(int poolIndex, GiveTimePtr giveTime)
 {
+    TCPSendStreamPoolEntry *entry;
     OSErr err;
     OSErr operationResult;
     void *resultData;
+    int msgLen;
 
-    if (!gNetworkOps) return;
+    if (!gPoolInitialized) return;
+    if (poolIndex < 0 || poolIndex >= TCP_SEND_STREAM_POOL_SIZE) return;
 
-    switch (gTCPSendState) {
+    entry = &gSendStreamPool[poolIndex];
+
+    switch (entry->state) {
     case TCP_STATE_CONNECTING_OUT:
-        if (gSendConnectHandle != NULL) {
-            err = gNetworkOps->TCPCheckAsyncStatus(gSendConnectHandle, &operationResult, &resultData);
+        if (entry->connectHandle != NULL) {
+            err = MacTCPImpl_TCPCheckAsyncStatus(entry->connectHandle, &operationResult, &resultData);
 
             if (err != 1) { /* Not pending anymore */
-                gSendConnectHandle = NULL;
+                entry->connectHandle = NULL;
 
                 if (err == noErr && operationResult == noErr) {
-                    log_info_cat(LOG_CAT_MESSAGING, "Connected to %s", gCurrentSendPeerIP);
-                    gTCPSendState = TCP_STATE_CONNECTED_OUT;
+                    log_info_cat(LOG_CAT_MESSAGING, "Pool[%d]: Connected to %s", poolIndex, entry->peerIPStr);
+                    entry->state = TCP_STATE_CONNECTED_OUT;
 
                     /* Start async send */
-                    int msgLen = strlen(gCurrentSendMessage);
-                    log_debug_cat(LOG_CAT_MESSAGING, "Sending %d bytes...", msgLen);
-                    gTCPSendState = TCP_STATE_SENDING;
+                    msgLen = strlen(entry->message);
+                    log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Sending %d bytes...", poolIndex, msgLen);
+                    entry->state = TCP_STATE_SENDING;
+                    entry->sendStartTime = TickCount();
 
-                    err = gNetworkOps->TCPSendAsync(gTCPSendStream, (Ptr)gCurrentSendMessage,
-                                                    msgLen, true, &gSendDataHandle);
+                    err = MacTCPImpl_TCPSendAsync(entry->stream, (Ptr)entry->message,
+                                                    msgLen, true, &entry->sendHandle);
                     if (err != noErr) {
-                        log_app_event("Error: Async send to %s failed to start: %d",
-                                      gCurrentSendPeerIP, err);
-                        gNetworkOps->TCPAbort(gTCPSendStream);
-                        gTCPSendState = TCP_STATE_IDLE;
+                        log_app_event("Pool[%d]: Async send to %s failed to start: %d",
+                                      poolIndex, entry->peerIPStr, err);
+                        MacTCPImpl_TCPAbort(entry->stream);
+                        entry->state = TCP_STATE_IDLE;
+                        entry->connectHandle = NULL;
+                        entry->sendHandle = NULL;
                     }
                 } else {
-                    log_app_event("Error: Connection to %s failed: %d",
-                                  gCurrentSendPeerIP, operationResult);
-                    gTCPSendState = TCP_STATE_IDLE;
+                    log_app_event("Pool[%d]: Connection to %s failed: %d",
+                                  poolIndex, entry->peerIPStr, operationResult);
+                    entry->state = TCP_STATE_IDLE;
+                    entry->connectHandle = NULL;
                 }
             }
         }
         break;
 
     case TCP_STATE_SENDING:
-        if (gSendDataHandle != NULL) {
-            err = gNetworkOps->TCPCheckAsyncStatus(gSendDataHandle, &operationResult, &resultData);
+        if (entry->sendHandle != NULL) {
+            err = MacTCPImpl_TCPCheckAsyncStatus(entry->sendHandle, &operationResult, &resultData);
 
             if (err != 1) { /* Not pending anymore */
-                gSendDataHandle = NULL;
+                entry->sendHandle = NULL;
 
                 if (err == noErr && operationResult == noErr) {
-                    log_debug_cat(LOG_CAT_MESSAGING, "Message sent successfully");
+                    log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Message sent successfully", poolIndex);
 
                     /* Close connection */
-                    if (strcmp(gCurrentSendMsgType, MSG_QUIT) == 0) {
-                        log_debug_cat(LOG_CAT_MESSAGING, "Sending QUIT - using abort for immediate close");
-                        gNetworkOps->TCPAbort(gTCPSendStream);
-                        gTCPSendState = TCP_STATE_IDLE;
+                    if (strcmp(entry->msgType, MSG_QUIT) == 0) {
+                        log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Sending QUIT - using abort for immediate close", poolIndex);
+                        MacTCPImpl_TCPAbort(entry->stream);
+                        entry->state = TCP_STATE_IDLE;
+                        entry->connectHandle = NULL;
+                        entry->sendHandle = NULL;
                     } else {
-                        log_debug_cat(LOG_CAT_MESSAGING, "Attempting graceful close...");
-                        gTCPSendState = TCP_STATE_CLOSING_GRACEFUL;
-                        err = gNetworkOps->TCPClose(gTCPSendStream, TCP_CLOSE_ULP_TIMEOUT_S, giveTime);
+                        log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Attempting graceful close...", poolIndex);
+                        entry->state = TCP_STATE_CLOSING_GRACEFUL;
+                        err = MacTCPImpl_TCPClose(entry->stream, TCP_CLOSE_ULP_TIMEOUT_S, giveTime);
                         if (err != noErr) {
-                            log_warning_cat(LOG_CAT_MESSAGING, "Graceful close failed (%d), using abort", err);
-                            gNetworkOps->TCPAbort(gTCPSendStream);
-                            gTCPSendState = TCP_STATE_IDLE;
+                            log_warning_cat(LOG_CAT_MESSAGING, "Pool[%d]: Graceful close failed (%d), using abort", poolIndex, err);
+                            MacTCPImpl_TCPAbort(entry->stream);
+                            entry->state = TCP_STATE_IDLE;
+                            entry->connectHandle = NULL;
+                            entry->sendHandle = NULL;
                         }
-                        /* Don't set IDLE here - wait for close to complete */
+                        /* Don't set IDLE here - wait for close to complete or ASR event */
                     }
                 } else {
-                    log_app_event("Error: Send to %s failed: %d",
-                                  gCurrentSendPeerIP, operationResult);
-                    gNetworkOps->TCPAbort(gTCPSendStream);
-                    gTCPSendState = TCP_STATE_IDLE;
+                    log_app_event("Pool[%d]: Send to %s failed: %d",
+                                  poolIndex, entry->peerIPStr, operationResult);
+                    MacTCPImpl_TCPAbort(entry->stream);
+                    entry->state = TCP_STATE_IDLE;
+                    entry->connectHandle = NULL;
+                    entry->sendHandle = NULL;
                 }
             }
         }
         break;
 
     case TCP_STATE_CLOSING_GRACEFUL:
-        /* Check if close operation completed */
-        /* For now, assume close completes quickly and set to IDLE */
-        /* In a full implementation, we'd check async close status */
-        gTCPSendState = TCP_STATE_IDLE;
+        /* Graceful close in progress - transition to IDLE
+         * ASR handler will handle TCPTerminate event */
+        entry->state = TCP_STATE_IDLE;
+        entry->connectHandle = NULL;
+        entry->sendHandle = NULL;
         break;
 
     case TCP_STATE_IDLE:
-        /* Normal idle state - no action needed, waiting for new send request */
-        break;
-
-    case TCP_STATE_UNINITIALIZED:
-    case TCP_STATE_LISTENING:
-    case TCP_STATE_CONNECTED_IN:
-    case TCP_STATE_CONNECTED_OUT:
-    case TCP_STATE_ABORTING:
-    case TCP_STATE_RELEASING:
-    case TCP_STATE_ERROR:
-        /* These states are not expected for send stream operations */
-        log_warning_cat(LOG_CAT_MESSAGING, "Send stream in unexpected state: %d", gTCPSendState);
+        /* Normal idle state - no action needed, available for new send request */
         break;
 
     default:
+        /* Unexpected states */
+        if (entry->state != TCP_STATE_UNINITIALIZED) {
+            log_warning_cat(LOG_CAT_MESSAGING, "Pool[%d]: Unexpected state: %d", poolIndex, entry->state);
+        }
         break;
+    }
+}
+
+/* Check for stale connections and timeout them
+ * Prevents pool entries from getting stuck in connecting/sending states
+ */
+static void CheckPoolEntryTimeout(int poolIndex)
+{
+    TCPSendStreamPoolEntry *entry;
+    unsigned long currentTime;
+    unsigned long elapsedTicks;
+
+    if (!gPoolInitialized) return;
+    if (poolIndex < 0 || poolIndex >= TCP_SEND_STREAM_POOL_SIZE) return;
+
+    entry = &gSendStreamPool[poolIndex];
+    currentTime = TickCount();
+
+    /* Check for stale connections */
+    if (entry->state == TCP_STATE_CONNECTING_OUT && entry->connectStartTime > 0) {
+        elapsedTicks = currentTime - entry->connectStartTime;
+        if (elapsedTicks > TCP_STREAM_CONNECTION_TIMEOUT_TICKS) {
+            log_warning_cat(LOG_CAT_MESSAGING, "Pool[%d]: Connection timeout to %s (%lu ticks)",
+                            poolIndex, entry->peerIPStr, elapsedTicks);
+            MacTCPImpl_TCPAbort(entry->stream);
+            entry->state = TCP_STATE_IDLE;
+            entry->connectHandle = NULL;
+            entry->sendHandle = NULL;
+        }
+    } else if (entry->state == TCP_STATE_SENDING && entry->sendStartTime > 0) {
+        elapsedTicks = currentTime - entry->sendStartTime;
+        if (elapsedTicks > TCP_STREAM_CONNECTION_TIMEOUT_TICKS) {
+            log_warning_cat(LOG_CAT_MESSAGING, "Pool[%d]: Send timeout to %s (%lu ticks)",
+                            poolIndex, entry->peerIPStr, elapsedTicks);
+            MacTCPImpl_TCPAbort(entry->stream);
+            entry->state = TCP_STATE_IDLE;
+            entry->connectHandle = NULL;
+            entry->sendHandle = NULL;
+        }
     }
 }
 
@@ -718,15 +896,7 @@ void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status, tcp_p
     char remoteIPStrConnected[INET_ADDRSTRLEN];
 
     if (remote_ip_from_status != 0) {
-        if (gNetworkOps && gNetworkOps->AddressToString) {
-            gNetworkOps->AddressToString(remote_ip_from_status, remoteIPStrConnected);
-        } else {
-            sprintf(remoteIPStrConnected, "%lu.%lu.%lu.%lu",
-                    (remote_ip_from_status >> 24) & 0xFF,
-                    (remote_ip_from_status >> 16) & 0xFF,
-                    (remote_ip_from_status >> 8) & 0xFF,
-                    remote_ip_from_status & 0xFF);
-        }
+        MacTCPImpl_AddressToString(remote_ip_from_status, remoteIPStrConnected);
     } else {
         strcpy(remoteIPStrConnected, "unknown_ip");
     }
@@ -736,12 +906,14 @@ void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status, tcp_p
     for (int i = 0; rds[i].length > 0 || rds[i].ptr != NULL; ++i) {
         if (rds[i].length == 0 || rds[i].ptr == NULL) break;
 
-        log_debug_cat(LOG_CAT_MESSAGING, "Processing RDS entry %d: Ptr 0x%lX, Len %u", i, (unsigned long)rds[i].ptr, rds[i].length);
+        log_debug_cat(LOG_CAT_MESSAGING, "Processing RDS entry %d: Ptr 0x%lX, Len %u", i, (unsigned long)rds[i].ptr,
+                      rds[i].length);
 
         csend_uint32_t msg_id;
         if (parse_message((const char *)rds[i].ptr, rds[i].length,
                           senderIPStrFromPayload, senderUsername, msgType, &msg_id, content) == 0) {
-            log_debug_cat(LOG_CAT_MESSAGING, "Parsed TCP message: ID %lu, Type '%s', FromUser '%s', FromIP(payload) '%s', Content(len %d) '%.30s...'",
+            log_debug_cat(LOG_CAT_MESSAGING,
+                          "Parsed TCP message: ID %lu, Type '%s', FromUser '%s', FromIP(payload) '%s', Content(len %d) '%.30s...'",
                           (unsigned long)msg_id, msgType, senderUsername, senderIPStrFromPayload, (int)strlen(content), content);
 
             handle_received_tcp_message(remoteIPStrConnected,
@@ -768,29 +940,57 @@ TCPStreamState GetTCPListenStreamState(void)
 
 TCPStreamState GetTCPSendStreamState(void)
 {
-    return gTCPSendState;
+    int i;
+    int idleCount = 0;
+
+    if (!gPoolInitialized) {
+        return TCP_STATE_UNINITIALIZED;
+    }
+
+    /* Count IDLE entries - if all IDLE, return IDLE, otherwise return BUSY state */
+    for (i = 0; i < TCP_SEND_STREAM_POOL_SIZE; i++) {
+        if (gSendStreamPool[i].state == TCP_STATE_IDLE) {
+            idleCount++;
+        }
+    }
+
+    /* If all idle, report IDLE, otherwise report that we have active connections */
+    if (idleCount == TCP_SEND_STREAM_POOL_SIZE) {
+        return TCP_STATE_IDLE;
+    } else {
+        /* Return a generic "busy" state */
+        return TCP_STATE_CONNECTING_OUT;
+    }
 }
 
-/* Start an async send operation */
-static OSErr StartAsyncSend(const char *peerIPStr, const char *message_content, const char *msg_type)
+/* Start an async send operation on a specific pool entry
+ * Reference: MacTCP Programmer's Guide Section 4-18 "TCPActiveOpen" - async connection
+ */
+static OSErr StartAsyncSendOnPoolEntry(int poolIndex, const char *peerIPStr,
+                                       const char *message_content, const char *msg_type)
 {
+    TCPSendStreamPoolEntry *entry;
     OSErr err = noErr;
     ip_addr targetIP = 0;
     char messageBuffer[BUFFER_SIZE];
     int formattedLen;
 
-    if (!gNetworkOps) return notOpenErr;
+    if (!gPoolInitialized) return notOpenErr;
+    if (poolIndex < 0 || poolIndex >= TCP_SEND_STREAM_POOL_SIZE) return paramErr;
 
-    log_debug_cat(LOG_CAT_MESSAGING, "StartAsyncSend: Request to send '%s' to %s", msg_type, peerIPStr);
+    entry = &gSendStreamPool[poolIndex];
+
+    log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: StartAsyncSend: Request to send '%s' to %s",
+                  poolIndex, msg_type, peerIPStr);
 
     /* Validate parameters */
     if (gMacTCPRefNum == 0) return notOpenErr;
-    if (gTCPSendStream == NULL) return invalidStreamPtr;
+    if (entry->stream == NULL) return invalidStreamPtr;
     if (peerIPStr == NULL || msg_type == NULL) return paramErr;
 
     /* Must be in IDLE state */
-    if (gTCPSendState != TCP_STATE_IDLE) {
-        log_debug_cat(LOG_CAT_MESSAGING, "StartAsyncSend: Send stream not idle (state %d)", gTCPSendState);
+    if (entry->state != TCP_STATE_IDLE) {
+        log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Stream not idle (state %d)", poolIndex, entry->state);
         return connectionExists;
     }
 
@@ -800,7 +1000,7 @@ static OSErr StartAsyncSend(const char *peerIPStr, const char *message_content, 
     } else {
         err = ParseIPv4(peerIPStr, &targetIP);
         if (err != noErr) {
-            log_app_event("Error: Invalid IP address %s", peerIPStr);
+            log_app_event("Pool[%d]: Invalid IP address %s", poolIndex, peerIPStr);
             return err;
         }
     }
@@ -809,28 +1009,35 @@ static OSErr StartAsyncSend(const char *peerIPStr, const char *message_content, 
     formattedLen = format_message(messageBuffer, sizeof(messageBuffer), msg_type,
                                   generate_message_id(), gMyUsername, gMyLocalIPStr, message_content);
     if (formattedLen < 0) {
-        log_app_event("Error: format_message failed for type '%s'.", msg_type);
+        log_app_event("Pool[%d]: format_message failed for type '%s'", poolIndex, msg_type);
         return paramErr;
     }
 
-    /* Store current send operation info */
-    strcpy(gCurrentSendPeerIP, peerIPStr);
-    strcpy(gCurrentSendMessage, messageBuffer);
-    strcpy(gCurrentSendMsgType, msg_type);
-    gCurrentSendTargetIP = targetIP;
+    /* Store operation info in pool entry */
+    strncpy(entry->peerIPStr, peerIPStr, INET_ADDRSTRLEN - 1);
+    entry->peerIPStr[INET_ADDRSTRLEN - 1] = '\0';
+    strncpy(entry->message, messageBuffer, BUFFER_SIZE - 1);
+    entry->message[BUFFER_SIZE - 1] = '\0';
+    strncpy(entry->msgType, msg_type, 31);
+    entry->msgType[31] = '\0';
+    entry->targetIP = targetIP;
+    entry->targetPort = PORT_TCP;
+    entry->connectStartTime = TickCount();
 
     /* Start async connect */
-    log_debug_cat(LOG_CAT_MESSAGING, "Starting async connection to %s:%u...", peerIPStr, PORT_TCP);
-    gTCPSendState = TCP_STATE_CONNECTING_OUT;
+    log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Starting async connection to %s:%u...",
+                  poolIndex, peerIPStr, PORT_TCP);
+    entry->state = TCP_STATE_CONNECTING_OUT;
 
-    err = gNetworkOps->TCPConnectAsync(gTCPSendStream, targetIP, PORT_TCP, &gSendConnectHandle);
+    err = MacTCPImpl_TCPConnectAsync(entry->stream, targetIP, PORT_TCP, &entry->connectHandle);
     if (err != noErr) {
-        log_app_event("Error: Async connection to %s failed to start: %d", peerIPStr, err);
-        gTCPSendState = TCP_STATE_IDLE;
+        log_app_event("Pool[%d]: Async connection to %s failed to start: %d", poolIndex, peerIPStr, err);
+        entry->state = TCP_STATE_IDLE;
+        entry->connectHandle = NULL;
         return err;
     }
 
-    log_debug_cat(LOG_CAT_MESSAGING, "Async connect initiated");
+    log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Async connect initiated", poolIndex);
     return noErr;
 }
 

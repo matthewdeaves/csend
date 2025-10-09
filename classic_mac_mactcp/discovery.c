@@ -3,7 +3,7 @@
 //====================================
 
 #include "discovery.h"
-#include "network_abstraction.h"
+#include "mactcp_impl.h"
 #include "../shared/logging.h"
 #include "../shared/logging.h"
 #include "protocol.h"
@@ -24,12 +24,12 @@
 static OSErr StartAsyncUDPRead(void);
 static OSErr ReturnUDPBufferAsync(Ptr dataPtr, unsigned short bufferSize);
 
-/* Internal state - no MacTCP types exposed */
-static NetworkEndpointRef gUDPEndpoint = NULL;
+/* Internal state - MacTCP UDP endpoint */
+static UDPEndpointRef gUDPEndpoint = NULL;
 static Ptr gUDPRecvBuffer = NULL;
-static NetworkAsyncHandle gUDPReadHandle = NULL;
-static NetworkAsyncHandle gUDPReturnHandle = NULL;
-static NetworkAsyncHandle gUDPSendHandle = NULL;
+static MacTCPAsyncHandle gUDPReadHandle = NULL;
+static MacTCPAsyncHandle gUDPReturnHandle = NULL;
+static MacTCPAsyncHandle gUDPSendHandle = NULL;
 static unsigned long gLastBroadcastTimeTicks = 0;
 
 /* Buffers for messages */
@@ -51,13 +51,7 @@ static void mac_send_discovery_response(uint32_t dest_ip_addr_host_order, uint16
         log_debug_cat(LOG_CAT_DISCOVERY, "Discovery response skipped - send already pending");
     } else {
         char tempIPStr[INET_ADDRSTRLEN];
-        if (gNetworkOps && gNetworkOps->AddressToString) {
-            gNetworkOps->AddressToString(dest_ip_net, tempIPStr);
-        } else {
-            sprintf(tempIPStr, "%lu.%lu.%lu.%lu",
-                    (dest_ip_net >> 24) & 0xFF, (dest_ip_net >> 16) & 0xFF,
-                    (dest_ip_net >> 8) & 0xFF, dest_ip_net & 0xFF);
-        }
+        MacTCPImpl_AddressToString(dest_ip_net, tempIPStr);
         log_debug_cat(LOG_CAT_DISCOVERY, "Sent DISCOVERY_RESPONSE to %s:%u", tempIPStr, dest_port_mac);
     }
 }
@@ -86,12 +80,7 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum)
 {
     OSErr err;
 
-    log_info_cat(LOG_CAT_DISCOVERY, "Initializing UDP Discovery Endpoint using network abstraction...");
-
-    if (!gNetworkOps) {
-        log_app_event("Error: Network abstraction not initialized");
-        return notOpenErr;
-    }
+    log_info_cat(LOG_CAT_DISCOVERY, "Initializing UDP Discovery Endpoint using MacTCPImpl...");
 
     if (macTCPRefNum == 0) {
         log_error_cat(LOG_CAT_DISCOVERY, "Error (InitUDP): macTCPRefNum is 0.");
@@ -114,8 +103,8 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum)
     }
     log_debug_cat(LOG_CAT_DISCOVERY, "Allocated %ld bytes for UDP receive buffer at 0x%lX.", (long)kMinUDPBufSize, (unsigned long)gUDPRecvBuffer);
 
-    /* Create UDP endpoint using abstraction */
-    err = gNetworkOps->UDPCreate(macTCPRefNum, &gUDPEndpoint, PORT_UDP, gUDPRecvBuffer, kMinUDPBufSize);
+    /* Create UDP endpoint using MacTCPImpl */
+    err = MacTCPImpl_UDPCreate(macTCPRefNum, &gUDPEndpoint, PORT_UDP, gUDPRecvBuffer, kMinUDPBufSize);
     if (err != noErr || gUDPEndpoint == NULL) {
         log_app_event("Error (InitUDP): UDPCreate failed (Error: %d).", err);
         DisposePtr(gUDPRecvBuffer);
@@ -123,7 +112,7 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum)
         return err;
     }
 
-    log_info_cat(LOG_CAT_DISCOVERY, "UDP Endpoint created successfully using network abstraction on port %u.", PORT_UDP);
+    log_info_cat(LOG_CAT_DISCOVERY, "UDP Endpoint created successfully using MacTCPImpl on port %u.", PORT_UDP);
 
     /* Start initial async read */
     err = StartAsyncUDPRead();
@@ -144,28 +133,28 @@ void CleanupUDPDiscoveryEndpoint(short macTCPRefNum)
     log_debug_cat(LOG_CAT_DISCOVERY, "Cleaning up UDP Discovery Endpoint...");
 
     /* Cancel any pending async operations */
-    if (gUDPReadHandle != NULL && gNetworkOps && gNetworkOps->UDPCancelAsync) {
+    if (gUDPReadHandle != NULL) {
         log_debug_cat(LOG_CAT_DISCOVERY, "Cancelling pending UDP read operation...");
-        gNetworkOps->UDPCancelAsync(gUDPReadHandle);
+        MacTCPImpl_UDPCancelAsync(gUDPReadHandle);
         gUDPReadHandle = NULL;
     }
 
-    if (gUDPReturnHandle != NULL && gNetworkOps && gNetworkOps->UDPCancelAsync) {
+    if (gUDPReturnHandle != NULL) {
         log_debug_cat(LOG_CAT_DISCOVERY, "Cancelling pending UDP buffer return operation...");
-        gNetworkOps->UDPCancelAsync(gUDPReturnHandle);
+        MacTCPImpl_UDPCancelAsync(gUDPReturnHandle);
         gUDPReturnHandle = NULL;
     }
 
-    if (gUDPSendHandle != NULL && gNetworkOps && gNetworkOps->UDPCancelAsync) {
+    if (gUDPSendHandle != NULL) {
         log_debug_cat(LOG_CAT_DISCOVERY, "Cancelling pending UDP send operation...");
-        gNetworkOps->UDPCancelAsync(gUDPSendHandle);
+        MacTCPImpl_UDPCancelAsync(gUDPSendHandle);
         gUDPSendHandle = NULL;
     }
 
     /* Release UDP endpoint */
-    if (gUDPEndpoint != NULL && gNetworkOps && gNetworkOps->UDPRelease) {
+    if (gUDPEndpoint != NULL) {
         log_debug_cat(LOG_CAT_DISCOVERY, "Releasing UDP endpoint...");
-        err = gNetworkOps->UDPRelease(macTCPRefNum, gUDPEndpoint);
+        err = MacTCPImpl_UDPRelease(macTCPRefNum, gUDPEndpoint);
         if (err != noErr) {
             log_warning_cat(LOG_CAT_DISCOVERY, "UDPRelease failed during cleanup (Error: %d).", err);
         }
@@ -188,9 +177,9 @@ OSErr SendDiscoveryBroadcastSync(short macTCPRefNum, const char *myUsername, con
     OSErr err;
     int formatted_len;
 
-    (void)macTCPRefNum; /* Not needed with abstraction */
+    (void)macTCPRefNum; /* Not needed here */
 
-    if (!gNetworkOps || gUDPEndpoint == NULL) return notOpenErr;
+    if (gUDPEndpoint == NULL) return notOpenErr;
     if (myUsername == NULL || myLocalIPStr == NULL) return paramErr;
 
     /* Check if a send is already pending */
@@ -209,15 +198,10 @@ OSErr SendDiscoveryBroadcastSync(short macTCPRefNum, const char *myUsername, con
         return paramErr;
     }
 
-    /* Send using async abstraction layer */
-    if (!gNetworkOps->UDPSendAsync) {
-        log_error_cat(LOG_CAT_DISCOVERY, "Error: Async UDP send not available");
-        return notOpenErr;
-    }
-
-    err = gNetworkOps->UDPSendAsync(gUDPEndpoint, BROADCAST_IP, PORT_UDP,
-                                    (Ptr)gBroadcastBuffer, formatted_len - 1,
-                                    &gUDPSendHandle);
+    /* Send using MacTCPImpl async UDP send */
+    err = MacTCPImpl_UDPSendAsync(gUDPEndpoint, BROADCAST_IP, PORT_UDP,
+                                  (Ptr)gBroadcastBuffer, formatted_len - 1,
+                                  &gUDPSendHandle);
     if (err != noErr) {
         log_error_cat(LOG_CAT_DISCOVERY, "Error starting async broadcast: %d", err);
         gUDPSendHandle = NULL;
@@ -234,9 +218,9 @@ OSErr SendDiscoveryResponseSync(short macTCPRefNum, const char *myUsername, cons
     OSErr err;
     int formatted_len;
 
-    (void)macTCPRefNum; /* Not needed with abstraction */
+    (void)macTCPRefNum; /* Not needed here */
 
-    if (!gNetworkOps || gUDPEndpoint == NULL) return notOpenErr;
+    if (gUDPEndpoint == NULL) return notOpenErr;
     if (myUsername == NULL || myLocalIPStr == NULL) return paramErr;
 
     /* Check if a send is already pending */
@@ -255,15 +239,10 @@ OSErr SendDiscoveryResponseSync(short macTCPRefNum, const char *myUsername, cons
         return paramErr;
     }
 
-    /* Send using async abstraction layer */
-    if (!gNetworkOps->UDPSendAsync) {
-        log_error_cat(LOG_CAT_DISCOVERY, "Error: Async UDP send not available");
-        return notOpenErr;
-    }
-
-    err = gNetworkOps->UDPSendAsync(gUDPEndpoint, destIP, destPort,
-                                    (Ptr)gResponseBuffer, formatted_len - 1,
-                                    &gUDPSendHandle);
+    /* Send using MacTCPImpl async UDP send */
+    err = MacTCPImpl_UDPSendAsync(gUDPEndpoint, destIP, destPort,
+                                  (Ptr)gResponseBuffer, formatted_len - 1,
+                                  &gUDPSendHandle);
     if (err != noErr) {
         log_error_cat(LOG_CAT_DISCOVERY, "Error starting async response: %d", err);
         gUDPSendHandle = NULL;
@@ -280,9 +259,9 @@ OSErr BroadcastQuitMessage(short macTCPRefNum, const char *myUsername, const cha
     int formatted_len;
     static char quitBuffer[BUFFER_SIZE];
 
-    (void)macTCPRefNum; /* Not needed with abstraction */
+    (void)macTCPRefNum; /* Not needed here */
 
-    if (!gNetworkOps || gUDPEndpoint == NULL) return notOpenErr;
+    if (gUDPEndpoint == NULL) return notOpenErr;
     if (myUsername == NULL || myLocalIPStr == NULL) return paramErr;
 
     /* Check if a send is already pending - wait briefly if needed */
@@ -290,12 +269,10 @@ OSErr BroadcastQuitMessage(short macTCPRefNum, const char *myUsername, const cha
         log_debug_cat(LOG_CAT_DISCOVERY, "BroadcastQuitMessage: Send pending, waiting briefly...");
         unsigned long startTime = TickCount();
         while (gUDPSendHandle != NULL && (TickCount() - startTime) < 60) {  /* Wait up to 1 second */
-            if (gNetworkOps->UDPCheckSendStatus) {
-                OSErr status = gNetworkOps->UDPCheckSendStatus(gUDPSendHandle);
-                if (status != 1) {  /* Not pending anymore */
-                    gUDPSendHandle = NULL;
-                    break;
-                }
+            OSErr status = MacTCPImpl_UDPCheckSendStatus(gUDPSendHandle);
+            if (status != 1) {  /* Not pending anymore */
+                gUDPSendHandle = NULL;
+                break;
             }
             YieldTimeToSystem();
         }
@@ -315,15 +292,10 @@ OSErr BroadcastQuitMessage(short macTCPRefNum, const char *myUsername, const cha
         return paramErr;
     }
 
-    /* Send using async abstraction layer */
-    if (!gNetworkOps->UDPSendAsync) {
-        log_error_cat(LOG_CAT_DISCOVERY, "Error: Async UDP send not available");
-        return notOpenErr;
-    }
-
-    err = gNetworkOps->UDPSendAsync(gUDPEndpoint, BROADCAST_IP, PORT_UDP,
-                                    (Ptr)quitBuffer, formatted_len - 1,
-                                    &gUDPSendHandle);
+    /* Send using MacTCPImpl async UDP send */
+    err = MacTCPImpl_UDPSendAsync(gUDPEndpoint, BROADCAST_IP, PORT_UDP,
+                                  (Ptr)quitBuffer, formatted_len - 1,
+                                  &gUDPSendHandle);
     if (err != noErr) {
         log_error_cat(LOG_CAT_DISCOVERY, "Error broadcasting quit message: %d", err);
         gUDPSendHandle = NULL;
@@ -338,7 +310,6 @@ static OSErr StartAsyncUDPRead(void)
 {
     OSErr err;
 
-    if (!gNetworkOps || !gNetworkOps->UDPReceiveAsync) return notOpenErr;
     if (gUDPEndpoint == NULL) return invalidStreamPtr;
 
     if (gUDPReadHandle != NULL) {
@@ -356,8 +327,8 @@ static OSErr StartAsyncUDPRead(void)
         return invalidBufPtr;
     }
 
-    /* Start async receive using abstraction */
-    err = gNetworkOps->UDPReceiveAsync(gUDPEndpoint, &gUDPReadHandle);
+    /* Start async receive using MacTCPImpl */
+    err = MacTCPImpl_UDPReceiveAsync(gUDPEndpoint, &gUDPReadHandle);
     if (err != noErr) {
         log_error_cat(LOG_CAT_DISCOVERY, "Error (StartAsyncUDPRead): UDPReceiveAsync failed. Error: %d", err);
         gUDPReadHandle = NULL;
@@ -372,7 +343,7 @@ static OSErr ReturnUDPBufferAsync(Ptr dataPtr, unsigned short bufferSize)
 {
     OSErr err;
 
-    if (!gNetworkOps || !gNetworkOps->UDPReturnBufferAsync || gUDPEndpoint == NULL) return invalidStreamPtr;
+    if (gUDPEndpoint == NULL) return invalidStreamPtr;
 
     if (gUDPReturnHandle != NULL) {
         log_debug_cat(LOG_CAT_DISCOVERY, "ReturnUDPBufferAsync: Buffer return already pending. Ignoring request.");
@@ -384,8 +355,8 @@ static OSErr ReturnUDPBufferAsync(Ptr dataPtr, unsigned short bufferSize)
         return invalidBufPtr;
     }
 
-    /* Return buffer using abstraction */
-    err = gNetworkOps->UDPReturnBufferAsync(gUDPEndpoint, dataPtr, bufferSize, &gUDPReturnHandle);
+    /* Return buffer using MacTCPImpl */
+    err = MacTCPImpl_UDPReturnBufferAsync(gUDPEndpoint, dataPtr, bufferSize, &gUDPReturnHandle);
     if (err != noErr) {
         log_error_cat(LOG_CAT_DISCOVERY, "CRITICAL Error (ReturnUDPBufferAsync): UDPReturnBufferAsync failed. Error: %d.", err);
         gUDPReturnHandle = NULL;
@@ -401,7 +372,7 @@ void CheckSendBroadcast(short macTCPRefNum, const char *myUsername, const char *
     unsigned long currentTimeTicks = TickCount();
     const unsigned long intervalTicks = (unsigned long)DISCOVERY_INTERVAL * 60UL;
 
-    if (gUDPEndpoint == NULL || !gNetworkOps) return;
+    if (gUDPEndpoint == NULL) return;
 
     if (currentTimeTicks < gLastBroadcastTimeTicks) {
         gLastBroadcastTimeTicks = currentTimeTicks;
@@ -433,13 +404,13 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
         .mark_peer_inactive_callback = mac_mark_peer_inactive
     };
 
-    (void)macTCPRefNum; /* Not needed with abstraction */
+    (void)macTCPRefNum; /* Not needed here */
 
-    if (!gNetworkOps || gUDPEndpoint == NULL) return;
+    if (gUDPEndpoint == NULL) return;
 
     /* Check async read status */
-    if (gUDPReadHandle != NULL && gNetworkOps->UDPCheckAsyncStatus) {
-        status = gNetworkOps->UDPCheckAsyncStatus(gUDPReadHandle, &remoteHost, &remotePort,
+    if (gUDPReadHandle != NULL) {
+        status = MacTCPImpl_UDPCheckAsyncStatus(gUDPReadHandle, &remoteHost, &remotePort,
                  &dataPtr, &dataLength);
 
         if (status == 1) {
@@ -451,18 +422,7 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
             if (dataLength > 0) {
                 if (remoteHost != myLocalIP) {
                     char senderIPStr[INET_ADDRSTRLEN];
-                    if (gNetworkOps->AddressToString) {
-                        OSErr addrErr = gNetworkOps->AddressToString(remoteHost, senderIPStr);
-                        if (addrErr != noErr) {
-                            sprintf(senderIPStr, "%lu.%lu.%lu.%lu",
-                                    (remoteHost >> 24) & 0xFF, (remoteHost >> 16) & 0xFF,
-                                    (remoteHost >> 8) & 0xFF, remoteHost & 0xFF);
-                        }
-                    } else {
-                        sprintf(senderIPStr, "%lu.%lu.%lu.%lu",
-                                (remoteHost >> 24) & 0xFF, (remoteHost >> 16) & 0xFF,
-                                (remoteHost >> 8) & 0xFF, remoteHost & 0xFF);
-                    }
+                    MacTCPImpl_AddressToString(remoteHost, senderIPStr);
 
                     uint32_t sender_ip_for_shared = (uint32_t)remoteHost;
                     discovery_logic_process_packet((const char *)dataPtr, dataLength,
@@ -470,13 +430,7 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
                                                    &mac_callbacks, NULL);
                 } else {
                     char selfIPStr[INET_ADDRSTRLEN];
-                    if (gNetworkOps->AddressToString) {
-                        gNetworkOps->AddressToString(remoteHost, selfIPStr);
-                    } else {
-                        sprintf(selfIPStr, "%lu.%lu.%lu.%lu",
-                                (remoteHost >> 24) & 0xFF, (remoteHost >> 16) & 0xFF,
-                                (remoteHost >> 8) & 0xFF, remoteHost & 0xFF);
-                    }
+                    MacTCPImpl_AddressToString(remoteHost, selfIPStr);
                     log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Ignored UDP packet from self (%s).", selfIPStr);
                 }
 
@@ -504,8 +458,8 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
     }
 
     /* Check buffer return completion */
-    if (gUDPReturnHandle != NULL && gNetworkOps->UDPCheckReturnStatus) {
-        status = gNetworkOps->UDPCheckReturnStatus(gUDPReturnHandle);
+    if (gUDPReturnHandle != NULL) {
+        status = MacTCPImpl_UDPCheckReturnStatus(gUDPReturnHandle);
 
         if (status == 1) {
             /* Still pending */
@@ -526,8 +480,8 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
     }
 
     /* Check UDP send completion */
-    if (gUDPSendHandle != NULL && gNetworkOps && gNetworkOps->UDPCheckSendStatus) {
-        status = gNetworkOps->UDPCheckSendStatus(gUDPSendHandle);
+    if (gUDPSendHandle != NULL) {
+        status = MacTCPImpl_UDPCheckSendStatus(gUDPSendHandle);
 
         if (status == 1) {
             /* Still pending */

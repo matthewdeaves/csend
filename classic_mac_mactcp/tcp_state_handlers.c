@@ -1,19 +1,17 @@
 #include "tcp_state_handlers.h"
 #include "messaging.h"
-#include "network_abstraction.h"
+#include "mactcp_impl.h"
 #include "../shared/logging.h"
 #include <stdio.h>
 #include <string.h>
 
-/* gNetworkOps is declared in network_abstraction.h */
-
 /* External variables from messaging.c */
-extern NetworkStreamRef gTCPListenStream;
+extern StreamPtr gTCPListenStream;
 extern TCPStreamState gTCPListenState;
 extern Boolean gListenStreamNeedsReset;
 extern unsigned long gListenStreamResetTime;
 extern Boolean gListenAsyncOperationInProgress;
-extern NetworkAsyncHandle gListenAsyncHandle;
+extern MacTCPAsyncHandle gListenAsyncHandle;
 extern wdsEntry gListenNoCopyRDS[];
 extern Boolean gListenNoCopyRdsPendingReturn;
 
@@ -84,7 +82,7 @@ void process_listen_async_completion(GiveTimePtr giveTime)
     OSErr err, operationResult;
     void *resultData;
 
-    err = gNetworkOps->TCPCheckAsyncStatus(gListenAsyncHandle, &operationResult, &resultData);
+    err = MacTCPImpl_TCPCheckAsyncStatus(gListenAsyncHandle, &operationResult, &resultData);
 
     if (err == 1) {
         return;  /* Still pending */
@@ -128,13 +126,7 @@ void handle_connection_accepted(ip_addr remote_ip, tcp_port remote_port, GiveTim
     char ipStr[INET_ADDRSTRLEN];
 
     /* Convert IP to string */
-    if (gNetworkOps->AddressToString) {
-        gNetworkOps->AddressToString(remote_ip, ipStr);
-    } else {
-        sprintf(ipStr, "%lu.%lu.%lu.%lu",
-                (remote_ip >> 24) & 0xFF, (remote_ip >> 16) & 0xFF,
-                (remote_ip >> 8) & 0xFF, remote_ip & 0xFF);
-    }
+    MacTCPImpl_AddressToString(remote_ip, ipStr);
 
     log_app_event("Incoming TCP connection established from %s:%u.", ipStr, remote_port);
 
@@ -142,7 +134,7 @@ void handle_connection_accepted(ip_addr remote_ip, tcp_port remote_port, GiveTim
     Boolean urgentFlag, markFlag;
     memset(gListenNoCopyRDS, 0, sizeof(wdsEntry) * MAX_RDS_ENTRIES);
 
-    OSErr rcvErr = gNetworkOps->TCPReceiveNoCopy(gTCPListenStream,
+    OSErr rcvErr = MacTCPImpl_TCPReceiveNoCopy(gTCPListenStream,
                    (Ptr)gListenNoCopyRDS,
                    MAX_RDS_ENTRIES,
                    0, /* non-blocking */
@@ -158,7 +150,7 @@ void handle_connection_accepted(ip_addr remote_ip, tcp_port remote_port, GiveTim
         gListenNoCopyRdsPendingReturn = true;
 
         /* Return the buffers */
-        OSErr bfrReturnErr = gNetworkOps->TCPReturnBuffer(gTCPListenStream,
+        OSErr bfrReturnErr = MacTCPImpl_TCPReturnBuffer(gTCPListenStream,
                              (Ptr)gListenNoCopyRDS,
                              giveTime);
         if (bfrReturnErr == noErr) {
@@ -169,7 +161,7 @@ void handle_connection_accepted(ip_addr remote_ip, tcp_port remote_port, GiveTim
          * MacTCP streams can only handle one connection at a time
          * Close + new TCPPassiveOpen is required to accept another connection */
         log_debug_cat(LOG_CAT_MESSAGING, "Closing listen connection to allow new connections");
-        gNetworkOps->TCPAbort(gTCPListenStream);
+        MacTCPImpl_TCPAbort(gTCPListenStream);
         gTCPListenState = TCP_STATE_IDLE;
         gListenStreamNeedsReset = true;
         gListenStreamResetTime = TickCount();
@@ -177,7 +169,7 @@ void handle_connection_accepted(ip_addr remote_ip, tcp_port remote_port, GiveTim
         /* No immediate data - also close and restart listen
          * Keeping stream in CONNECTED state blocks new connections */
         log_debug_cat(LOG_CAT_MESSAGING, "No immediate data on accept, closing to allow new connections");
-        gNetworkOps->TCPAbort(gTCPListenStream);
+        MacTCPImpl_TCPAbort(gTCPListenStream);
         gTCPListenState = TCP_STATE_IDLE;
         gListenStreamNeedsReset = true;
         gListenStreamResetTime = TickCount();
