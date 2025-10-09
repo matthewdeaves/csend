@@ -835,7 +835,11 @@ void HandleIncomingTCPData(EndpointRef endpoint)
     }
 }
 
-/* Handle incoming UDP data */
+/* Handle incoming UDP data
+ * Per NetworkingOpenTransport.txt p.7439: "An endpoint does not receive any more
+ * T_DATA events until its current T_DATA event is cleared." We MUST call OTRcvUData
+ * in a loop until it returns kOTNoDataErr to fully clear the T_DATA event.
+ */
 void HandleIncomingUDPData(EndpointRef endpoint)
 {
     OSStatus err;
@@ -845,40 +849,51 @@ void HandleIncomingUDPData(EndpointRef endpoint)
     char buffer[BUFFER_SIZE];
     char peerIPStr[16];
     char myLocalIP[16];
+    int datagramCount = 0;
 
     log_debug_cat(LOG_CAT_NETWORKING, "Handling incoming UDP discovery data");
 
-    /* Set up unit data structure */
-    memset(&unitData, 0, sizeof(unitData));
-    unitData.addr.buf = (UInt8*)&peerAddr;
-    unitData.addr.maxlen = sizeof(InetAddress);
-    unitData.udata.buf = (UInt8*)buffer;
-    unitData.udata.maxlen = sizeof(buffer) - 1;
+    /* Get our local IP once to filter out our own messages */
+    GetLocalIPAddress(myLocalIP, sizeof(myLocalIP));
 
-    /* Receive UDP data */
-    err = OTRcvUData(endpoint, &unitData, &flags);
-    if (err == noErr && unitData.udata.len > 0) {
-        buffer[unitData.udata.len] = '\0'; /* Null terminate */
+    /* CRITICAL: Read until kOTNoDataErr to clear T_DATA event */
+    do {
+        /* Set up unit data structure */
+        memset(&unitData, 0, sizeof(unitData));
+        unitData.addr.buf = (UInt8*)&peerAddr;
+        unitData.addr.maxlen = sizeof(InetAddress);
+        unitData.udata.buf = (UInt8*)buffer;
+        unitData.udata.maxlen = sizeof(buffer) - 1;
 
-        /* Convert peer address to string using OTInetHostToString */
-        OTInetHostToString(peerAddr.fHost, peerIPStr);
+        /* Receive UDP data */
+        err = OTRcvUData(endpoint, &unitData, &flags);
 
-        log_debug_cat(LOG_CAT_DISCOVERY, "Received UDP data from %s (%ld bytes): %s",
-                      peerIPStr, unitData.udata.len, buffer);
+        if (err == noErr && unitData.udata.len > 0) {
+            datagramCount++;
+            buffer[unitData.udata.len] = '\0'; /* Null terminate */
 
-        /* Get our local IP to filter out our own messages */
-        GetLocalIPAddress(myLocalIP, sizeof(myLocalIP));
+            /* Convert peer address to string using OTInetHostToString */
+            OTInetHostToString(peerAddr.fHost, peerIPStr);
 
-        /* Ignore messages from ourselves */
-        if (strcmp(peerIPStr, myLocalIP) == 0) {
-            log_debug_cat(LOG_CAT_DISCOVERY, "Ignored UDP message from self (%s)", peerIPStr);
-            return;
+            /* Ignore messages from ourselves */
+            if (strcmp(peerIPStr, myLocalIP) == 0) {
+                log_debug_cat(LOG_CAT_DISCOVERY, "Ignored UDP message from self (%s)", peerIPStr);
+                continue;  /* Process next datagram */
+            }
+
+            log_debug_cat(LOG_CAT_DISCOVERY, "Received UDP data from %s (%ld bytes): %s",
+                          peerIPStr, unitData.udata.len, buffer);
+
+            /* Process discovery message using shared logic */
+            ProcessIncomingUDPMessage(buffer, unitData.udata.len, peerIPStr, peerAddr.fHost, peerAddr.fPort);
+        } else if (err != noErr && err != kOTNoDataErr) {
+            log_error_cat(LOG_CAT_NETWORKING, "OTRcvUData failed: %ld", err);
+            break;  /* Exit on error */
         }
+    } while (err != kOTNoDataErr);
 
-        /* Process discovery message using shared logic */
-        ProcessIncomingUDPMessage(buffer, unitData.udata.len, peerIPStr, peerAddr.fHost, peerAddr.fPort);
-    } else if (err != noErr) {
-        log_error_cat(LOG_CAT_NETWORKING, "OTRcvUData failed: %ld", err);
+    if (datagramCount > 1) {
+        log_debug_cat(LOG_CAT_NETWORKING, "Processed %d UDP datagrams in one T_DATA event", datagramCount);
     }
 }
 
