@@ -753,85 +753,77 @@ void HandleIncomingConnection(EndpointRef listener)
     }
 }
 
-/* Handle incoming TCP data */
+/* Handle incoming TCP data
+ * Per NetworkingOpenTransport.txt p.7439: "Until you get a T_DATA event, you should
+ * continue calling OTRcv until it returns kOTNoDataErr" to fully clear the T_DATA event.
+ */
 void HandleIncomingTCPData(EndpointRef endpoint)
 {
     OSStatus err;
     UInt32 flags;
     OTResult bytesReceived;
     char buffer[BUFFER_SIZE];
-    int retryCount = 0;
-    const int maxRetries = 100; /* Wait up to ~1 second total */
+    char peerIPStr[16] = "unknown";
+    TBind peerAddr;
+    InetAddress peerInetAddr;
+    int totalBytesReceived = 0;
+    int receiveCount = 0;
 
     log_debug_cat(LOG_CAT_NETWORKING, "Handling incoming TCP data");
 
-    /* Per NetworkingOpenTransport.txt: OTLook prioritizes T_ORDREL over T_DATA.
-     * When sender uses OTSndOrderlyDisconnect after sending data, OTLook returns
-     * T_ORDREL first, even if data is pending. We must try to receive data BEFORE
-     * checking for disconnect events. This is the correct pattern for orderly
-     * disconnect handling. */
-
-    /* Try to receive data immediately (non-blocking) */
-    bytesReceived = OTRcv(endpoint, buffer, sizeof(buffer) - 1, &flags);
-
-    if (bytesReceived == kOTNoDataErr) {
-        /* No immediate data available, wait with timeout */
-        while (retryCount < maxRetries) {
-            /* Check if connection was closed or data arrived */
-            OTResult lookResult = OTLook(endpoint);
-
-            if (lookResult == T_DATA) {
-                /* Data arrived, receive it */
-                bytesReceived = OTRcv(endpoint, buffer, sizeof(buffer) - 1, &flags);
-                break;
-            } else if (lookResult == T_DISCONNECT) {
-                log_debug_cat(LOG_CAT_NETWORKING, "Connection aborted while waiting for data");
-                return;
-            } else if (lookResult == T_ORDREL) {
-                /* Orderly disconnect received - sender has finished sending all data.
-                 * This is expected after the peer completes its send. */
-                log_debug_cat(LOG_CAT_NETWORKING, "Orderly disconnect received, no data pending");
-                OTRcvOrderlyDisconnect(endpoint); /* Acknowledge the orderly release */
-                return;
-            } else if (lookResult < 0) {
-                log_error_cat(LOG_CAT_NETWORKING, "OTLook failed while waiting for data: %ld", lookResult);
-                return;
-            }
-
-            /* Wait a bit and try again */
-            Delay(1, NULL); /* ~17ms per tick */
-            retryCount++;
-        }
-
-        if (retryCount >= maxRetries) {
-            log_debug_cat(LOG_CAT_NETWORKING, "Timeout waiting for TCP data");
-            return;
-        }
+    /* Get peer IP address once */
+    peerAddr.addr.buf = (UInt8*)&peerInetAddr;
+    peerAddr.addr.maxlen = sizeof(InetAddress);
+    err = OTGetProtAddress(endpoint, NULL, &peerAddr);
+    if (err == noErr && peerAddr.addr.len > 0) {
+        OTInetHostToString(peerInetAddr.fHost, peerIPStr);
     }
 
-    if (bytesReceived > 0) {
-        buffer[bytesReceived] = '\0'; /* Null terminate */
-        log_debug_cat(LOG_CAT_MESSAGING, "Received TCP data (%ld bytes): %s", bytesReceived, buffer);
+    /* Per NetworkingOpenTransport.txt: OTLook prioritizes T_ORDREL over T_DATA.
+     * When sender uses OTSndOrderlyDisconnect after sending data, OTLook returns
+     * T_ORDREL first, even if data is pending. We must try to receive data FIRST
+     * before checking for disconnect events. */
 
-        /* Get peer IP address */
-        TBind peerAddr;
-        InetAddress peerInetAddr;
-        char peerIPStr[16] = "unknown";
+    /* CRITICAL: Read until kOTNoDataErr to clear T_DATA event */
+    do {
+        bytesReceived = OTRcv(endpoint, buffer, sizeof(buffer) - 1, &flags);
 
-        peerAddr.addr.buf = (UInt8*)&peerInetAddr;
-        peerAddr.addr.maxlen = sizeof(InetAddress);
+        if (bytesReceived > 0) {
+            receiveCount++;
+            totalBytesReceived += bytesReceived;
+            buffer[bytesReceived] = '\0'; /* Null terminate */
+            log_debug_cat(LOG_CAT_MESSAGING, "Received TCP data chunk %d (%ld bytes): %s",
+                          receiveCount, bytesReceived, buffer);
 
-        err = OTGetProtAddress(endpoint, NULL, &peerAddr);
-        if (err == noErr && peerAddr.addr.len > 0) {
-            /* Convert peer address to string using OTInetHostToString */
-            OTInetHostToString(peerInetAddr.fHost, peerIPStr);
+            /* Parse and process the message */
+            ProcessIncomingMessage(buffer, peerIPStr);
+
+        } else if (bytesReceived == kOTLookErr) {
+            /* Async event pending - check what it is */
+            OTResult lookResult = OTLook(endpoint);
+
+            if (lookResult == T_DISCONNECT) {
+                log_debug_cat(LOG_CAT_NETWORKING, "Connection aborted while receiving data");
+                return;
+            } else if (lookResult == T_ORDREL) {
+                /* Orderly disconnect - sender finished sending.
+                 * We should have already received all data, but check once more */
+                log_debug_cat(LOG_CAT_NETWORKING, "Orderly disconnect received after %d bytes", totalBytesReceived);
+                OTRcvOrderlyDisconnect(endpoint);
+                return;
+            } else {
+                log_debug_cat(LOG_CAT_NETWORKING, "OTLook returned unexpected event: %ld", lookResult);
+            }
+            break;
+        } else if (bytesReceived < 0 && bytesReceived != kOTNoDataErr) {
+            log_error_cat(LOG_CAT_NETWORKING, "OTRcv failed: %ld", bytesReceived);
+            break;
         }
+    } while (bytesReceived != kOTNoDataErr);
 
-        /* Parse and process the message */
-        ProcessIncomingMessage(buffer, peerIPStr);
-    } else if (bytesReceived < 0) {
-        err = (OSStatus)bytesReceived;
-        log_error_cat(LOG_CAT_NETWORKING, "OTRcv failed: %ld", err);
+    if (receiveCount > 1) {
+        log_debug_cat(LOG_CAT_NETWORKING, "Received %d TCP chunks (%d total bytes) in one T_DATA event",
+                      receiveCount, totalBytesReceived);
     }
 }
 
