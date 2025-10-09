@@ -1063,8 +1063,52 @@ OSErr SendTCPMessage(const char* message, const char* targetIP, tcp_port targetP
         }
     }
 
-    /* Send the message */
-    OTResult bytesSent = OTSnd(ep, (void*)message, strlen(message), 0);
+    /* Send the message with flow control retry mechanism */
+    size_t messageLen = strlen(message);
+    OTResult bytesSent = OTSnd(ep, (void*)message, messageLen, 0);
+
+    if (bytesSent == kOTFlowErr) {
+        /* Flow control active - wait for T_GODATA event before retrying
+         * Per NetworkingOpenTransport.txt: "When flow control is lifted,
+         * Open Transport sends the endpoint a T_GODATA event." */
+        int flowRetries = 0;
+        const int maxFlowRetries = 50; /* ~5 seconds at 100ms per retry */
+
+        log_debug_cat(LOG_CAT_MESSAGING, "OTSnd flow-controlled, waiting for T_GODATA");
+
+        while (flowRetries < maxFlowRetries) {
+            lookResult = OTLook(ep);
+
+            if (lookResult == T_GODATA) {
+                log_debug_cat(LOG_CAT_MESSAGING, "T_GODATA received, retrying send");
+                /* Flow control lifted, retry send */
+                bytesSent = OTSnd(ep, (void*)message, messageLen, 0);
+                if (bytesSent >= 0) {
+                    log_debug_cat(LOG_CAT_MESSAGING, "Sent %ld bytes after flow control cleared", bytesSent);
+                    break; /* Success */
+                } else if (bytesSent == kOTFlowErr) {
+                    log_debug_cat(LOG_CAT_MESSAGING, "Still flow-controlled after T_GODATA, continuing wait");
+                    /* Continue waiting */
+                } else {
+                    log_error_cat(LOG_CAT_MESSAGING, "OTSnd retry failed: %ld", bytesSent);
+                    break; /* Other error */
+                }
+            } else if (lookResult < 0) {
+                log_error_cat(LOG_CAT_MESSAGING, "OTLook error during flow control wait: %ld", lookResult);
+                break;
+            }
+
+            /* Yield time and retry */
+            WaitNextEvent(0, &event, 6, NULL); /* ~100ms delay */
+            flowRetries++;
+        }
+
+        if (bytesSent == kOTFlowErr) {
+            log_error_cat(LOG_CAT_MESSAGING, "Flow control timeout after %d retries", flowRetries);
+            err = kOTFlowErr;
+        }
+    }
+
     if (bytesSent < 0) {
         log_error_cat(LOG_CAT_MESSAGING, "OTSnd failed: %ld", bytesSent);
         err = (OSStatus)bytesSent;
