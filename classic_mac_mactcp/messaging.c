@@ -61,8 +61,10 @@ static int gQueueTail = 0;
 /* Timeout constants
  * Per MacTCP Programmer's Guide p.2849: Minimum timeout is 2 seconds.
  * Values less than 2 will be rounded up to 2 seconds by MacTCP.
+ * For graceful close, 30+ seconds allows proper completion on slow networks.
+ * Using 0 would default to 2 minutes (MacTCP spec).
  */
-#define TCP_CLOSE_ULP_TIMEOUT_S 5
+#define TCP_CLOSE_ULP_TIMEOUT_S 30   /* Graceful close timeout - allows proper completion */
 #define TCP_RECEIVE_CMD_TIMEOUT_S 2  /* Minimum is 2 seconds per MacTCP spec */
 
 /* Forward declarations */
