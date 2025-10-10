@@ -689,19 +689,19 @@ void PollActiveConnections(void)
                     finalBuffer[finalBytes] = '\0';
                     log_debug_cat(LOG_CAT_NETWORKING, "Poll: Received %ld bytes from orderly disconnect (endpoint %ld)", finalBytes, (long)ep);
 
-                    /* Get peer IP */
-                    TBind peerAddr;
-                    InetAddress peerInetAddr;
-                    char peerIPStr[16] = "unknown";
-                    peerAddr.addr.buf = (UInt8*)&peerInetAddr;
-                    peerAddr.addr.maxlen = sizeof(InetAddress);
+                    /* Get peer IP for final message */
+                    TBind finalPeerAddr;
+                    InetAddress finalPeerInetAddr;
+                    char finalPeerIPStr[16] = "unknown";
+                    finalPeerAddr.addr.buf = (UInt8*)&finalPeerInetAddr;
+                    finalPeerAddr.addr.maxlen = sizeof(InetAddress);
 
-                    OSStatus err = OTGetProtAddress(ep, NULL, &peerAddr);
-                    if (err == noErr && peerAddr.addr.len > 0) {
-                        OTInetHostToString(peerInetAddr.fHost, peerIPStr);
+                    OSStatus finalErr = OTGetProtAddress(ep, NULL, &finalPeerAddr);
+                    if (finalErr == noErr && finalPeerAddr.addr.len > 0) {
+                        OTInetHostToString(finalPeerInetAddr.fHost, finalPeerIPStr);
                     }
 
-                    ProcessIncomingMessage(finalBuffer, peerIPStr);
+                    ProcessIncomingMessage(finalBuffer, finalPeerIPStr);
                 } else {
                     log_debug_cat(LOG_CAT_NETWORKING, "Poll: Orderly disconnect on active connection %d (endpoint %ld) - no data received", i, (long)ep);
                 }

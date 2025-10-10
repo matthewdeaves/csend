@@ -16,7 +16,7 @@ int pw_get_active_peer_count(void);
 #include <MacTypes.h>
 #define InitPeerList() pw_init()
 #define AddOrUpdatePeer(ip, username) pw_add_or_update(ip, username)
-#define MarkPeerInactive(ip) (pw_mark_inactive(ip) > 0)
+#define MarkPeerInactive(ip) ((void)pw_mark_inactive(ip))
 #define PruneTimedOutPeers() pw_prune_timed_out()
 Boolean GetPeerByIndex(int active_index, peer_t *out_peer);
 #endif
