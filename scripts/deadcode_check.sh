@@ -52,7 +52,7 @@ detect_retro68() {
 get_compiler_for_file() {
     local file="$1"
 
-    if [[ "$file" == classic_mac/* ]] || [[ "$file" == classic_mac_ot/* ]]; then
+    if [[ "$file" == classic_mac_mactcp/* ]] || [[ "$file" == classic_mac_ot/* ]]; then
         # Prefer m68k compiler for classic mac
         if [ -n "$RETRO68_M68K_GCC" ]; then
             echo "$RETRO68_M68K_GCC"
@@ -70,15 +70,15 @@ get_compiler_for_file() {
 get_include_flags_for_file() {
     local file="$1"
 
-    if [[ "$file" == classic_mac/* ]] && [ -n "$RETRO68_PATH" ]; then
+    if [[ "$file" == classic_mac_mactcp/* ]] && [ -n "$RETRO68_PATH" ]; then
         # Use Retro68 includes for Classic Mac MacTCP files
-        echo "-I\"$RETRO68_PATH/m68k-apple-macos/include\" -I\"$RETRO68_PATH/universal/CIncludes\" -Iclassic_mac -Ishared -D__MACOS__"
+        echo "-I\"$RETRO68_PATH/m68k-apple-macos/include\" -I\"$RETRO68_PATH/universal/CIncludes\" -Iclassic_mac_mactcp -Ishared -Ishared/classic_mac -Ishared/classic_mac/ui -D__MACOS__"
     elif [[ "$file" == classic_mac_ot/* ]] && [ -n "$RETRO68_PATH" ]; then
         # Use Retro68 includes for Classic Mac OpenTransport files
-        echo "-I\"$RETRO68_PATH/m68k-apple-macos/include\" -I\"$RETRO68_PATH/universal/CIncludes\" -Iclassic_mac_ot -Ishared -D__MACOS__"
+        echo "-I\"$RETRO68_PATH/m68k-apple-macos/include\" -I\"$RETRO68_PATH/universal/CIncludes\" -Iclassic_mac_ot -Ishared -Ishared/classic_mac -Ishared/classic_mac/ui -D__MACOS__ -DUSE_OPENTRANSPORT"
     else
         # Standard includes for POSIX
-        echo "-Iposix -Ishared -Iclassic_mac -Iclassic_mac_ot"
+        echo "-Iposix -Ishared"
     fi
 }
 
@@ -90,11 +90,11 @@ set_platform_dirs() {
             echo "Analyzing POSIX platform only"
             ;;
         "classic")
-            SOURCE_DIRS="classic_mac classic_mac_ot shared"
+            SOURCE_DIRS="classic_mac_mactcp classic_mac_ot shared"
             echo "Analyzing Classic Mac platforms (MacTCP + OpenTransport)"
             ;;
         "all")
-            SOURCE_DIRS="posix shared classic_mac classic_mac_ot"
+            SOURCE_DIRS="posix shared classic_mac_mactcp classic_mac_ot"
             echo "Analyzing all platforms"
             ;;
         *)
@@ -259,11 +259,21 @@ EOF
     echo "Attempting to link with garbage collection..." > "$GC_SECTIONS_FILE"
     
     # Try to compile and link all files together
-    gcc $SECTION_FLAGS -I"posix" -I"shared" -I"classic_mac" \
-        $(find $SOURCE_DIRS -name "*.c" -not -path "*/.finf/*" -not -path "*/.rsrc/*" | grep -v "DNR.c" | grep -v "main.c") \
-        "$ANALYSIS_BUILD_DIR/test_main.c" \
-        $LINK_FLAGS -o "$ANALYSIS_BUILD_DIR/test_app" 2>&1 | \
-        grep "removing unused section" >> "$GC_SECTIONS_FILE" || true
+    # Only process directories that exist
+    EXISTING_DIRS=""
+    for dir in $SOURCE_DIRS; do
+        if [ -d "$dir" ]; then
+            EXISTING_DIRS="$EXISTING_DIRS $dir"
+        fi
+    done
+
+    if [ -n "$EXISTING_DIRS" ]; then
+        gcc $SECTION_FLAGS -I"posix" -I"shared" -I"classic_mac_mactcp" -I"classic_mac_ot" \
+            $(find $EXISTING_DIRS -name "*.c" -not -path "*/.finf/*" -not -path "*/.rsrc/*" 2>/dev/null | grep -v "DNR.c" | grep -v "main.c") \
+            "$ANALYSIS_BUILD_DIR/test_main.c" \
+            $LINK_FLAGS -o "$ANALYSIS_BUILD_DIR/test_app" 2>&1 | \
+            grep "removing unused section" >> "$GC_SECTIONS_FILE" || true
+    fi
     
     # Count removed functions
     REMOVED_COUNT=$(grep -c "removing unused section" "$GC_SECTIONS_FILE" 2>/dev/null || echo 0)
@@ -283,7 +293,7 @@ run_cppcheck_analysis() {
         cppcheck --enable=all --inconclusive \
                  --suppress=missingIncludeSystem \
                  --suppress=unusedFunction \
-                 -I posix -I shared -I classic_mac -I classic_mac_ot \
+                 -I posix -I shared -I classic_mac_mactcp -I classic_mac_ot \
                  $SOURCE_DIRS 2> "$CPPCHECK_FILE"
 
         # Show summary
@@ -353,8 +363,8 @@ categorize_by_confidence() {
         echo "1. UNUSED STATIC FUNCTIONS"
         echo "   (defined but never called in same translation unit)"
         echo ""
-        HIGH_COUNT=$(grep -c "defined but not used.*static" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)
-        if [ $HIGH_COUNT -gt 0 ]; then
+        HIGH_COUNT=$(grep "defined but not used.*static" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+        if [ "$HIGH_COUNT" -gt 0 ]; then
             grep "defined but not used.*static" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | \
                 sed 's/^/   /' || true
         else
@@ -366,8 +376,8 @@ categorize_by_confidence() {
         echo "2. UNREACHABLE CODE"
         echo "   (code that can never execute)"
         echo ""
-        UNREACH_COUNT=$(grep -c "unreachable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)
-        if [ $UNREACH_COUNT -gt 0 ]; then
+        UNREACH_COUNT=$(grep "unreachable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+        if [ "$UNREACH_COUNT" -gt 0 ]; then
             grep "unreachable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | \
                 sed 's/^/   /' || true
         else
@@ -384,11 +394,13 @@ categorize_by_confidence() {
         echo "3. UNUSED VARIABLES"
         echo "   (local variables that are assigned but never read)"
         echo ""
-        UNUSED_VAR=$(grep -c "unused variable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)
-        if [ $UNUSED_VAR -gt 0 ]; then
+        UNUSED_VAR=$(grep "unused variable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+        if [ "$UNUSED_VAR" -gt 0 ]; then
             grep "unused variable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | head -10 | \
                 sed 's/^/   /' || true
-            [ $UNUSED_VAR -gt 10 ] && echo "   ... and $((UNUSED_VAR - 10)) more"
+            if [ "$UNUSED_VAR" -gt 10 ]; then
+                echo "   ... and $((UNUSED_VAR - 10)) more"
+            fi
         else
             echo "   ✓ None found"
         fi
@@ -398,8 +410,8 @@ categorize_by_confidence() {
         echo "4. REDUNDANT DECLARATIONS"
         echo "   (declarations that duplicate existing ones)"
         echo ""
-        REDUNDANT=$(grep -c "redundant" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)
-        if [ $REDUNDANT -gt 0 ]; then
+        REDUNDANT=$(grep "redundant" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+        if [ "$REDUNDANT" -gt 0 ]; then
             grep "redundant" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | \
                 sed 's/^/   /' || true
         else
@@ -416,11 +428,13 @@ categorize_by_confidence() {
         echo "5. UNUSED PARAMETERS"
         echo "   (may be required by callback/API signatures - use (void)param)"
         echo ""
-        UNUSED_PARAM=$(grep -c "unused parameter" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)
-        if [ $UNUSED_PARAM -gt 0 ]; then
+        UNUSED_PARAM=$(grep "unused parameter" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+        if [ "$UNUSED_PARAM" -gt 0 ]; then
             grep "unused parameter" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | head -10 | \
                 sed 's/^/   /' || true
-            [ $UNUSED_PARAM -gt 10 ] && echo "   ... and $((UNUSED_PARAM - 10)) more"
+            if [ "$UNUSED_PARAM" -gt 10 ]; then
+                echo "   ... and $((UNUSED_PARAM - 10)) more"
+            fi
         else
             echo "   ✓ None found"
         fi
@@ -549,11 +563,13 @@ generate_html_report() {
 HTML_HEADER
 
         # Summary cards
-        HIGH_COUNT=$(grep -c "defined but not used.*static" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)
-        HIGH_COUNT=$((HIGH_COUNT + $(grep -c "unreachable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)))
-        MEDIUM_COUNT=$(grep -c "unused variable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)
-        MEDIUM_COUNT=$((MEDIUM_COUNT + $(grep -c "redundant" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)))
-        LOW_COUNT=$(grep -c "unused parameter" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)
+        HIGH_COUNT=$(grep "defined but not used.*static" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+        HIGH_UNREACH=$(grep "unreachable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+        HIGH_COUNT=$((HIGH_COUNT + HIGH_UNREACH))
+        MEDIUM_VAR=$(grep "unused variable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+        MEDIUM_REDUND=$(grep "redundant" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+        MEDIUM_COUNT=$((MEDIUM_VAR + MEDIUM_REDUND))
+        LOW_COUNT=$(grep "unused parameter" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
         TOTAL=$((HIGH_COUNT + MEDIUM_COUNT + LOW_COUNT))
 
         cat << HTML_SUMMARY
