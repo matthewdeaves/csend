@@ -798,8 +798,29 @@ static void HandlePoolEntryASREvents(int poolIndex, GiveTimePtr giveTime)
     switch (currentEvent.eventCode) {
     case TCPTerminate:
         log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: TCPTerminate. Reason: %u.", poolIndex, currentEvent.termReason);
-        /* Only set to IDLE if we were expecting the termination */
-        if (entry->state == TCP_STATE_CLOSING_GRACEFUL || entry->state == TCP_STATE_IDLE) {
+
+        /* Handle termination based on current state and reason */
+        if (entry->state == TCP_STATE_SENDING || entry->state == TCP_STATE_CONNECTED_OUT) {
+            /* Remote peer closed connection during or after send
+             * Reason 2 = remote initiated disconnect (normal for one-message-per-connection protocol)
+             * Per NetworkingOpenTransport.txt: Receiver closes immediately after reading message.
+             * This is expected behavior - treat as successful send. */
+            if (currentEvent.termReason == 2) {
+                log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Remote disconnect during send (expected behavior)", poolIndex);
+            } else {
+                log_warning_cat(LOG_CAT_MESSAGING, "Pool[%d]: Unexpected termination reason %u during send", poolIndex, currentEvent.termReason);
+            }
+            entry->state = TCP_STATE_IDLE;
+            entry->connectHandle = NULL;
+            entry->sendHandle = NULL;
+        } else if (entry->state == TCP_STATE_CLOSING_GRACEFUL || entry->state == TCP_STATE_IDLE) {
+            /* Expected termination after graceful close or when already idle */
+            entry->state = TCP_STATE_IDLE;
+            entry->connectHandle = NULL;
+            entry->sendHandle = NULL;
+        } else {
+            /* Unexpected termination in other states */
+            log_warning_cat(LOG_CAT_MESSAGING, "Pool[%d]: TCPTerminate in unexpected state %d", poolIndex, entry->state);
             entry->state = TCP_STATE_IDLE;
             entry->connectHandle = NULL;
             entry->sendHandle = NULL;
