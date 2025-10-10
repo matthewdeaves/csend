@@ -8,12 +8,14 @@
 PLATFORM="all"
 # Build directory for analysis
 ANALYSIS_BUILD_DIR="build/deadcode_analysis"
-# Reports directory
-REPORTS_DIR="reports"
-# Timestamp for this run
+# Reports base directory
+REPORTS_BASE_DIR="reports/deadcode"
+# Timestamp for this run (YYYYMMDD_HHMMSS format - sorts newest first with reverse sort)
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-# Keep old reports flag (default: clean reports directory)
-KEEP_REPORTS=false
+# Reports directory for this run
+REPORTS_DIR="${REPORTS_BASE_DIR}/${TIMESTAMP}"
+# Keep old reports flag (default: keep all historical reports)
+KEEP_REPORTS=true
 
 # --- Color codes for output ---
 RED='\033[0;31m'
@@ -137,15 +139,22 @@ check_dependencies() {
 # Clean reports directory
 clean_reports() {
     if [ "$KEEP_REPORTS" = false ]; then
-        if [ -d "$REPORTS_DIR" ]; then
-            echo -e "${BLUE}Cleaning reports directory...${NC}"
-            rm -f "$REPORTS_DIR"/*.txt "$REPORTS_DIR"/*.html 2>/dev/null
-            echo -e "${GREEN}Reports directory cleaned${NC}"
+        if [ -d "$REPORTS_BASE_DIR" ]; then
+            echo -e "${BLUE}Cleaning all dead code reports...${NC}"
+            rm -rf "$REPORTS_BASE_DIR"
+            echo -e "${GREEN}Dead code reports cleaned${NC}"
         fi
     else
-        echo -e "${BLUE}Keeping old reports (--keep-reports flag set)${NC}"
+        # Count existing reports
+        if [ -d "$REPORTS_BASE_DIR" ]; then
+            EXISTING_COUNT=$(find "$REPORTS_BASE_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+            if [ "$EXISTING_COUNT" -gt 0 ]; then
+                echo -e "${BLUE}Found $EXISTING_COUNT existing report(s), creating new report for ${TIMESTAMP}${NC}"
+            fi
+        fi
     fi
     mkdir -p "$REPORTS_DIR"
+    echo -e "${GREEN}Report directory: ${REPORTS_DIR}${NC}"
 }
 
 cleanup() {
@@ -520,7 +529,7 @@ generate_html_report() {
     echo "Generating interactive HTML report..."
     echo ""
 
-    HTML_REPORT="$REPORTS_DIR/deadcode_report_${TIMESTAMP}.html"
+    HTML_REPORT="$REPORTS_DIR/deadcode_report.html"
 
     # Calculate counts first - HIGH confidence (true dead code)
     HIGH_STATIC=$(grep "defined but not used.*static" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
@@ -785,6 +794,155 @@ HTML_FOOTER
     echo ""
 }
 
+# Generate LLM-optimized summary
+generate_llm_summary() {
+    echo -e "${BLUE}=== Phase 9: LLM Summary Generation ===${NC}"
+    echo "Generating LLM-optimized structured summary..."
+    echo ""
+
+    LLM_SUMMARY="$REPORTS_DIR/llm_summary.txt"
+
+    {
+        echo "DEAD CODE ANALYSIS - LLM SUMMARY"
+        echo "================================="
+        echo "Generated: $(date)"
+        echo "Platform: $PLATFORM"
+        echo ""
+
+        # Executive Summary
+        echo "## EXECUTIVE SUMMARY"
+        echo ""
+        HIGH_TOTAL=$(($(grep "defined but not used.*static" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l) + $(grep "unreachable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)))
+        MEDIUM_TOTAL=$(($(grep "unused variable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l) + $(grep "redundant" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l) + $(grep "shadows a previous local" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l) + $(grep "value computed is not used" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)))
+        LOW_TOTAL=$(($(grep "unused parameter" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l) + $(grep "comparison between pointer and integer" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l) + $(grep "enumeration value.*not handled in switch" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l) + $(grep -E "makes integer from pointer|incompatible pointer type" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)))
+        TOTAL_ISSUES=$((HIGH_TOTAL + MEDIUM_TOTAL + LOW_TOTAL))
+
+        echo "Total Issues: $TOTAL_ISSUES"
+        echo "├─ HIGH confidence (safe to remove): $HIGH_TOTAL"
+        echo "├─ MEDIUM confidence (review before removing): $MEDIUM_TOTAL"
+        echo "└─ LOW confidence (likely intentional): $LOW_TOTAL"
+        echo ""
+
+        # High Confidence Issues (ACTION REQUIRED)
+        echo "## HIGH CONFIDENCE ISSUES (ACTION REQUIRED)"
+        echo ""
+        if [ "$HIGH_TOTAL" -gt 0 ]; then
+            echo "These are likely dead code and can be safely removed:"
+            echo ""
+            grep "defined but not used.*static" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | sed 's/^/  /' || true
+            grep "unreachable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | sed 's/^/  /' || true
+        else
+            echo "✓ No high confidence dead code found"
+        fi
+        echo ""
+
+        # Medium Confidence Issues (REVIEW RECOMMENDED)
+        echo "## MEDIUM CONFIDENCE ISSUES (REVIEW RECOMMENDED)"
+        echo ""
+        if [ "$MEDIUM_TOTAL" -gt 0 ]; then
+            echo "Review these issues - they may indicate code quality problems:"
+            echo ""
+
+            SHADOW_COUNT=$(grep "shadows a previous local" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+            if [ "$SHADOW_COUNT" -gt 0 ]; then
+                echo "Shadow Variables ($SHADOW_COUNT):"
+                grep "shadows a previous local" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | sed 's/^/  /' || true
+                echo ""
+            fi
+
+            UNUSED_VAR=$(grep "unused variable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+            if [ "$UNUSED_VAR" -gt 0 ]; then
+                echo "Unused Variables ($UNUSED_VAR):"
+                grep "unused variable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | head -10 | sed 's/^/  /' || true
+                [ "$UNUSED_VAR" -gt 10 ] && echo "  ... and $((UNUSED_VAR - 10)) more"
+                echo ""
+            fi
+
+            REDUNDANT=$(grep "redundant" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+            if [ "$REDUNDANT" -gt 0 ]; then
+                echo "Redundant Declarations ($REDUNDANT):"
+                grep "redundant" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | sed 's/^/  /' || true
+                echo ""
+            fi
+
+            UNUSED_VAL=$(grep "value computed is not used" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+            if [ "$UNUSED_VAL" -gt 0 ]; then
+                echo "Unused Values ($UNUSED_VAL):"
+                grep "value computed is not used" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | sed 's/^/  /' || true
+                echo ""
+            fi
+        else
+            echo "✓ No medium confidence issues found"
+        fi
+        echo ""
+
+        # Low Confidence Issues (INFORMATIONAL)
+        echo "## LOW CONFIDENCE ISSUES (INFORMATIONAL)"
+        echo ""
+        if [ "$LOW_TOTAL" -gt 0 ]; then
+            echo "These are likely intentional API design choices:"
+            echo ""
+
+            LOW_POINTER=$(grep "comparison between pointer and integer" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+            if [ "$LOW_POINTER" -gt 0 ]; then
+                echo "Pointer/Integer Comparisons ($LOW_POINTER) - MacTCP API design:"
+                grep "comparison between pointer and integer" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | head -5 | sed 's/^/  /' || true
+                [ "$LOW_POINTER" -gt 5 ] && echo "  ... and $((LOW_POINTER - 5)) more"
+                echo ""
+            fi
+
+            LOW_ENUM=$(grep "enumeration value.*not handled in switch" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+            if [ "$LOW_ENUM" -gt 0 ]; then
+                echo "Incomplete Switch Statements ($LOW_ENUM) - Intentional state handling:"
+                grep "enumeration value.*not handled in switch" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | head -5 | sed 's/^/  /' || true
+                [ "$LOW_ENUM" -gt 5 ] && echo "  ... and $((LOW_ENUM - 5)) more"
+                echo ""
+            fi
+
+            LOW_PARAM=$(grep "unused parameter" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+            if [ "$LOW_PARAM" -gt 0 ]; then
+                echo "Unused Parameters ($LOW_PARAM) - Required by callback signatures:"
+                grep "unused parameter" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | head -5 | sed 's/^/  /' || true
+                [ "$LOW_PARAM" -gt 5 ] && echo "  ... and $((LOW_PARAM - 5)) more"
+                echo ""
+            fi
+        else
+            echo "✓ No low confidence issues found"
+        fi
+        echo ""
+
+        # Files with most issues
+        echo "## FILES WITH MOST ISSUES"
+        echo ""
+        grep -E "warning:" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | cut -d':' -f1 | sort | uniq -c | sort -rn | head -10 | while read count file; do
+            echo "  $count issues: $file"
+        done
+        echo ""
+
+        # Recommendations
+        echo "## RECOMMENDATIONS"
+        echo ""
+        if [ "$HIGH_TOTAL" -gt 0 ]; then
+            echo "1. Address HIGH confidence issues first - these are likely dead code"
+        fi
+        if [ "$MEDIUM_TOTAL" -gt 0 ]; then
+            echo "2. Review MEDIUM confidence issues - may indicate code quality problems"
+        fi
+        if [ "$LOW_TOTAL" -gt 0 ]; then
+            echo "3. LOW confidence issues are likely intentional - document if necessary"
+        fi
+        echo ""
+        echo "For detailed analysis, see:"
+        echo "  - confidence_report.txt : Categorized warnings"
+        echo "  - git_context.txt       : Git history context"
+        echo "  - deadcode_report.html  : Interactive HTML report"
+
+    } > "$LLM_SUMMARY"
+
+    echo "LLM summary generated"
+    echo ""
+}
+
 # Generate final report
 generate_report() {
     echo -e "${BLUE}=== Final Report ===${NC}"
@@ -842,14 +1000,18 @@ generate_report() {
     echo "  - static_functions_analysis.txt   : Unused static functions (HIGH confidence)"
     echo "  - confidence_report.txt           : Categorized by confidence level"
     echo "  - git_context.txt                 : Git history context"
-    echo "  - deadcode_report_${TIMESTAMP}.html : Interactive HTML report"
+    echo "  - deadcode_report.html            : Interactive HTML report"
     echo "  - deadcode_summary.txt            : Summary report"
+    echo "  - llm_summary.txt                 : LLM-optimized structured summary"
     echo ""
     echo "Key findings:"
     cat "$FINAL_REPORT" | grep -A 2 "^[0-9]\." | grep -v "^--$" || true
     echo ""
     echo -e "${GREEN}📊 Open the HTML report for interactive analysis:${NC}"
-    echo "   file://$PWD/$REPORTS_DIR/deadcode_report_${TIMESTAMP}.html"
+    echo "   file://$PWD/$REPORTS_DIR/deadcode_report.html"
+    echo ""
+    echo -e "${BLUE}💡 LLM Summary available at:${NC}"
+    echo "   $REPORTS_DIR/llm_summary.txt"
 }
 
 # --- Main script ---
@@ -901,12 +1063,13 @@ main() {
             categorize_by_confidence
             add_git_context
             generate_html_report
+            generate_llm_summary
             generate_report
             ;;
         "clean")
             cleanup
-            rm -rf "$REPORTS_DIR"
-            echo "Cleaned up analysis files"
+            rm -rf "$REPORTS_BASE_DIR"
+            echo "Cleaned up all dead code analysis files"
             ;;
         "help"|"-h"|"--help")
             echo "Usage: $0 [OPTIONS] [MODE]"

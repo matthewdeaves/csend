@@ -510,7 +510,7 @@ void ReleaseEndpointToPool(EndpointRef endpoint)
                 }
             }
 
-            /* Per NetworkingOpenTransport.txt: Endpoints for OTAccept should be "open, unbound".
+            /* CRITICAL FIX: Per NetworkingOpenTransport.txt: Endpoints for OTAccept should be "open, unbound".
              * After disconnect, endpoint is in T_IDLE. Unbind it to return to T_UNBND for reuse. */
             state = OTGetEndpointState(endpoint);
             if (state == T_IDLE) {
@@ -518,19 +518,34 @@ void ReleaseEndpointToPool(EndpointRef endpoint)
                 if (err == noErr) {
                     state = OTGetEndpointState(endpoint);
                     log_debug_cat(LOG_CAT_NETWORKING, "Unbound endpoint %d, now in state %ld", i, state);
+                    gEndpointPool[i].bound = false; /* FIXED: Only mark unbound if succeeded */
                 } else {
-                    log_error_cat(LOG_CAT_NETWORKING, "OTUnbind failed for endpoint %d: %ld", i, err);
+                    log_error_cat(LOG_CAT_NETWORKING, "CRITICAL: OTUnbind failed for endpoint %d: %ld", i, err);
+                    /* CRITICAL FIX: Close and recreate endpoint since unbind failed */
+                    OTCloseProvider(endpoint);
+                    endpoint = OTOpenEndpoint(OTCreateConfiguration("tcp"), 0, NULL, &err);
+                    if (err == noErr && endpoint != kOTInvalidEndpointRef) {
+                        OTSetNonBlocking(endpoint);
+                        gEndpointPool[i].endpoint = endpoint;
+                        gEndpointPool[i].bound = false;
+                        log_debug_cat(LOG_CAT_NETWORKING, "Recreated endpoint %d after unbind failure", i);
+                    } else {
+                        log_error_cat(LOG_CAT_NETWORKING, "CRITICAL: Failed to recreate endpoint %d", i);
+                        gEndpointPool[i].endpoint = kOTInvalidEndpointRef;
+                        gEndpointPool[i].bound = false;
+                    }
                 }
+            } else {
+                gEndpointPool[i].bound = false; /* State is not T_IDLE, best effort */
             }
 
             /* Verify endpoint is in a reusable state (T_UNBND preferred for OTAccept) */
-            state = OTGetEndpointState(endpoint);
+            state = OTGetEndpointState(gEndpointPool[i].endpoint);
             if (state != T_IDLE && state != T_UNBND && state != T_UNINIT) {
                 log_error_cat(LOG_CAT_NETWORKING, "WARNING: Endpoint %d still in bad state %ld after release attempt", i, state);
             }
 
             gEndpointPool[i].inUse = false;
-            gEndpointPool[i].bound = false; /* Mark as unbound for proper tracking */
             log_debug_cat(LOG_CAT_NETWORKING, "Released endpoint %d back to pool (final state %ld)", i, state);
             return;
         }
@@ -857,7 +872,8 @@ void HandleIncomingTCPData(EndpointRef endpoint)
             log_error_cat(LOG_CAT_NETWORKING, "OTRcv failed: %ld", bytesReceived);
             break;
         }
-    } while (bytesReceived != kOTNoDataErr);
+    } while (bytesReceived != kOTNoDataErr && bytesReceived != kOTLookErr);
+    /* CRITICAL FIX: Loop condition explicitly checks both exit conditions per Apple docs */
 
     if (receiveCount > 1) {
         log_debug_cat(LOG_CAT_NETWORKING, "Received %d TCP chunks (%d total bytes) in one T_DATA event",

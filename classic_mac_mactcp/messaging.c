@@ -116,9 +116,8 @@ static void mac_tcp_mark_peer_inactive_callback(const char *ip, void *platform_c
     (void)platform_context;
     if (!ip) return;
     log_info_cat(LOG_CAT_PEER_MGMT, "Peer %s has sent QUIT via TCP. Marking inactive.", ip);
-    if (MarkPeerInactive(ip)) {
-        if (gMainWindow != NULL && gPeerListHandle != NULL) UpdatePeerDisplayList(true);
-    }
+    MarkPeerInactive(ip);
+    if (gMainWindow != NULL && gPeerListHandle != NULL) UpdatePeerDisplayList(true);
 }
 
 static tcp_platform_callbacks_t g_mac_tcp_callbacks = {
@@ -280,9 +279,16 @@ pascal void TCP_Listen_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode
     gListenAsrEvent.eventCode = (TCPEventCode)eventCode;
     gListenAsrEvent.termReason = terminReason;
     if (eventCode == TCPICMPReceived && icmpMsg != NULL) {
-        BlockMoveData(icmpMsg, (void *)&gListenAsrEvent.icmpReport, sizeof(ICMPReport));
+        /* CRITICAL FIX: Direct struct assignment is safe at interrupt level
+         * BlockMoveData is Memory Manager call and UNSAFE per MacTCP Programmer's Guide */
+        gListenAsrEvent.icmpReport = *icmpMsg;
     } else {
-        memset((void *)&gListenAsrEvent.icmpReport, 0, sizeof(ICMPReport));
+        /* CRITICAL FIX: Manual zeroing without Memory Manager calls */
+        char *dst = (char *)&gListenAsrEvent.icmpReport;
+        int i;
+        for (i = 0; i < sizeof(ICMPReport); i++) {
+            dst[i] = 0;
+        }
     }
     gListenAsrEvent.eventPending = true;
 }
@@ -327,9 +333,16 @@ pascal void TCP_Send_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, 
             gSendStreamPool[i].asrEvent.eventCode = (TCPEventCode)eventCode;
             gSendStreamPool[i].asrEvent.termReason = terminReason;
             if (eventCode == TCPICMPReceived && icmpMsg != NULL) {
-                BlockMoveData(icmpMsg, (void *)&gSendStreamPool[i].asrEvent.icmpReport, sizeof(ICMPReport));
+                /* CRITICAL FIX: Direct struct assignment is safe at interrupt level
+                 * BlockMoveData is Memory Manager call and UNSAFE per MacTCP Programmer's Guide */
+                gSendStreamPool[i].asrEvent.icmpReport = *icmpMsg;
             } else {
-                memset((void *)&gSendStreamPool[i].asrEvent.icmpReport, 0, sizeof(ICMPReport));
+                /* CRITICAL FIX: Manual zeroing without Memory Manager calls */
+                char *dst = (char *)&gSendStreamPool[i].asrEvent.icmpReport;
+                int j;
+                for (j = 0; j < sizeof(ICMPReport); j++) {
+                    dst[j] = 0;
+                }
             }
             gSendStreamPool[i].asrEvent.eventPending = true;
             return;
@@ -538,6 +551,13 @@ void CleanupTCP(short macTCPRefNum)
                         gSendStreamPool[i].state != TCP_STATE_UNINITIALIZED) {
                     log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Aborting active connection", i);
                     MacTCPImpl_TCPAbort(gSendStreamPool[i].stream);
+
+                    /* CRITICAL FIX: Give MacTCP time to process abort
+                     * Per MacTCP async operation semantics: abort is asynchronous */
+                    unsigned long startTime = TickCount();
+                    while ((TickCount() - startTime) < 6) {  /* 100ms at 60Hz */
+                        YieldTimeToSystem();
+                    }
                 }
 
                 log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Releasing TCP stream", i);
@@ -685,12 +705,26 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
                     }
                 }
             } else if (rcvErr == connectionClosing) {
+                /* CRITICAL FIX: Check if buffers were allocated before error
+                 * Per MacTCP Programmer's Guide p.3177: "You are responsible for calling
+                 * TCPBfrReturn after every TCPNoCopyRcv command that is completed successfully" */
+                if (gListenNoCopyRDS[0].length > 0 || gListenNoCopyRDS[0].ptr != NULL) {
+                    log_warning_cat(LOG_CAT_MESSAGING, "Returning buffers after connectionClosing error");
+                    MacTCPImpl_TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, giveTime);
+                    gListenNoCopyRdsPendingReturn = false;
+                }
                 log_app_event("Listen connection closing by peer.");
                 MacTCPImpl_TCPAbort(gTCPListenStream);
                 gTCPListenState = TCP_STATE_IDLE;
                 gListenStreamNeedsReset = true;
                 gListenStreamResetTime = TickCount();
             } else if (rcvErr != commandTimeout) {
+                /* CRITICAL FIX: Check if buffers were allocated before error */
+                if (gListenNoCopyRDS[0].length > 0 || gListenNoCopyRDS[0].ptr != NULL) {
+                    log_warning_cat(LOG_CAT_MESSAGING, "Returning buffers after error %d", rcvErr);
+                    MacTCPImpl_TCPReturnBuffer(gTCPListenStream, (Ptr)gListenNoCopyRDS, giveTime);
+                    gListenNoCopyRdsPendingReturn = false;
+                }
                 log_app_event("Error during Listen TCPNoCopyRcv: %d", rcvErr);
                 MacTCPImpl_TCPAbort(gTCPListenStream);
                 gTCPListenState = TCP_STATE_IDLE;
@@ -938,7 +972,8 @@ void ProcessIncomingTCPData(wdsEntry rds[], ip_addr remote_ip_from_status, tcp_p
 
     log_debug_cat(LOG_CAT_MESSAGING, "ProcessIncomingTCPData from %s:%u", remoteIPStrConnected, remote_port_from_status);
 
-    for (int i = 0; rds[i].length > 0 || rds[i].ptr != NULL; ++i) {
+    /* Process RDS entries with explicit bounds check to prevent runaway loop */
+    for (int i = 0; i < MAX_RDS_ENTRIES && (rds[i].length > 0 || rds[i].ptr != NULL); ++i) {
         if (rds[i].length == 0 || rds[i].ptr == NULL) break;
 
         log_debug_cat(LOG_CAT_MESSAGING, "Processing RDS entry %d: Ptr 0x%lX, Len %u", i, (unsigned long)rds[i].ptr,

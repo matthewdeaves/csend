@@ -6,16 +6,22 @@
 PMD_VERSION="6.55.0"
 MIN_TOKENS=35
 # Directories containing the C source code to scan (space-separated)
-SOURCE_DIRS="posix shared classic_mac"
+SOURCE_DIRS="posix shared classic_mac_mactcp classic_mac_ot"
 # Patterns for directories TO EXCLUDE. Use find's predicates, as array elements.
 # Use '*/<dirname>' to match the directory name anywhere.
 EXCLUDE_PATTERNS=( -path '*/.finf' -o -path '*/.rsrc' )
 LANGUAGE="c"
 # File matching expression array for find. Separate elements for find syntax.
 # Parentheses must be separate arguments. Use single quotes around * glob.
-FILE_MATCHING_EXPR=( '(' -name '*.c' -not -path 'classic_mac/DNR.c' ')' )
+FILE_MATCHING_EXPR=( '(' -name '*.c' -not -path '*/DNR.c' ')' )
 # Example for C and H files:
 # FILE_MATCHING_EXPR=( '(' -name '*.c' -o -name '*.h' ')' )
+# Reports base directory
+REPORTS_BASE_DIR="reports/cpd"
+# Timestamp for this run
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+# Reports directory for this run
+REPORTS_DIR="${REPORTS_BASE_DIR}/${TIMESTAMP}"
 
 # --- Internal Variables ---
 TOOLS_DIR="tools"
@@ -47,6 +53,19 @@ cleanup() {
 trap cleanup EXIT SIGINT SIGTERM
 
 # --- Main Logic ---
+
+# Create reports directory
+mkdir -p "$REPORTS_DIR"
+
+# Count existing reports
+if [ -d "$REPORTS_BASE_DIR" ]; then
+    EXISTING_COUNT=$(find "$REPORTS_BASE_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+    if [ "$EXISTING_COUNT" -gt 1 ]; then
+        echo "Found $((EXISTING_COUNT - 1)) existing CPD report(s), creating new report for ${TIMESTAMP}"
+    fi
+fi
+echo "Report directory: ${REPORTS_DIR}"
+echo ""
 
 # Check for Java first
 if ! command -v java &> /dev/null; then
@@ -179,25 +198,90 @@ echo "Using file list: ${FILE_LIST_TMP} (${file_count} files)"
 # echo "Full command (DEBUG): ${cmd_args[@]}"
 echo "-----------------------------------------------------"
 
-# Execute the assembled CPD command
-"${cmd_args[@]}"
+# Execute the assembled CPD command and save to file
+CPD_OUTPUT="$REPORTS_DIR/cpd_results.txt"
+"${cmd_args[@]}" 2>&1 | tee "$CPD_OUTPUT"
 cpd_exit_code=$?
 # Capture CPD exit code immediately
 
 
 echo "-----------------------------------------------------"
-if [ $cpd_exit_code -eq 0 ]; then
-    echo "CPD analysis complete. No significant code duplication found (above the minimum token limit)."
-elif [ $cpd_exit_code -eq 4 ]; then
-    # PMD CPD returns 4 if violations are found
-    echo "CPD analysis complete. Code duplication found (see details above)."
-else
+# Generate LLM summary
+LLM_SUMMARY="$REPORTS_DIR/llm_summary.txt"
+
+# Count duplicate blocks from output (more reliable than exit code)
+DUPE_COUNT=$(grep -c "^Found a" "$CPD_OUTPUT" 2>/dev/null || echo 0)
+
+{
+    echo "CODE DUPLICATION ANALYSIS - LLM SUMMARY"
+    echo "======================================="
+    echo "Generated: $(date)"
+    echo "Minimum Tokens: ${MIN_TOKENS}"
+    echo "Files Scanned: ${file_count}"
+    echo ""
+
+    if [ "$DUPE_COUNT" -eq 0 ]; then
+        echo "## RESULT: ✓ NO SIGNIFICANT DUPLICATION FOUND"
+        echo ""
+        echo "No code duplication detected above the minimum token threshold of ${MIN_TOKENS}."
+        echo "This indicates good code organization with minimal copy-paste patterns."
+    else
+        echo "## RESULT: ⚠ CODE DUPLICATION DETECTED"
+        echo ""
+
+        echo "Number of duplicate blocks: $DUPE_COUNT"
+        echo ""
+
+        # Extract duplications with context
+        echo "## DUPLICATED CODE BLOCKS"
+        echo ""
+        grep -A 20 "^Found a" "$CPD_OUTPUT" 2>/dev/null | head -100
+        echo ""
+        echo "## RECOMMENDATIONS"
+        echo ""
+        echo "1. Review duplicate blocks above"
+        echo "2. Consider extracting common code into shared functions"
+        echo "3. Evaluate if duplication is intentional (e.g., platform-specific implementations)"
+        echo "4. Reduce technical debt by consolidating duplicate logic"
+    fi
+
+    if [ $cpd_exit_code -ne 0 ] && [ $cpd_exit_code -ne 4 ]; then
+        echo "## RESULT: ⚠ ANALYSIS ERROR"
+        echo ""
+        echo "CPD finished with exit code: $cpd_exit_code"
+        echo "This may indicate parsing errors or configuration issues."
+        echo "Check cpd_results.txt for detailed error messages."
+    fi
+
+    echo ""
+    echo "## FILES ANALYZED"
+    echo ""
+    echo "Source directories: ${SOURCE_DIRS}"
+    echo "Excluded patterns: ${EXCLUDE_PATTERNS[@]}"
+    echo ""
+    echo "For detailed output, see: cpd_results.txt"
+
+} > "$LLM_SUMMARY"
+
+if [ "$DUPE_COUNT" -eq 0 ]; then
+    echo "✓ CPD analysis complete. No significant code duplication found (above the minimum token limit)."
+elif [ "$DUPE_COUNT" -gt 0 ]; then
+    echo "⚠ CPD analysis complete. Found $DUPE_COUNT duplicate code block(s)."
+fi
+
+if [ $cpd_exit_code -ne 0 ] && [ $cpd_exit_code -ne 4 ]; then
     # Any other non-zero exit code usually indicates an error during analysis
-    echo "CPD analysis finished with an unexpected exit code: $cpd_exit_code."
+    echo "⚠ CPD analysis finished with an unexpected exit code: $cpd_exit_code."
     echo "There might have been an error during analysis (e.g., parsing errors, configuration issues)."
     echo "Check the output above for details like SEVERE messages or stack traces."
 fi
 echo "-----------------------------------------------------"
+echo ""
+echo "Reports saved to: $REPORTS_DIR/"
+echo "  - cpd_results.txt  : Full CPD output"
+echo "  - llm_summary.txt  : LLM-optimized summary"
+echo ""
+echo "💡 LLM Summary: $REPORTS_DIR/llm_summary.txt"
 
 # Exit with the CPD exit code (0=ok, 4=violations found, other=error)
 # Cleanup happens automatically via trap EXIT

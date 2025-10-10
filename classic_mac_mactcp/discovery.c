@@ -467,12 +467,32 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
                     log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Ignored UDP packet from self (%s).", selfIPStr);
                 }
 
-                /* Return the buffer asynchronously */
+                /* CRITICAL FIX: Return the buffer asynchronously with retry handling
+                 * Per MacTCP Programmer's Guide p.1247: Must return buffer after successful UDPRead */
                 OSErr returnErr = ReturnUDPBufferAsync(dataPtr, kMinUDPBufSize);
+                if (returnErr == 1) {
+                    /* Already pending - wait for it to complete then retry */
+                    log_warning_cat(LOG_CAT_DISCOVERY, "Buffer return already pending - waiting for completion");
+                    int retries = 0;
+                    while (gUDPReturnHandle != NULL && retries < 120) {  /* Wait up to 2 seconds */
+                        OSErr status = MacTCPImpl_UDPCheckReturnStatus(gUDPReturnHandle);
+                        if (status != 1) {
+                            gUDPReturnHandle = NULL;
+                            break;
+                        }
+                        YieldTimeToSystem();
+                        retries++;
+                    }
+                    /* Retry buffer return */
+                    returnErr = ReturnUDPBufferAsync(dataPtr, kMinUDPBufSize);
+                }
+
                 if (returnErr != noErr && returnErr != 1) {
                     log_error_cat(LOG_CAT_DISCOVERY, "CRITICAL Error: Failed to initiate async buffer return. Error: %d", returnErr);
-                } else {
+                } else if (returnErr == noErr) {
                     log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Initiated return for buffer 0x%lX.", (unsigned long)dataPtr);
+                } else {
+                    log_error_cat(LOG_CAT_DISCOVERY, "CRITICAL: Buffer return still pending after retry - buffer may leak!");
                 }
             } else {
                 log_debug_cat(LOG_CAT_DISCOVERY, "DEBUG: Async UDP read returned noErr but 0 bytes. Returning buffer.");

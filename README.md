@@ -159,6 +159,23 @@ make -f Makefile.retro68
 
 See [Machine Mode Documentation](docs/MACHINE_MODE.md) for full API reference.
 
+## 📚 Documentation Generation
+
+This project uses Doxygen to generate comprehensive documentation from the source code comments.
+
+### Prerequisites
+- **Doxygen**: Ensure you have Doxygen installed. You can download it from [doxygen.org](https://www.doxygen.nl/download.html).
+- **Graphviz** (optional, for diagrams): For generating diagrams and graphs in the documentation, you'll need to install Graphviz. You can get it from [graphviz.org](https://graphviz.org/download/).
+
+### Generating the Documentation
+To generate the documentation, run the following command from the root of the project:
+
+```bash
+doxygen Doxyfile
+```
+
+The documentation will be generated in the `doxygen_docs/html` directory. Open `index.html` in that directory to view the documentation.
+
 ## 🛠️ Development
 
 ### Code Quality Tools
