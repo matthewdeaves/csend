@@ -12,6 +12,8 @@ ANALYSIS_BUILD_DIR="build/deadcode_analysis"
 REPORTS_DIR="reports"
 # Timestamp for this run
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+# Keep old reports flag (default: clean reports directory)
+KEEP_REPORTS=false
 
 # --- Color codes for output ---
 RED='\033[0;31m'
@@ -116,10 +118,10 @@ check_dependencies() {
         echo -e "${RED}Error: GCC is not installed.${NC}"
         exit 1
     fi
-    
+
     # Detect Retro68 for Classic Mac support
     detect_retro68
-    
+
     # Check for cppcheck if available
     if command -v cppcheck &> /dev/null; then
         HAVE_CPPCHECK=1
@@ -130,6 +132,20 @@ check_dependencies() {
         echo "  Install with: sudo apt install cppcheck"
     fi
     echo ""
+}
+
+# Clean reports directory
+clean_reports() {
+    if [ "$KEEP_REPORTS" = false ]; then
+        if [ -d "$REPORTS_DIR" ]; then
+            echo -e "${BLUE}Cleaning reports directory...${NC}"
+            rm -f "$REPORTS_DIR"/*.txt "$REPORTS_DIR"/*.html 2>/dev/null
+            echo -e "${GREEN}Reports directory cleaned${NC}"
+        fi
+    else
+        echo -e "${BLUE}Keeping old reports (--keep-reports flag set)${NC}"
+    fi
+    mkdir -p "$REPORTS_DIR"
 }
 
 cleanup() {
@@ -506,8 +522,30 @@ generate_html_report() {
 
     HTML_REPORT="$REPORTS_DIR/deadcode_report_${TIMESTAMP}.html"
 
+    # Calculate counts first - HIGH confidence (true dead code)
+    HIGH_STATIC=$(grep "defined but not used.*static" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+    HIGH_UNREACH=$(grep "unreachable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+    HIGH_TOTAL=$((HIGH_STATIC + HIGH_UNREACH))
+
+    # MEDIUM confidence (likely issues worth fixing)
+    MEDIUM_VAR=$(grep "unused variable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+    MEDIUM_REDUND=$(grep "redundant" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+    MEDIUM_SHADOW=$(grep "shadows a previous local" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+    MEDIUM_UNUSED_VAL=$(grep "value computed is not used" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+    MEDIUM_TOTAL=$((MEDIUM_VAR + MEDIUM_REDUND + MEDIUM_SHADOW + MEDIUM_UNUSED_VAL))
+
+    # LOW confidence (API design choices, intentional patterns)
+    LOW_PARAM=$(grep "unused parameter" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+    LOW_POINTER=$(grep "comparison between pointer and integer" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+    LOW_ENUM=$(grep "enumeration value.*not handled in switch" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+    LOW_CONV=$(grep -E "makes integer from pointer|incompatible pointer type" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
+    LOW_TOTAL=$((LOW_PARAM + LOW_POINTER + LOW_ENUM + LOW_CONV))
+
+    TOTAL_ISSUES=$((HIGH_TOTAL + MEDIUM_TOTAL + LOW_TOTAL))
+    REPORT_DATE=$(date)
+
     {
-        cat << 'HTML_HEADER'
+        cat << HTML_HEADER
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -515,6 +553,8 @@ generate_html_report() {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dead Code Analysis Report</title>
     <style>
+HTML_HEADER
+        cat << 'HTML_STYLE'
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -554,43 +594,35 @@ generate_html_report() {
         pre { background: #2c3e50; color: #ecf0f1; padding: 15px; border-radius: 4px; overflow-x: auto; }
         .action-btn { background: #3498db; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 5px; }
         .action-btn:hover { background: #2980b9; }
+HTML_STYLE
+        cat << HTML_BODY_START
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🔍 Dead Code Analysis Report</h1>
-        <div class="timestamp">Generated: $(date)</div>
-HTML_HEADER
+        <div class="timestamp">Generated: $REPORT_DATE</div>
 
-        # Summary cards
-        HIGH_COUNT=$(grep "defined but not used.*static" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
-        HIGH_UNREACH=$(grep "unreachable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
-        HIGH_COUNT=$((HIGH_COUNT + HIGH_UNREACH))
-        MEDIUM_VAR=$(grep "unused variable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
-        MEDIUM_REDUND=$(grep "redundant" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
-        MEDIUM_COUNT=$((MEDIUM_VAR + MEDIUM_REDUND))
-        LOW_COUNT=$(grep "unused parameter" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | wc -l)
-        TOTAL=$((HIGH_COUNT + MEDIUM_COUNT + LOW_COUNT))
-
-        cat << HTML_SUMMARY
         <div class="summary">
             <div class="summary-card">
                 <h3>Total Issues</h3>
-                <div class="count">$TOTAL</div>
+                <div class="count">$TOTAL_ISSUES</div>
             </div>
             <div class="summary-card high">
                 <h3>High Confidence</h3>
-                <div class="count">$HIGH_COUNT</div>
+                <div class="count">$HIGH_TOTAL</div>
             </div>
             <div class="summary-card medium">
                 <h3>Medium Confidence</h3>
-                <div class="count">$MEDIUM_COUNT</div>
+                <div class="count">$MEDIUM_TOTAL</div>
             </div>
             <div class="summary-card low">
                 <h3>Low Confidence</h3>
-                <div class="count">$LOW_COUNT</div>
+                <div class="count">$LOW_TOTAL</div>
             </div>
         </div>
+HTML_BODY_START
+        cat << 'HTML_TABLE_START'
 
         <div class="filter-bar">
             <input type="text" id="searchInput" placeholder="🔎 Search by file, function, or issue type..." onkeyup="filterTable()">
@@ -614,7 +646,7 @@ HTML_HEADER
                 </tr>
             </thead>
             <tbody>
-HTML_SUMMARY
+HTML_TABLE_START
 
         # Parse warnings and add to table
         grep -E "warning:" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | while IFS= read -r line; do
@@ -624,8 +656,10 @@ HTML_SUMMARY
                 lineno="${BASH_REMATCH[2]}"
                 message="${BASH_REMATCH[3]}"
 
-                # Determine confidence
+                # Determine confidence and issue type
                 confidence="low"
+                issue_type="Other"
+
                 if [[ "$message" =~ "defined but not used" ]] && [[ "$message" =~ "static" ]]; then
                     confidence="high"
                     issue_type="Unused Static Function"
@@ -641,8 +675,21 @@ HTML_SUMMARY
                 elif [[ "$message" =~ "unused parameter" ]]; then
                     confidence="low"
                     issue_type="Unused Parameter"
-                else
-                    issue_type="Other"
+                elif [[ "$message" =~ "shadows a previous local" ]]; then
+                    confidence="medium"
+                    issue_type="Shadow Variable"
+                elif [[ "$message" =~ "value computed is not used" ]]; then
+                    confidence="medium"
+                    issue_type="Unused Value"
+                elif [[ "$message" =~ "comparison between pointer and integer" ]]; then
+                    confidence="low"
+                    issue_type="Type Mismatch (API Design)"
+                elif [[ "$message" =~ "enumeration value" ]] && [[ "$message" =~ "not handled in switch" ]]; then
+                    confidence="low"
+                    issue_type="Incomplete Switch (Intentional)"
+                elif [[ "$message" =~ "makes integer from pointer" ]] || [[ "$message" =~ "incompatible pointer type" ]]; then
+                    confidence="low"
+                    issue_type="Type Conversion (API Design)"
                 fi
 
                 # Get git info
@@ -807,22 +854,32 @@ generate_report() {
 
 # --- Main script ---
 main() {
-    # Parse platform option if provided
+    # Parse options
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --platform|-p)
                 PLATFORM="$2"
                 shift 2
                 ;;
+            --keep-reports|-k)
+                KEEP_REPORTS=true
+                shift
+                ;;
+            --help|-h|help)
+                shift
+                set -- "help"
+                break
+                ;;
             *)
                 break
                 ;;
         esac
     done
-    
+
     print_header
     set_platform_dirs
     check_dependencies
+    clean_reports
     
     # Parse command line arguments
     case "${1:-full}" in
@@ -852,24 +909,28 @@ main() {
             echo "Cleaned up analysis files"
             ;;
         "help"|"-h"|"--help")
-            echo "Usage: $0 [--platform PLATFORM] [warnings|symbols|sections|full|clean|help]"
+            echo "Usage: $0 [OPTIONS] [MODE]"
             echo ""
-            echo "Platform Options:"
-            echo "  --platform, -p PLATFORM  - Analyze specific platform"
-            echo "                            PLATFORM can be: posix, classic, all (default: all)"
+            echo "Options:"
+            echo "  --platform, -p PLATFORM  - Analyze specific platform (posix, classic, all)"
+            echo "                             Default: all"
+            echo "  --keep-reports, -k       - Keep old reports (don't clean reports directory)"
+            echo "                             Default: clean reports before analysis"
+            echo "  --help, -h               - Show this help message"
             echo ""
-            echo "Analysis Options:"
+            echo "Analysis Modes:"
             echo "  warnings - Run only compiler warning analysis"
             echo "  symbols  - Run only symbol analysis"
             echo "  sections - Run only section-based analysis"
             echo "  full     - Run all analyses including advanced features (default)"
-            echo "  clean    - Remove analysis files"
+            echo "  clean    - Remove analysis and report files"
             echo "  help     - Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0                    # Analyze all platforms with full analysis"
-            echo "  $0 -p posix          # Analyze only POSIX code"
-            echo "  $0 -p classic warnings  # Only warnings for Classic Mac"
+            echo "  $0                        # Full analysis, clean reports"
+            echo "  $0 --keep-reports         # Full analysis, keep old reports"
+            echo "  $0 -p posix               # Analyze only POSIX code"
+            echo "  $0 -p classic -k warnings # Classic Mac warnings, keep old reports"
             echo ""
             echo "Enhanced Features (full mode only):"
             echo "  ✓ Confidence scoring (HIGH/MEDIUM/LOW)"
@@ -877,11 +938,14 @@ main() {
             echo "  ✓ Git history integration"
             echo "  ✓ Interactive HTML report with filtering/sorting"
             echo ""
-            echo "The script uses GCC to detect:"
-            echo "  - Unused variables, parameters, and functions"
-            echo "  - Unreachable code"
-            echo "  - Redundant declarations"
-            echo "  - Dead code that can be eliminated"
+            echo "The script detects:"
+            echo "  - Dead code (unused functions, unreachable code)"
+            echo "  - Code quality issues (shadow variables, unused values)"
+            echo "  - API design patterns (type mismatches, incomplete switches)"
+            echo ""
+            echo "Reports Directory:"
+            echo "  By default, old reports are cleaned before analysis."
+            echo "  Use --keep-reports to preserve historical reports."
             exit 0
             ;;
         *)
