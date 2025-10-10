@@ -1,7 +1,23 @@
 /*
  * Event-Driven OpenTransport Implementation for P2P Messaging
- * Based on proven minimal test architecture
- * PowerPC version with full P2P functionality
+ *
+ * OpenTransport represents Apple's modern networking architecture (System 7.5+)
+ * compared to the older MacTCP. Key advantages:
+ *
+ * 1. True multitasking support with better thread safety
+ * 2. More robust error handling and state management
+ * 3. Simplified API compared to MacTCP's Device Manager interface
+ * 4. Built-in support for multiple protocols (TCP, UDP, AppleTalk, etc.)
+ * 5. Better memory management with automatic cleanup
+ * 6. Supports both CFM and native PowerPC code
+ *
+ * Architecture follows "Inside Macintosh: Networking With Open Transport":
+ * - Event-driven model using OTNotify callbacks
+ * - Endpoint management with proper state tracking
+ * - Connection pooling for concurrent operations
+ * - Graceful degradation on resource exhaustion
+ *
+ * This implementation targets PowerPC Macs running System 7.5 or later.
  */
 
 #include "opentransport_impl.h"
@@ -18,30 +34,52 @@
 #include <string.h>
 #include <stdio.h>
 
-/* Global state */
-static Boolean gOTInitialized = false;
+/*
+ * Global OpenTransport State Management
+ *
+ * OpenTransport uses "endpoints" as communication handles, similar to BSD sockets.
+ * Each endpoint represents a single communication channel with specific protocol
+ * and configuration.
+ */
+static Boolean gOTInitialized = false;  /* Track OT initialization state */
 
-/* TCP endpoints */
-static EndpointRef gListenEndpoint = NULL;
-static EndpointRef gSendEndpoint = NULL;
-
-/* UDP endpoint for discovery */
-static EndpointRef gDiscoveryEndpoint = NULL;
+/*
+ * Primary Communication Endpoints
+ *
+ * Design pattern: Separate endpoints for different functions to avoid conflicts
+ * and enable concurrent operations. This follows OT best practices for scalability.
+ */
+static EndpointRef gListenEndpoint = NULL;    /* TCP listener for incoming connections */
+static EndpointRef gSendEndpoint = NULL;      /* TCP endpoint for outgoing connections */
+static EndpointRef gDiscoveryEndpoint = NULL; /* UDP endpoint for peer discovery broadcasts */
 
 /* Current network info */
 static char gLocalIPStr[16] = "0.0.0.0";
 static char gUsername[32] = "OTUser";
 
-/* Endpoint pool for handling multiple concurrent connections */
+/*
+ * Connection Pool Architecture
+ *
+ * OpenTransport best practice: Pre-allocate endpoints to avoid expensive
+ * creation/destruction during high-traffic periods. This design pattern
+ * is recommended in "Networking With Open Transport" Chapter 8.
+ *
+ * Benefits:
+ * - Reduces connection establishment latency
+ * - Prevents resource exhaustion under load
+ * - Enables concurrent message handling
+ * - Simplifies error recovery (pre-validated endpoints)
+ */
 typedef struct {
-    EndpointRef endpoint;
-    Boolean inUse;
-    Boolean bound;
+    EndpointRef endpoint;  /* OT endpoint handle */
+    Boolean inUse;         /* Allocation tracking */
+    Boolean bound;         /* Binding state for reuse validation */
 } PooledEndpoint;
 
+/* Static pool allocation - predictable memory usage */
 static PooledEndpoint gEndpointPool[MAX_CACHED_ENDPOINTS];
-static int gPoolSize = 0;
-static Boolean gPoolInitialized = false;
+static int gPoolSize = 0;                    /* Current pool population */
+static Boolean gPoolInitialized = false;     /* Initialization state flag */
 
 /* Active connection tracking - endpoints awaiting data */
 typedef struct {
@@ -55,10 +93,24 @@ static ActiveConnection gActiveConnections[MAX_ACTIVE_CONNECTIONS];
 static Boolean gActiveConnectionsInitialized = false;
 
 /* Initialize Open Transport for P2P messaging */
+/*
+ * Initialize OpenTransport for Application Use
+ *
+ * OpenTransport initialization is more robust than MacTCP, providing
+ * detailed error reporting and graceful failure modes. This function
+ * follows the canonical OT initialization sequence from Apple documentation.
+ *
+ * Critical: InitOpenTransport() must be called before any other OT functions.
+ * It initializes the OT kernel extension and sets up the application's
+ * communication environment.
+ *
+ * Returns: noErr on success, OT error codes on failure
+ */
 OSErr InitOTForApp(void)
 {
     OSStatus err;
 
+    /* Prevent double initialization - OT doesn't handle this gracefully */
     if (gOTInitialized) {
         log_debug_cat(LOG_CAT_NETWORKING, "OpenTransport already initialized");
         return noErr;
@@ -66,13 +118,23 @@ OSErr InitOTForApp(void)
 
     log_info_cat(LOG_CAT_NETWORKING, "Attempting to initialize OpenTransport...");
 
-    /* Initialize OpenTransport - this will fail gracefully if OT is not available */
+    /* Initialize OpenTransport kernel extension
+     * This call validates OT installation and prepares the networking stack.
+     * Unlike MacTCP, OT provides detailed error codes for troubleshooting. */
     err = InitOpenTransport();
     if (err != noErr) {
-        /* Common OpenTransport error codes:
-         * -3101 (kOTNoMemoryErr): Insufficient memory
-         * -3151 (kOTNotFoundErr): OpenTransport not found/installed
-         * -192: Resource not available
+        /*
+         * OpenTransport Error Code Analysis:
+         *
+         * -3101 (kOTNoMemoryErr): Insufficient memory for OT initialization
+         *       Usually indicates low system RAM or heap fragmentation
+         *
+         * -3151 (kOTNotFoundErr): OpenTransport not found or not installed
+         *       System lacks OT extension or wrong version installed
+         *
+         * -192 (resNotFound): Resource not available
+         *       OT may be disabled in Extensions Manager or conflicting
+         *       with other networking software
          */
         log_error_cat(LOG_CAT_NETWORKING, "InitOpenTransport failed with error: %ld", err);
 
@@ -144,7 +206,17 @@ OSErr CreateListenEndpoint(tcp_port localPort)
 
     log_debug_cat(LOG_CAT_NETWORKING, "Creating TCP listen endpoint on port %d", localPort);
 
-    /* Create TCP endpoint with tilisten module to handle multiple simultaneous connections */
+    /*
+     * Create TCP Listen Endpoint with TI-Listen Module
+     *
+     * Configuration string "tilisten,tcp" enables:
+     * - TI (Transport Interface) listen mode for connection queueing
+     * - TCP protocol support
+     * - Multiple simultaneous connection handling
+     *
+     * This is the recommended pattern for server applications per
+     * "Networking With Open Transport" Chapter 5: "Creating Connection Endpoints"
+     */
     gListenEndpoint = OTOpenEndpoint(OTCreateConfiguration("tilisten,tcp"), 0, NULL, &err);
     if (err != noErr || gListenEndpoint == NULL) {
         log_error_cat(LOG_CAT_NETWORKING, "Failed to open TCP endpoint: %ld", err);

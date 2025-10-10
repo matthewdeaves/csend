@@ -1,21 +1,37 @@
-#include <MacTypes.h>
-#include <Quickdraw.h>
-#include <Fonts.h>
-#include <Events.h>
-#include <Windows.h>
-#include <TextEdit.h>
-#include <Dialogs.h>
-#include <Menus.h>
-#include <Devices.h>
-#include <Lists.h>
-#include <Controls.h>
-#include <AppleEvents.h>
-#include <Resources.h>
-#include <stdlib.h>
-#include <OSUtils.h>
-#include <Sound.h>
-#include <stdio.h>
-#include <string.h>
+/*
+ * Classic Mac P2P Messenger - MacTCP Implementation
+ *
+ * This implementation follows patterns from:
+ * - Inside Macintosh Volume VI (System 7.0 compatibility)
+ * - MacTCP Programmer's Guide (1989) for network operations
+ * - Apple Human Interface Guidelines for dialog management
+ *
+ * Key architectural decisions:
+ * - Single-threaded event-driven architecture (required on Classic Mac)
+ * - Async network operations with state machine polling
+ * - Resource-based UI using Dialog Manager
+ * - Memory management using NewPtr/DisposePtr (pre-CFM)
+ */
+
+/* Required Toolbox headers in dependency order */
+#include <MacTypes.h>     /* Basic Mac types: Boolean, OSErr, etc. */
+#include <Quickdraw.h>    /* Graphics and coordinate system */
+#include <Fonts.h>        /* Font management */
+#include <Events.h>       /* Event record and WaitNextEvent */
+#include <Windows.h>      /* Window management */
+#include <TextEdit.h>     /* TextEdit for dialog text input/display */
+#include <Dialogs.h>      /* Dialog Manager for UI */
+#include <Menus.h>        /* Menu Manager */
+#include <Devices.h>      /* Device Manager for MacTCP driver */
+#include <Lists.h>        /* List Manager for peer list */
+#include <Controls.h>     /* Control Manager for buttons/checkboxes */
+#include <AppleEvents.h>  /* AppleEvent handling (System 7.0+) */
+#include <Resources.h>    /* Resource Manager */
+#include <stdlib.h>       /* Standard C library */
+#include <OSUtils.h>      /* OS utilities: TickCount, etc. */
+#include <Sound.h>        /* Sound Manager */
+#include <stdio.h>        /* Standard I/O */
+#include <string.h>       /* String functions */
 #include "../shared/logging.h"
 #include "../shared/common_defs.h"
 #include "../shared/protocol.h"
@@ -29,16 +45,22 @@
 #include "dialog_messages.h"
 #include "../shared/peer_wrapper.h"
 #include "test.h"
+/* Compatibility macros for extracting high/low words from MenuSelect result
+ * These may not be defined in older Universal Headers */
 #ifndef HiWord
 #define HiWord(x) ((short)(((long)(x) >> 16) & 0xFFFF))
 #endif
 #ifndef LoWord
 #define LoWord(x) ((short)((long)(x) & 0xFFFF))
 #endif
-Boolean gDone = false;
+/* Global application state - follows Classic Mac conventions */
+Boolean gDone = false;  /* Main event loop termination flag */
+
+/* Timing constants using TickCount() (60 ticks per second)
+ * Per Inside Macintosh guidelines for cooperative multitasking */
 unsigned long gLastPeerListUpdateTime = 0;
-const unsigned long kPeerListUpdateIntervalTicks = 5 * 60;
-const unsigned long kQuitMessageDelayTicks = 30;
+const unsigned long kPeerListUpdateIntervalTicks = 5 * 60;  /* 5 seconds */
+const unsigned long kQuitMessageDelayTicks = 30;            /* 0.5 seconds */
 #define kAppleMenuID 1
 #define kFileMenuID 128
 #define kAboutItem 1
@@ -52,6 +74,16 @@ void HandleMenuChoice(long menuResult);
 void MainEventLoop(void);
 void HandleEvent(EventRecord *event);
 void HandleIdleTasks(void);
+/*
+ * Application entry point - follows classic Mac application structure
+ *
+ * Initialization sequence per Inside Macintosh recommendations:
+ * 1. MaxApplZone() - expand heap before Toolbox init
+ * 2. Initialize Toolbox managers
+ * 3. Initialize custom subsystems (networking, logging)
+ * 4. Enter main event loop
+ * 5. Clean shutdown
+ */
 int main(void)
 {
     OSErr networkErr;
@@ -62,6 +94,9 @@ int main(void)
         .display_debug_log = classic_mac_platform_display_debug_log
     };
     log_init("csend_mac.log", &classic_mac_log_callbacks);
+    /* Expand application heap to maximum before Toolbox initialization
+     * This prevents fragmentation during Resource Manager operations
+     * Per Inside Macintosh Volume II guidelines */
     MaxApplZone();
     InitializeToolbox();
     log_app_event("Starting Classic Mac P2P Messenger...");
@@ -120,16 +155,35 @@ int main(void)
     log_shutdown();
     return 0;
 }
+/*
+ * Initialize Classic Mac Toolbox managers in proper dependency order
+ *
+ * Critical initialization sequence per Inside Macintosh Volume I:
+ * 1. QuickDraw (graphics foundation)
+ * 2. Font Manager
+ * 3. Window Manager
+ * 4. Menu Manager
+ * 5. TextEdit (for text input/display)
+ * 6. Dialog Manager
+ *
+ * Note: InitGraf() must be called before any other Toolbox calls
+ * that might draw to the screen or manipulate coordinates.
+ */
 void InitializeToolbox(void)
 {
     Handle menuBar;
     MenuHandle appleMenu;
+
+    /* Initialize QuickDraw - establishes coordinate system and drawing environment
+     * qd.thePort is the global graphics port */
     InitGraf(&qd.thePort);
-    InitFonts();
-    InitWindows();
-    InitMenus();
-    TEInit();
-    InitDialogs(NULL);
+
+    /* Initialize remaining Toolbox managers in dependency order */
+    InitFonts();           /* Font Manager - required for text display */
+    InitWindows();         /* Window Manager - required for Dialog Manager */
+    InitMenus();           /* Menu Manager */
+    TEInit();              /* TextEdit - required for text input/editing */
+    InitDialogs(NULL);     /* Dialog Manager - NULL uses default resume proc */
     menuBar = GetNewMBar(128);
     if (menuBar == NULL) {
         log_app_event("CRITICAL: GetNewMBar(128) failed! Check MBAR resource. Cannot proceed with menus.");
@@ -216,7 +270,10 @@ void MainEventLoop(void)
 {
     EventRecord event;
     Boolean gotEvent;
-    long sleepTime = 15L; /* 15 ticks = 250ms, optimal for TextEdit per Inside Macintosh */
+    long sleepTime = 15L; /* 15 ticks = 250ms
+                           * Optimal for TextEdit cursor blinking per Inside Macintosh
+                           * Also provides good balance between responsiveness and CPU usage
+                           * in cooperative multitasking environment */
     static unsigned long lastIdleTime = 0;
     while (!gDone) {
         /* Only call TEIdle at cursor blink rate (15 ticks) to reduce updates */

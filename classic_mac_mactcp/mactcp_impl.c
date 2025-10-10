@@ -1,6 +1,24 @@
-//====================================
-// FILE: ./classic_mac/mactcp_impl.c
-//====================================
+/*
+ * MacTCP Implementation for P2P Messaging
+ *
+ * This implementation follows patterns from MacTCP Programmer's Guide (1989):
+ * - Asynchronous operation management for non-blocking I/O
+ * - Proper MacTCP driver initialization and cleanup
+ * - WDS (Write Data Structure) usage for scatter-gather I/O
+ * - RDS (Read Data Structure) usage for no-copy receives
+ * - DNR (Domain Name Resolver) integration
+ *
+ * Key architectural patterns:
+ * - Resource pooling for async operation handles
+ * - Callback-based notification system
+ * - Error handling following MacTCP conventions
+ * - Memory management using Mac Memory Manager
+ *
+ * Performance considerations:
+ * - Async operations prevent blocking main thread
+ * - Connection pooling reduces setup/teardown overhead
+ * - Buffer management minimizes memory fragmentation
+ */
 
 #include "mactcp_impl.h"
 #include "network_init.h"
@@ -15,13 +33,21 @@
 #include <stdio.h>
 
 /* Forward declarations */
-/* hostInfo structure for DNR - based on MacTCP Programmer's Guide */
+
+/*
+ * DNR (Domain Name Resolver) hostInfo structure
+ * Based on MacTCP Programmer's Guide Chapter 3
+ *
+ * This structure is returned by StrToAddr() calls and contains
+ * resolved address information. The addr array can hold multiple
+ * IP addresses for multihomed hosts (load balancing/redundancy).
+ */
 struct hostInfo {
-    OSErr           rtnCode;        /* return code */
-    char            cname[255];     /* canonical name */
-    unsigned short  addrType;       /* address type */
-    unsigned short  addrLen;        /* address length */
-    ip_addr         addr[4];        /* up to 4 IP addresses for multihomed hosts */
+    OSErr           rtnCode;        /* DNR operation result code */
+    char            cname[255];     /* Canonical (official) hostname */
+    unsigned short  addrType;       /* Address family (always AF_INET for IP) */
+    unsigned short  addrLen;        /* Length of each address (4 for IPv4) */
+    ip_addr         addr[4];        /* Up to 4 IP addresses for multihomed hosts */
 };
 
 /* DNR function declarations */
@@ -32,31 +58,60 @@ extern OSErr StrToAddr(char *hostName, struct hostInfo *rtnStruct,
                        long resultProc, char *userData);
 
 
-/* Macro for setting up single-entry WDS */
+/*
+ * WDS (Write Data Structure) setup macro
+ *
+ * WDS enables scatter-gather I/O by allowing MacTCP to send data from
+ * multiple non-contiguous memory locations in a single operation.
+ * Per MacTCP Programmer's Guide p.2-23: "The WDS is a linked list of
+ * data pointers and lengths that tells MacTCP where to get the data."
+ *
+ * For simple sends, we use a 2-entry WDS with the second entry as sentinel.
+ * More complex protocols might chain multiple data segments.
+ */
 #define SETUP_SINGLE_WDS(wds, data, length) do { \
-    (wds)[0].length = (length); \
-    (wds)[0].ptr = (data); \
-    (wds)[1].length = 0; \
-    (wds)[1].ptr = NULL; \
+    (wds)[0].length = (length);  /* Data length in bytes */ \
+    (wds)[0].ptr = (data);       /* Pointer to data buffer */ \
+    (wds)[1].length = 0;         /* Sentinel: zero length terminates list */ \
+    (wds)[1].ptr = NULL;         /* Sentinel: NULL pointer */ \
 } while(0)
 
-/* UDP implementation structures */
+/*
+ * UDP Endpoint Implementation Structure
+ *
+ * Encapsulates MacTCP UDP stream state and associated resources.
+ * Each UDP endpoint maintains its own receive buffer and stream handle.
+ * This design allows multiple concurrent UDP operations (discovery + messaging).
+ *
+ * Memory management: recvBuffer is allocated if not provided by caller,
+ * and automatically freed when endpoint is released.
+ */
 typedef struct {
-    StreamPtr stream;
-    udp_port localPort;
-    Ptr recvBuffer;
-    unsigned short bufferSize;
-    Boolean isCreated;
+    StreamPtr stream;           /* MacTCP UDP stream handle */
+    udp_port localPort;         /* Local port number (host byte order) */
+    Ptr recvBuffer;             /* Receive buffer (may be app-provided or allocated) */
+    unsigned short bufferSize;  /* Size of receive buffer in bytes */
+    Boolean isCreated;          /* Track creation state for cleanup */
 } MacTCPUDPEndpoint;
 
-/* Async operation tracking */
+/*
+ * Async Operation Tracking Structure
+ *
+ * MacTCP async operations use Parameter Blocks (iopb) that remain active
+ * until completion. We must track these to:
+ * 1. Poll completion status (ioResult field)
+ * 2. Manage associated resources (WDS arrays, buffers)
+ * 3. Prevent memory leaks on early termination
+ *
+ * Design follows MacTCP Programmer's Guide Chapter 4 async patterns.
+ */
 typedef struct {
-    UDPiopb pb;
-    Boolean inUse;
-    UDPEndpointRef endpoint;
-    Boolean isReturnBuffer;  /* true for buffer return, false for receive */
-    Boolean isSend;          /* true for send operation */
-    wdsEntry *wdsArray;      /* For send operations */
+    UDPiopb pb;                  /* MacTCP parameter block - must remain valid until completion */
+    Boolean inUse;               /* Track allocation state */
+    UDPEndpointRef endpoint;     /* Associated endpoint for context */
+    Boolean isReturnBuffer;      /* Operation type: true=buffer return, false=receive */
+    Boolean isSend;              /* Operation type: true=send, false=receive */
+    wdsEntry *wdsArray;          /* WDS allocation for send ops (needs cleanup) */
 } MacTCPAsyncOp;
 
 
@@ -80,10 +135,24 @@ typedef struct {
     short rdsCount;
 } TCPAsyncOp;
 
-#define MAX_ASYNC_OPS 4
-#define MAX_TCP_ASYNC_OPS 8
+/*
+ * Async Operation Pool Configuration
+ *
+ * Pool sizes chosen based on expected concurrent operations:
+ * - UDP: Discovery broadcasts + occasional direct messages = 4 operations
+ * - TCP: 1 listen + 4 pool connections + 3 buffer operations = 8 operations
+ *
+ * Static allocation avoids fragmentation in Classic Mac's non-virtual memory.
+ * Alternative: Dynamic allocation with NewPtr, but adds complexity.
+ */
+#define MAX_ASYNC_OPS 4          /* UDP operations pool size */
+#define MAX_TCP_ASYNC_OPS 8      /* TCP operations pool size */
+
+/* Global operation pools - static allocation for predictable memory usage */
 static MacTCPAsyncOp gAsyncOps[MAX_ASYNC_OPS];
 static TCPAsyncOp gTCPAsyncOps[MAX_TCP_ASYNC_OPS];
+
+/* Initialization flags - ensure pools are ready before use */
 static Boolean gAsyncOpsInitialized = false;
 static Boolean gTCPAsyncOpsInitialized = false;
 
@@ -230,18 +299,33 @@ static OSErr finalize_tcp_async_operation(TCPAsyncOp *op, OSErr err,
 
 /* Implementation of network operations for MacTCP */
 
+/*
+ * Initialize MacTCP driver and networking subsystem
+ *
+ * Per MacTCP Programmer's Guide Chapter 2, initialization sequence:
+ * 1. Open MacTCP driver (.IPP)
+ * 2. Get local IP address using ipctlGetAddr control call
+ * 3. Initialize DNR (Domain Name Resolver)
+ * 4. Set up async operation pools
+ *
+ * Returns: noErr on success, MacTCP error codes on failure
+ * Common errors: -23 (fnOpnErr) if driver not found
+ *                -192 (resNotFound) if MacTCP not installed
+ */
 OSErr MacTCPImpl_Initialize(short *refNum, ip_addr *localIP, char *localIPStr)
 {
     OSErr err;
-    ParamBlockRec pbOpen;
-    CntrlParam cntrlPB;
+    ParamBlockRec pbOpen;    /* Parameter block for PBOpen */
+    CntrlParam cntrlPB;      /* Parameter block for PBControl */
 
     log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_Initialize: Opening MacTCP driver");
 
-    /* Open MacTCP driver */
+    /* Open MacTCP driver (.IPP)
+     * Uses Device Manager PBOpen call with driver name ".IPP"
+     * This establishes communication path to MacTCP stack */
     memset(&pbOpen, 0, sizeof(ParamBlockRec));
-    pbOpen.ioParam.ioNamePtr = (StringPtr)kTCPDriverName;
-    pbOpen.ioParam.ioPermssn = fsCurPerm;
+    pbOpen.ioParam.ioNamePtr = (StringPtr)kTCPDriverName;  /* ".IPP" driver name */
+    pbOpen.ioParam.ioPermssn = fsCurPerm;                  /* Current permission level */
 
     err = PBOpenSync(&pbOpen);
     if (err != noErr) {
@@ -252,10 +336,12 @@ OSErr MacTCPImpl_Initialize(short *refNum, ip_addr *localIP, char *localIPStr)
     *refNum = pbOpen.ioParam.ioRefNum;
     log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_Initialize: MacTCP driver opened, refNum: %d", *refNum);
 
-    /* Get local IP address */
+    /* Get local IP address using MacTCP control call
+     * ipctlGetAddr returns the machine's current IP configuration
+     * in network byte order (big-endian) */
     memset(&cntrlPB, 0, sizeof(CntrlParam));
     cntrlPB.ioCRefNum = *refNum;
-    cntrlPB.csCode = ipctlGetAddr;
+    cntrlPB.csCode = ipctlGetAddr;  /* MacTCP control code for "get IP address" */
 
     err = PBControlSync((ParmBlkPtr)&cntrlPB);
     if (err != noErr) {
@@ -265,7 +351,10 @@ OSErr MacTCPImpl_Initialize(short *refNum, ip_addr *localIP, char *localIPStr)
 
     BlockMoveData(&cntrlPB.csParam[0], localIP, sizeof(ip_addr));
 
-    /* Initialize DNR */
+    /* Initialize DNR (Domain Name Resolver)
+     * DNR provides hostname-to-IP resolution services
+     * NULL parameter uses default resolver configuration
+     * Critical for any hostname-based networking */
     err = OpenResolver(NULL);
     if (err != noErr) {
         log_app_event("MacTCPImpl_Initialize: Failed to open resolver: %d", err);
@@ -303,16 +392,31 @@ void MacTCPImpl_Shutdown(short refNum)
     log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_Shutdown: Complete (driver remains open for system)");
 }
 
-/* Storage for per-stream notify procs
- * We need to map StreamPtr -> NotifyProc since MacTCP ASR only gives us StreamPtr.
- * Maximum: 1 listen stream + 4 pool streams + 1 discovery = 6 total
+/*
+ * Stream Notification Callback Management
+ *
+ * MacTCP limitation: ASR (Asynchronous Service Routine) callbacks only receive
+ * the StreamPtr parameter, but our application needs different handlers for
+ * different stream types (listen, send pool, discovery).
+ *
+ * Solution: Maintain a mapping table of StreamPtr -> application callback.
+ * The global MacTCPNotifyWrapper() dispatches to the correct handler.
+ *
+ * Size calculation:
+ * - 1 listen stream
+ * - 4 connection pool streams
+ * - 1 discovery stream
+ * - 2 extra for safety margin
+ * = 8 total stream notifiers
  */
 #define MAX_STREAM_NOTIFIERS 8
+
 typedef struct {
-    StreamPtr stream;
-    NetworkNotifyProcPtr notifyProc;
+    StreamPtr stream;                /* MacTCP stream handle (unique identifier) */
+    NetworkNotifyProcPtr notifyProc; /* Application callback for this stream */
 } StreamNotifierEntry;
 
+/* Global notification dispatch table */
 static StreamNotifierEntry gStreamNotifiers[MAX_STREAM_NOTIFIERS];
 static int gStreamNotifierCount = 0;
 

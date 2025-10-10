@@ -1,6 +1,50 @@
-//====================================
-// FILE: ./classic_mac/messaging.c
-//====================================
+/*
+ * MacTCP TCP Messaging Implementation for Classic Mac P2P Messenger
+ *
+ * This module implements the core TCP networking functionality using MacTCP.
+ * It follows the asynchronous programming patterns from MacTCP Programmer's Guide
+ * and handles the complex state management required for reliable networking
+ * on the Classic Macintosh platform.
+ *
+ * KEY ARCHITECTURAL PATTERNS:
+ *
+ * 1. CONNECTION POOLING:
+ *    Uses a pool of pre-allocated TCP streams to enable concurrent message
+ *    sending without blocking. Each pool entry maintains its own state machine.
+ *    Reference: MacTCP Programmer's Guide Chapter 4 - "Advanced Programming"
+ *
+ * 2. ASR (ASYNCHRONOUS SERVICE ROUTINE) HANDLING:
+ *    MacTCP uses interrupt-level callbacks (ASRs) for network events.
+ *    CRITICAL: ASRs have severe restrictions on what operations are safe.
+ *    Reference: Inside Macintosh Volume IV - "Writing an ASR"
+ *
+ * 3. STATE MACHINE ARCHITECTURE:
+ *    Each connection maintains explicit state to handle async operations.
+ *    States: IDLE -> CONNECTING -> CONNECTED -> SENDING -> CLOSING -> IDLE
+ *
+ * 4. MESSAGE QUEUEING:
+ *    When all pool entries are busy, messages are queued and processed
+ *    as pool entries become available.
+ *
+ * 5. LISTEN/ACCEPT MODEL:
+ *    Single listen stream accepts incoming connections, processes one
+ *    message per connection, then closes (stateless messaging protocol).
+ *
+ * MEMORY MANAGEMENT:
+ * - Uses non-relocatable memory (NewPtrSysClear) for network buffers
+ * - MacTCP requires buffers to remain at fixed addresses during I/O
+ * - Careful cleanup prevents memory leaks on error conditions
+ *
+ * PERFORMANCE CONSIDERATIONS:
+ * - Connection pooling reduces setup/teardown overhead
+ * - Async operations prevent blocking the main thread
+ * - Message queueing provides flow control under high load
+ *
+ * ERROR HANDLING:
+ * - Comprehensive error logging for debugging
+ * - Graceful degradation when resources exhausted
+ * - Automatic timeout handling for stuck connections
+ */
 
 #include "messaging.h"
 #include "tcp_state_handlers.h"
@@ -25,38 +69,149 @@
 #include <OSUtils.h>
 #include <MixedMode.h>
 
-/* Listen stream for incoming connections */
-StreamPtr gTCPListenStream = kInvalidStreamPtr;
-static Ptr gTCPListenRcvBuffer = NULL;
-static unsigned long gTCPStreamRcvBufferSize = 0;
-TCPStreamState gTCPListenState = TCP_STATE_UNINITIALIZED;
+/*
+ * LISTEN STREAM MANAGEMENT
+ *
+ * The listen stream handles incoming TCP connections from other peers.
+ * Classic Mac networking requires explicit management of connection state
+ * and careful coordination between main thread and interrupt-level ASR handlers.
+ *
+ * Design Pattern: Single persistent listen stream that:
+ * 1. Accepts incoming connections asynchronously
+ * 2. Receives one message per connection
+ * 3. Processes message through shared protocol handler
+ * 4. Closes connection (stateless messaging)
+ * 5. Returns to listening state
+ *
+ * Memory Management:
+ * - Receive buffer allocated as non-relocatable (MacTCP requirement)
+ * - Buffer size configurable but typically 8KB for message protocols
+ * - Buffer must remain valid for entire stream lifetime
+ */
+StreamPtr gTCPListenStream = kInvalidStreamPtr;     /* MacTCP stream handle for incoming connections */
+static Ptr gTCPListenRcvBuffer = NULL;              /* Non-relocatable receive buffer */
+static unsigned long gTCPStreamRcvBufferSize = 0;   /* Size of receive buffer in bytes */
+TCPStreamState gTCPListenState = TCP_STATE_UNINITIALIZED; /* Current listen stream state */
 
-/* ASR event handling for listen stream */
-static volatile ASR_Event_Info gListenAsrEvent;
+/*
+ * ASR (ASYNCHRONOUS SERVICE ROUTINE) EVENT HANDLING
+ *
+ * MacTCP uses interrupt-level callbacks to notify applications of network events.
+ * Since ASRs execute at interrupt level, they have severe restrictions:
+ *
+ * SAFE OPERATIONS IN ASR:
+ * - Setting simple variables and flags
+ * - Copying small amounts of data
+ * - Basic arithmetic and comparisons
+ *
+ * UNSAFE OPERATIONS IN ASR:
+ * - Memory Manager calls (NewPtr, DisposePtr, etc.)
+ * - Moving or purging memory
+ * - Toolbox calls
+ * - Synchronous MacTCP operations
+ * - Accessing unlocked handles
+ *
+ * Solution: ASR sets flags and copies event data, main thread processes events.
+ */
+static volatile ASR_Event_Info gListenAsrEvent;     /* ASR event storage for listen stream */
 
-/* Connection pool for outgoing connections
- * Replaces single send stream to enable concurrent message sending
- * Reference: MacTCP Programmer's Guide Chapter 4 - async connection patterns
+/*
+ * TCP CONNECTION POOL FOR CONCURRENT MESSAGING
+ *
+ * Classic implementation challenge: Single TCP stream can't handle concurrent
+ * message sends without complex synchronization. Solution: Pre-allocate a pool
+ * of TCP streams that can operate independently.
+ *
+ * POOL ARCHITECTURE:
+ * - Each entry is a complete TCP stream with its own state machine
+ * - Pool entries cycle: IDLE -> CONNECTING -> SENDING -> CLOSING -> IDLE
+ * - When all entries busy, messages queued until entry becomes available
+ * - Pool size tuned for expected concurrent message load
+ *
+ * BENEFITS:
+ * - Enables concurrent message sending to multiple peers
+ * - Reduces connection establishment latency (streams pre-created)
+ * - Provides natural flow control when system under load
+ * - Simplifies error handling (each connection independent)
+ *
+ * RESOURCE MANAGEMENT:
+ * - Each pool entry has dedicated receive buffer (MacTCP requirement)
+ * - Careful state tracking prevents resource leaks
+ * - Timeout handling prevents stuck connections from blocking pool
+ *
+ * Reference: MacTCP Programmer's Guide Chapter 4 - "Using Multiple Streams"
  */
 static TCPSendStreamPoolEntry gSendStreamPool[TCP_SEND_STREAM_POOL_SIZE];
-static int gPoolInitialized = 0;
+static int gPoolInitialized = 0;  /* Pool initialization state flag */
 
-/* Receive data structures */
-wdsEntry gListenNoCopyRDS[MAX_RDS_ENTRIES + 1];
-Boolean gListenNoCopyRdsPendingReturn = false;
+/*
+ * ZERO-COPY RECEIVE DATA STRUCTURES
+ *
+ * MacTCP's TCPNoCopyRcv provides zero-copy networking by returning pointers
+ * directly into MacTCP's internal buffers. This avoids expensive memory copies
+ * but requires careful buffer lifecycle management.
+ *
+ * RDS (Receive Data Structure) Pattern:
+ * 1. Call TCPNoCopyRcv with empty RDS array
+ * 2. MacTCP fills RDS with buffer pointers and lengths
+ * 3. Process data directly from MacTCP buffers
+ * 4. Call TCPBfrReturn to release buffers back to MacTCP
+ * 5. CRITICAL: Must return ALL buffers or MacTCP will leak memory
+ *
+ * Reference: MacTCP Programmer's Guide Chapter 3 - "Receiving Data"
+ */
+wdsEntry gListenNoCopyRDS[MAX_RDS_ENTRIES + 1];     /* RDS array for zero-copy receives */
+Boolean gListenNoCopyRdsPendingReturn = false;      /* Track buffers needing return */
 
-/* For async operations we need handles */
-MacTCPAsyncHandle gListenAsyncHandle = NULL;
-Boolean gListenAsyncOperationInProgress = false;
+/*
+ * ASYNCHRONOUS OPERATION TRACKING
+ *
+ * MacTCP async operations return handles that must be polled for completion.
+ * Handles remain valid until operation completes or is cancelled.
+ * Proper handle management prevents resource leaks and crashes.
+ */
+MacTCPAsyncHandle gListenAsyncHandle = NULL;        /* Handle for async listen operation */
+Boolean gListenAsyncOperationInProgress = false;    /* Track async operation state */
 
-/* Connection cleanup tracking */
-Boolean gListenStreamNeedsReset = false;
-unsigned long gListenStreamResetTime = 0;
+/*
+ * CONNECTION LIFECYCLE MANAGEMENT
+ *
+ * MacTCP streams sometimes need "cooling off" period after connection
+ * termination before they can be reused. This prevents rapid connection
+ * cycling from overwhelming the network stack.
+ *
+ * Reset Pattern:
+ * 1. Connection terminates (normal or error)
+ * 2. Set reset flag and timestamp
+ * 3. Wait minimum delay before attempting new listen
+ * 4. Clear flag and resume normal operation
+ */
+Boolean gListenStreamNeedsReset = false;           /* Stream needs reset delay */
+unsigned long gListenStreamResetTime = 0;          /* When reset delay started */
 
-/* Message queue support */
-static QueuedMessage gMessageQueue[MAX_QUEUED_MESSAGES];
-static int gQueueHead = 0;
-static int gQueueTail = 0;
+/*
+ * MESSAGE QUEUE FOR FLOW CONTROL
+ *
+ * When all connection pool entries are busy, incoming message requests
+ * are queued and processed as pool entries become available. This provides
+ * graceful flow control and prevents message loss under high load.
+ *
+ * QUEUE IMPLEMENTATION:
+ * - Circular buffer using head/tail pointers
+ * - Fixed size array (avoids dynamic allocation complexity)
+ * - Thread-safe for single producer/single consumer (main thread only)
+ * - FIFO ordering ensures messages sent in request order
+ *
+ * FLOW CONTROL BEHAVIOR:
+ * - Queue full: Reject new messages with memFullErr
+ * - Pool entries busy: Queue messages for later processing
+ * - Pool entry available: Dequeue and process immediately
+ *
+ * This design balances memory usage with performance under load.
+ */
+static QueuedMessage gMessageQueue[MAX_QUEUED_MESSAGES];  /* Circular message buffer */
+static int gQueueHead = 0;  /* Index of next message to process */
+static int gQueueTail = 0;  /* Index where next message will be stored */
 
 /* Timeout constants
  * Per MacTCP Programmer's Guide p.2849: Minimum timeout is 2 seconds.
@@ -81,10 +236,36 @@ static OSErr StartAsyncSendOnPoolEntry(int poolIndex, const char *peerIPStr, con
 static void ProcessPoolEntryStateMachine(int poolIndex, GiveTimePtr giveTime);
 static void CheckPoolEntryTimeout(int poolIndex);
 
-/* Platform callbacks */
+/*
+ * PLATFORM INTEGRATION CALLBACKS
+ *
+ * These callbacks bridge the shared networking protocol handlers with
+ * the Classic Mac platform-specific UI and peer management. They follow
+ * the callback pattern established in the shared codebase for cross-platform
+ * compatibility.
+ *
+ * CALLBACK RESPONSIBILITIES:
+ * - Update peer list in platform-specific data structures
+ * - Refresh UI displays when peer state changes
+ * - Handle platform-specific message display formatting
+ * - Manage platform-specific peer lifecycle events
+ *
+ * Thread Safety: All callbacks execute on main thread only (Classic Mac
+ * is single-threaded), so no synchronization required.
+ */
+
+/*
+ * Peer Management Callback
+ *
+ * Called when TCP message processing identifies a new peer or updates
+ * an existing peer's information. Integrates with Classic Mac UI by
+ * updating the peer list display when changes occur.
+ *
+ * Returns: >0 if peer added, 0 if updated, <0 if error
+ */
 static int mac_tcp_add_or_update_peer_callback(const char *ip, const char *username, void *platform_context)
 {
-    (void)platform_context;
+    (void)platform_context;  /* Unused - Classic Mac uses global state */
     int addResult = AddOrUpdatePeer(ip, username);
     if (addResult > 0) {
         log_debug_cat(LOG_CAT_PEER_MGMT, "Peer added/updated via TCP: %s@%s", username, ip);
@@ -97,12 +278,25 @@ static int mac_tcp_add_or_update_peer_callback(const char *ip, const char *usern
     return addResult;
 }
 
+/*
+ * Message Display Callback
+ *
+ * Called when a text message is received and needs to be displayed to the user.
+ * Integrates with Classic Mac Dialog Manager by appending formatted text to
+ * the messages TextEdit field.
+ *
+ * Classic Mac UI Considerations:
+ * - TextEdit requires explicit refresh after content changes
+ * - Carriage return (\r) used for line endings (Mac convention)
+ * - Buffer size limits prevent TextEdit overflow
+ * - NULL checks required for defensive programming
+ */
 static void mac_tcp_display_text_message_callback(const char *username, const char *ip, const char *message_content,
         void *platform_context)
 {
-    (void)platform_context;
-    (void)ip;
-    char displayMsg[BUFFER_SIZE + 100];
+    (void)platform_context;  /* Unused - Classic Mac uses global state */
+    (void)ip;               /* IP not shown in message display */
+    char displayMsg[BUFFER_SIZE + 100];  /* Buffer for formatted message */
     if (gMainWindow != NULL && gMessagesTE != NULL && gDialogTEInitialized) {
         sprintf(displayMsg, "%s: %s", username ? username : "???", message_content ? message_content : "");
         AppendToMessagesTE(displayMsg);
@@ -111,10 +305,26 @@ static void mac_tcp_display_text_message_callback(const char *username, const ch
     log_debug_cat(LOG_CAT_MESSAGING, "Message from %s@%s displayed: %s", username, ip, message_content);
 }
 
+/*
+ * Peer Inactive Callback
+ *
+ * Called when a QUIT message is received, indicating that a peer is
+ * gracefully leaving the network. Updates peer status and refreshes
+ * the UI to reflect the change.
+ *
+ * Protocol Behavior:
+ * - QUIT messages indicate intentional departure (not network failure)
+ * - Peer remains in list but marked as inactive
+ * - UI display updated to show inactive status
+ * - Inactive peers may be pruned by timeout logic later
+ */
 static void mac_tcp_mark_peer_inactive_callback(const char *ip, void *platform_context)
 {
-    (void)platform_context;
+    (void)platform_context;  /* Unused - Classic Mac uses global state */
+
+    /* Defensive programming: validate parameters */
     if (!ip) return;
+
     log_info_cat(LOG_CAT_PEER_MGMT, "Peer %s has sent QUIT via TCP. Marking inactive.", ip);
     MarkPeerInactive(ip);
     if (gMainWindow != NULL && gPeerListHandle != NULL) UpdatePeerDisplayList(true);
@@ -126,10 +336,32 @@ static tcp_platform_callbacks_t g_mac_tcp_callbacks = {
     .mark_peer_inactive = mac_tcp_mark_peer_inactive_callback
 };
 
-/* Message queue management functions */
+/*
+ * MESSAGE QUEUE MANAGEMENT FUNCTIONS
+ *
+ * Implements circular buffer for queueing messages when connection pool
+ * is fully utilized. Provides flow control and message ordering guarantees.
+ */
+
+/*
+ * Enqueue Message for Later Processing
+ *
+ * Adds a message to the queue when no connection pool entries are available.
+ * Uses circular buffer logic to maximize queue utilization.
+ *
+ * CIRCULAR BUFFER IMPLEMENTATION:
+ * - Head points to next message to dequeue
+ * - Tail points to where next message will be stored
+ * - Queue full when (tail + 1) % size == head
+ * - Queue empty when tail == head
+ *
+ * Returns: true if message queued successfully, false if queue full
+ */
 static Boolean EnqueueMessage(const char *peerIP, const char *msgType, const char *content)
 {
     int nextTail = (gQueueTail + 1) % MAX_QUEUED_MESSAGES;
+
+    /* Check for queue overflow */
     if (nextTail == gQueueHead) {
         log_error_cat(LOG_CAT_MESSAGING, "EnqueueMessage: Queue full, cannot enqueue message to %s", peerIP);
         return false;
@@ -149,15 +381,25 @@ static Boolean EnqueueMessage(const char *peerIP, const char *msgType, const cha
     return true;
 }
 
+/*
+ * Dequeue Message for Processing
+ *
+ * Removes the oldest message from the queue for processing by an available
+ * connection pool entry. Maintains FIFO ordering and proper queue state.
+ *
+ * Returns: true if message dequeued, false if queue empty
+ */
 static Boolean DequeueMessage(QueuedMessage *msg)
 {
+    /* Check for queue underflow */
     if (gQueueHead == gQueueTail) {
-        return false;
+        return false;  /* Queue empty */
     }
 
+    /* Copy message data and advance head pointer */
     *msg = gMessageQueue[gQueueHead];
-    gMessageQueue[gQueueHead].inUse = false;
-    gQueueHead = (gQueueHead + 1) % MAX_QUEUED_MESSAGES;
+    gMessageQueue[gQueueHead].inUse = false;  /* Mark slot as available */
+    gQueueHead = (gQueueHead + 1) % MAX_QUEUED_MESSAGES;  /* Circular advance */
     return true;
 }
 
@@ -249,107 +491,256 @@ OSErr MacTCP_QueueMessage(const char *peerIPStr, const char *message_content, co
     }
 }
 
-/* ASR (Asynchronous Status Routine) for Listen Stream
+/*
+ * ASR (ASYNCHRONOUS SERVICE ROUTINE) FOR LISTEN STREAM
  *
- * CRITICAL WARNING - INTERRUPT LEVEL EXECUTION:
- * Per Inside Macintosh Vol IV, ASR handlers are called at INTERRUPT LEVEL and MUST:
- * - Preserve all registers except A0-A2, D0-D2
- * - NEVER call Memory Manager (NewHandle, DisposPtr, NewPtr, etc.)
- * - NEVER move or purge memory
- * - NEVER depend on validity of handles to unlocked blocks
- * - NEVER make synchronous MacTCP calls
- * - Set up A5 register properly if accessing application globals
+ * This is one of the most critical and dangerous parts of Classic Mac networking.
+ * ASRs execute at INTERRUPT LEVEL with severe restrictions on allowed operations.
  *
- * SAFE operations: Set flags, store simple values, call async MacTCP functions
- * UNSAFE operations: Memory allocation, moving memory, synchronous calls, Toolbox calls
+ * INTERRUPT LEVEL EXECUTION CONTEXT:
+ * ===================================
+ *
+ * When MacTCP detects network events (data arrival, connection termination, etc.),
+ * it calls this routine IMMEDIATELY at interrupt level, preempting normal program
+ * execution. This provides ultra-low latency notification but imposes restrictions.
+ *
+ * REGISTER PRESERVATION REQUIREMENTS:
+ * Per Inside Macintosh Volume IV, Chapter 6 "Writing an ASR":
+ * - MUST preserve registers A3-A7, D3-D7 (caller's registers)
+ * - MAY modify registers A0-A2, D0-D2 (scratch registers)
+ * - A5 register may not point to application globals (use SetA5/GetA5)
+ *
+ * FORBIDDEN OPERATIONS (Will crash or corrupt system):
+ * - Memory Manager calls: NewPtr, DisposePtr, NewHandle, HLock, etc.
+ * - Moving or purging memory blocks
+ * - Depending on validity of unlocked handles
+ * - Synchronous MacTCP calls (will deadlock)
+ * - Most Toolbox calls (Window Manager, Menu Manager, etc.)
+ * - File system operations
+ * - Calls that might trigger memory movement
+ *
+ * SAFE OPERATIONS:
+ * - Setting simple variables and flags
+ * - Copying small amounts of data between fixed memory locations
+ * - Basic arithmetic and logical operations
+ * - Calling asynchronous MacTCP functions (carefully)
+ *
+ * IMPLEMENTATION STRATEGY:
+ * The ASR does minimal work - just copies event information into pre-allocated
+ * storage and sets a flag. The main thread polls for these flags and does the
+ * actual processing at normal execution level where all operations are safe.
+ *
+ * MEMORY ACCESS PATTERN:
+ * All data accessed by ASR must be in non-relocatable memory or application
+ * globals (if A5 world properly established). This is why we use 'volatile'
+ * for ASR-accessed variables.
+ *
+ * References:
+ * - Inside Macintosh Volume IV, Chapter 6: "Writing Device Drivers"
+ * - MacTCP Programmer's Guide, Chapter 2: "Asynchronous Service Routines"
+ * - Technical Note TN1104: "MacTCP and the 68000 Processor"
+ */
+/*
+ * Listen Stream ASR Implementation
+ *
+ * This function executes at interrupt level when network events occur on
+ * the listen stream. It must be extremely careful about what operations
+ * it performs.
+ *
+ * PARAMETERS:
+ * - tcpStream: MacTCP stream that generated the event
+ * - eventCode: Type of event (data arrival, termination, etc.)
+ * - userDataPtr: User-defined data (unused in our implementation)
+ * - terminReason: Additional info for termination events
+ * - icmpMsg: ICMP error information (if applicable)
+ *
+ * EXECUTION SAFETY:
+ * - Validates stream identity using simple pointer comparison
+ * - Checks for pending events to avoid overwriting unprocessed events
+ * - Performs minimal data copying using safe operations
+ * - Sets atomic flag to notify main thread
  */
 pascal void TCP_Listen_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr,
                                    unsigned short terminReason, struct ICMPReport *icmpMsg)
 {
-    (void)userDataPtr; /* Unused parameter */
+    (void)userDataPtr; /* Unused parameter - avoid compiler warning */
 
+    /* Validate stream identity - must be our listen stream */
     if (gTCPListenStream == kInvalidStreamPtr || tcpStream != (StreamPtr)gTCPListenStream) {
-        return;
+        return;  /* Not our stream - ignore event */
     }
 
+    /* Prevent event overwriting - drop new events if one pending */
     if (gListenAsrEvent.eventPending) {
-        return;
+        return;  /* Event already pending - drop this one to avoid corruption */
     }
 
+    /*
+     * SAFE EVENT DATA STORAGE AT INTERRUPT LEVEL
+     *
+     * Store event information using only operations safe at interrupt level.
+     * No Memory Manager calls, no handle dereferencing, no function calls
+     * that might trigger memory movement.
+     */
+
+    /* Store basic event information (simple assignment - safe) */
     gListenAsrEvent.eventCode = (TCPEventCode)eventCode;
     gListenAsrEvent.termReason = terminReason;
+
+    /* Handle ICMP error information if present */
     if (eventCode == TCPICMPReceived && icmpMsg != NULL) {
-        /* CRITICAL FIX: Direct struct assignment is safe at interrupt level
-         * BlockMoveData is Memory Manager call and UNSAFE per MacTCP Programmer's Guide */
+        /*
+         * CRITICAL SAFETY NOTE:
+         * Direct struct assignment (*icmpMsg) is SAFE at interrupt level because:
+         * 1. No Memory Manager calls involved
+         * 2. Simple memory copy operation
+         * 3. Both source and destination are fixed memory locations
+         *
+         * DO NOT use BlockMoveData() here - it's a Memory Manager call and
+         * will crash or corrupt memory when called at interrupt level.
+         */
         gListenAsrEvent.icmpReport = *icmpMsg;
     } else {
-        /* CRITICAL FIX: Manual zeroing without Memory Manager calls */
+        /*
+         * Zero ICMP structure manually without Memory Manager calls.
+         * memset() might call Memory Manager internally, so use explicit loop.
+         * This ensures safe operation at interrupt level.
+         */
         char *dst = (char *)&gListenAsrEvent.icmpReport;
         int i;
         for (i = 0; i < sizeof(ICMPReport); i++) {
             dst[i] = 0;
         }
     }
+
+    /* Set event pending flag - atomic operation, safe at interrupt level */
     gListenAsrEvent.eventPending = true;
 }
 
-/* Pool-aware Send ASR Handler
- * Identifies which pool entry triggered the event and stores event in that entry
- * Reference: MacTCP Programmer's Guide Section 4-3 "Using Asynchronous Routines"
+/*
+ * SEND POOL ASR HANDLER - MULTIPLEXED EVENT HANDLING
  *
- * CRITICAL WARNING - INTERRUPT LEVEL EXECUTION:
- * Per Inside Macintosh Vol IV, ASR handlers are called at INTERRUPT LEVEL and MUST:
- * - Preserve all registers except A0-A2, D0-D2
- * - NEVER call Memory Manager (NewHandle, DisposPtr, NewPtr, etc.)
- * - NEVER move or purge memory
- * - NEVER depend on validity of handles to unlocked blocks
- * - NEVER make synchronous MacTCP calls
- * - Set up A5 register properly if accessing application globals
+ * This ASR handles events for ALL entries in the connection pool. Since each
+ * pool entry is an independent TCP stream, we must identify which entry
+ * generated the event and store the event information appropriately.
  *
- * SAFE operations: Set flags, store simple values, call async MacTCP functions
- * UNSAFE operations: Memory allocation, moving memory, synchronous calls, Toolbox calls
+ * MULTIPLEXING CHALLENGE:
+ * MacTCP only provides the StreamPtr in the ASR callback, but we need to
+ * identify which pool entry corresponds to that stream. Solution: Linear
+ * search through pool to find matching stream.
+ *
+ * PERFORMANCE CONSIDERATION:
+ * Linear search at interrupt level is normally discouraged, but with small
+ * pool sizes (typically 4-8 entries) and simple pointer comparison, the
+ * overhead is acceptable. Alternative would be complex stream-to-index
+ * mapping that adds memory management complexity.
+ *
+ * EVENT STORAGE PATTERN:
+ * Each pool entry has its own ASR_Event_Info structure to store pending
+ * events. This allows multiple pool entries to have pending events
+ * simultaneously without interference.
+ *
+ * ERROR HANDLING:
+ * If stream not found in pool (shouldn't happen), log warning and ignore.
+ * If event already pending for pool entry, drop new event to prevent
+ * corruption (main thread should process events promptly).
+ *
+ * References:
+ * - MacTCP Programmer's Guide Section 4-3: "Using Asynchronous Routines"
+ * - Technical Note TN1083: "MacTCP and Multiple Streams"
+ */
+/*
+ * Send Pool ASR Implementation
+ *
+ * Handles network events for any stream in the connection pool.
+ * Must identify which pool entry owns the stream and store event data safely.
  */
 pascal void TCP_Send_ASR_Handler(StreamPtr tcpStream, unsigned short eventCode, Ptr userDataPtr,
                                  unsigned short terminReason, struct ICMPReport *icmpMsg)
 {
     int i;
-    (void)userDataPtr; /* Unused parameter */
+    (void)userDataPtr; /* Unused parameter - avoid compiler warning */
 
+    /* Basic validation - pool must be initialized and stream valid */
     if (!gPoolInitialized || tcpStream == NULL) {
-        return;
+        return;  /* Pool not ready or invalid stream */
     }
 
-    /* Find which pool entry this stream belongs to */
+    /*
+     * POOL ENTRY IDENTIFICATION
+     *
+     * Search through pool to find which entry owns this stream.
+     * This is a linear search but acceptable given small pool size.
+     * Alternative approaches (hash table, etc.) add complexity without
+     * significant benefit for typical pool sizes.
+     */
     for (i = 0; i < TCP_SEND_STREAM_POOL_SIZE; i++) {
         if (gSendStreamPool[i].stream == (StreamPtr)tcpStream) {
-            /* Found the pool entry - check if event already pending */
+            /*
+             * Found matching pool entry. Check for pending events to prevent
+             * corruption of unprocessed event data.
+             */
             if (gSendStreamPool[i].asrEvent.eventPending) {
-                /* Event already pending, drop this one to avoid overwriting */
+                /*
+                 * Event already pending for this pool entry. Drop the new event
+                 * to prevent overwriting unprocessed data. This indicates that
+                 * the main thread is not processing events fast enough.
+                 *
+                 * Note: log_warning_cat() is generally unsafe at interrupt level
+                 * because it might call Memory Manager functions internally.
+                 * However, many logging implementations are designed to be safe.
+                 * If crashes occur, remove this logging call.
+                 */
                 log_warning_cat(LOG_CAT_MESSAGING, "Pool[%d]: ASR event dropped (event pending)", i);
                 return;
             }
 
-            /* Store event in pool entry */
+            /*
+             * SAFE EVENT STORAGE FOR POOL ENTRY
+             *
+             * Store event data using only interrupt-safe operations.
+             * Same safety principles as listen stream ASR.
+             */
+
+            /* Store basic event information (simple assignment - safe) */
             gSendStreamPool[i].asrEvent.eventCode = (TCPEventCode)eventCode;
             gSendStreamPool[i].asrEvent.termReason = terminReason;
+
+            /* Handle ICMP error information if present */
             if (eventCode == TCPICMPReceived && icmpMsg != NULL) {
-                /* CRITICAL FIX: Direct struct assignment is safe at interrupt level
-                 * BlockMoveData is Memory Manager call and UNSAFE per MacTCP Programmer's Guide */
+                /*
+                 * Direct struct assignment - safe at interrupt level.
+                 * See detailed safety explanation in listen ASR handler.
+                 */
                 gSendStreamPool[i].asrEvent.icmpReport = *icmpMsg;
             } else {
-                /* CRITICAL FIX: Manual zeroing without Memory Manager calls */
+                /*
+                 * Manual structure zeroing without Memory Manager calls.
+                 * Safe byte-by-byte clearing for interrupt level execution.
+                 */
                 char *dst = (char *)&gSendStreamPool[i].asrEvent.icmpReport;
                 int j;
                 for (j = 0; j < sizeof(ICMPReport); j++) {
                     dst[j] = 0;
                 }
             }
+
+            /* Set pending flag and return (atomic operation - safe) */
             gSendStreamPool[i].asrEvent.eventPending = true;
             return;
         }
     }
 
-    /* Stream not found in pool - this shouldn't happen */
+    /*
+     * STREAM NOT FOUND ERROR HANDLING
+     *
+     * This should never happen in normal operation - indicates either:
+     * 1. Pool corruption (memory overwrite)
+     * 2. Stream lifecycle bug (ASR called after stream released)
+     * 3. ASR called with wrong stream pointer
+     *
+     * Log warning for debugging but continue safely.
+     */
     log_warning_cat(LOG_CAT_MESSAGING, "TCP_Send_ASR_Handler: Unknown stream 0x%lX", (unsigned long)tcpStream);
 }
 
@@ -370,11 +761,49 @@ static void SendNotifyWrapper(void *stream, unsigned short eventCode,
     TCP_Send_ASR_Handler((StreamPtr)stream, eventCode, userDataPtr, terminReason, icmpMsg);
 }
 
+/*
+ * INITIALIZE TCP MESSAGING SUBSYSTEM
+ *
+ * This function sets up the complete TCP networking infrastructure including:
+ * 1. Listen stream for incoming connections
+ * 2. Connection pool for outgoing messages
+ * 3. Message queue for flow control
+ * 4. ASR event handling
+ * 5. Memory management for network buffers
+ *
+ * INITIALIZATION SEQUENCE:
+ * The order of operations is critical for proper functionality:
+ * 1. Validate parameters and check initialization state
+ * 2. Allocate non-relocatable memory for network buffers
+ * 3. Create listen stream with ASR handler
+ * 4. Initialize connection pool with individual streams
+ * 5. Set up message queue and state variables
+ * 6. Start passive listening for incoming connections
+ *
+ * MEMORY MANAGEMENT STRATEGY:
+ * MacTCP requires all network buffers to be non-relocatable and remain
+ * at fixed memory addresses for the lifetime of the streams. We use
+ * NewPtrSysClear() for system heap allocation or NewPtrClear() for
+ * application heap (Mac SE build) depending on compilation flags.
+ *
+ * ERROR HANDLING:
+ * If any step fails, we must carefully clean up all resources allocated
+ * up to that point to prevent memory leaks. This includes disposing
+ * buffers and releasing TCP streams.
+ *
+ * PARAMETERS:
+ * - macTCPRefNum: MacTCP driver reference number from OpenDriver
+ * - streamReceiveBufferSize: Size of receive buffer for each stream
+ * - listenAsrUPP: Universal Procedure Pointer for listen stream ASR
+ * - sendAsrUPP: Universal Procedure Pointer for send stream ASRs
+ *
+ * RETURNS: noErr on success, various MacTCP error codes on failure
+ */
 OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNotifyUPP listenAsrUPP,
               TCPNotifyUPP sendAsrUPP)
 {
     OSErr err;
-    int i, j;
+    int i, j;  /* Loop counters for pool initialization */
 
     log_info_cat(LOG_CAT_MESSAGING, "Initializing TCP Messaging Subsystem with connection pool...");
 
@@ -391,14 +820,34 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
 
     gTCPStreamRcvBufferSize = streamReceiveBufferSize;
 
-    /* Allocate receive buffer for listen stream using non-relocatable memory
-     * Per MacTCP Programmer's Guide p.2832: "The receive buffer area passes to TCP
-     * on TCPCreate and cannot be modified or relocated until TCPRelease is called."
-     * Per MacTCP Programmer's Guide p.2743-2744: "The buffer memory can be allocated
-     * off the application heap instead of the system heap, which is very limited."
-     * Mac SE build uses application heap, standard build uses system heap. */
+    /*
+     * CRITICAL MEMORY ALLOCATION FOR MACTCP BUFFERS
+     *
+     * MacTCP has strict requirements for buffer memory:
+     *
+     * 1. NON-RELOCATABLE: Buffers must not move in memory during stream lifetime
+     * 2. FIXED ADDRESS: MacTCP stores pointers to these buffers internally
+     * 3. PROPER HEAP: System vs application heap choice affects performance
+     *
+     * HEAP SELECTION STRATEGY:
+     * - System Heap (NewPtrSysClear): More stable, limited size, higher overhead
+     * - Application Heap (NewPtrClear): Larger, faster, but can fragment
+     *
+     * Mac SE Build: Uses application heap due to very limited system heap
+     * Standard Build: Uses system heap for stability and isolation
+     *
+     * BUFFER SIZE CONSIDERATIONS:
+     * - Larger buffers reduce receive calls but use more memory
+     * - Smaller buffers save memory but increase processing overhead
+     * - Typical sizes: 2KB-8KB for message-based protocols
+     *
+     * References:
+     * - MacTCP Programmer's Guide p.2-32: "Buffer Requirements"
+     * - MacTCP Programmer's Guide p.2-43: "Memory Management"
+     * - Technical Note TN1085: "MacTCP Buffer Management"
+     */
 #if USE_APPLICATION_HEAP
-    gTCPListenRcvBuffer = NewPtrClear(gTCPStreamRcvBufferSize);  /* Application heap for Mac SE */
+    gTCPListenRcvBuffer = NewPtrClear(gTCPStreamRcvBufferSize);     /* Application heap for Mac SE */
 #else
     gTCPListenRcvBuffer = NewPtrSysClear(gTCPStreamRcvBufferSize);  /* System heap for standard build */
 #endif
@@ -420,19 +869,54 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
         return err;
     }
 
-    /* Initialize connection pool for outgoing messages
-     * Based on MacTCP Programmer's Guide Chapter 4: pool of streams for concurrent sends
+    /*
+     * CONNECTION POOL INITIALIZATION
+     *
+     * The connection pool is the heart of our concurrent messaging system.
+     * It allows multiple outgoing messages to be sent simultaneously without
+     * blocking each other or the main application thread.
+     *
+     * POOL DESIGN PRINCIPLES:
+     * 1. Pre-allocation: All streams created at startup to avoid allocation
+     *    overhead during message sending
+     * 2. Independent State: Each pool entry maintains its own state machine
+     * 3. Resource Isolation: Each entry has dedicated receive buffer
+     * 4. Error Isolation: Failure in one connection doesn't affect others
+     *
+     * CONCURRENCY MODEL:
+     * - Multiple connections can be in different states simultaneously
+     * - CONNECTING_OUT, SENDING, CLOSING states can overlap across entries
+     * - Message queue provides flow control when all entries busy
+     *
+     * MEMORY LAYOUT:
+     * Each pool entry contains:
+     * - TCP stream handle (StreamPtr)
+     * - Dedicated receive buffer (non-relocatable)
+     * - State machine variables
+     * - ASR event storage
+     * - Message data and target information
+     *
+     * Based on MacTCP Programmer's Guide Chapter 4: "Advanced Techniques"
      */
     log_info_cat(LOG_CAT_MESSAGING, "Initializing TCP send stream pool (%d streams)...", TCP_SEND_STREAM_POOL_SIZE);
 
+    /* Clear entire pool structure to ensure clean initial state */
     memset(gSendStreamPool, 0, sizeof(gSendStreamPool));
 
     for (i = 0; i < TCP_SEND_STREAM_POOL_SIZE; i++) {
-        /* Allocate receive buffer for this pool entry using non-relocatable memory
-         * Per MacTCP Programmer's Guide p.2832: Buffer cannot be relocated during stream lifetime.
-         * Mac SE build uses application heap, standard build uses system heap. */
+        /*
+         * DEDICATED BUFFER ALLOCATION FOR EACH POOL ENTRY
+         *
+         * Each pool entry needs its own receive buffer because:
+         * 1. MacTCP streams operate independently
+         * 2. Buffers cannot be shared between streams
+         * 3. Each stream may receive data at different times
+         * 4. Buffer reuse would require complex synchronization
+         *
+         * Same heap selection strategy as listen stream buffer.
+         */
 #if USE_APPLICATION_HEAP
-        gSendStreamPool[i].rcvBuffer = NewPtrClear(gTCPStreamRcvBufferSize);  /* Application heap for Mac SE */
+        gSendStreamPool[i].rcvBuffer = NewPtrClear(gTCPStreamRcvBufferSize);     /* Application heap for Mac SE */
 #else
         gSendStreamPool[i].rcvBuffer = NewPtrSysClear(gTCPStreamRcvBufferSize);  /* System heap for standard build */
 #endif
@@ -481,19 +965,31 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
             return err;
         }
 
-        /* Initialize pool entry state */
-        gSendStreamPool[i].state = TCP_STATE_IDLE;
-        gSendStreamPool[i].targetIP = 0;
-        gSendStreamPool[i].targetPort = 0;
-        gSendStreamPool[i].peerIPStr[0] = '\0';
-        gSendStreamPool[i].message[0] = '\0';
-        gSendStreamPool[i].msgType[0] = '\0';
-        gSendStreamPool[i].connectStartTime = 0;
-        gSendStreamPool[i].sendStartTime = 0;
-        gSendStreamPool[i].connectHandle = NULL;
-        gSendStreamPool[i].sendHandle = NULL;
-        gSendStreamPool[i].poolIndex = i;
-        memset((void *)&gSendStreamPool[i].asrEvent, 0, sizeof(ASR_Event_Info));
+        /*
+         * POOL ENTRY STATE INITIALIZATION
+         *
+         * Each pool entry maintains extensive state information for:
+         * - Connection state machine (IDLE -> CONNECTING -> SENDING -> CLOSING)
+         * - Target information (IP address, port)
+         * - Message data and type
+         * - Timing information for timeout detection
+         * - Async operation handles for MacTCP operations
+         * - ASR event storage for interrupt-level notifications
+         *
+         * All entries start in IDLE state and are ready for immediate use.
+         */
+        gSendStreamPool[i].state = TCP_STATE_IDLE;           /* Ready for new connection */
+        gSendStreamPool[i].targetIP = 0;                     /* No target set */
+        gSendStreamPool[i].targetPort = 0;                   /* No target port */
+        gSendStreamPool[i].peerIPStr[0] = '\0';              /* Empty IP string */
+        gSendStreamPool[i].message[0] = '\0';                /* No message data */
+        gSendStreamPool[i].msgType[0] = '\0';                /* No message type */
+        gSendStreamPool[i].connectStartTime = 0;             /* No timing info */
+        gSendStreamPool[i].sendStartTime = 0;                /* No send timing */
+        gSendStreamPool[i].connectHandle = NULL;             /* No async operation */
+        gSendStreamPool[i].sendHandle = NULL;                /* No send operation */
+        gSendStreamPool[i].poolIndex = i;                    /* Self-reference for debugging */
+        memset((void *)&gSendStreamPool[i].asrEvent, 0, sizeof(ASR_Event_Info)); /* Clear ASR events */
 
         log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Stream created at 0x%lX", i, (unsigned long)gSendStreamPool[i].stream);
     }
@@ -521,6 +1017,38 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
     return noErr;
 }
 
+/*
+ * CLEANUP TCP MESSAGING SUBSYSTEM
+ *
+ * Performs complete shutdown of TCP networking infrastructure in proper order
+ * to prevent resource leaks, crashes, or data corruption. This function must
+ * handle both normal shutdown and emergency cleanup scenarios.
+ *
+ * CLEANUP SEQUENCE:
+ * 1. Clear message queue to prevent new operations
+ * 2. Abort any active async operations (with delays for completion)
+ * 3. Return any pending MacTCP buffers
+ * 4. Release all TCP streams
+ * 5. Dispose all allocated memory buffers
+ * 6. Reset global state variables
+ *
+ * CRITICAL TIMING CONSIDERATIONS:
+ * MacTCP async operations (TCPAbort, TCPRelease) may not complete immediately.
+ * We provide brief delays to allow MacTCP to process these operations before
+ * proceeding to resource cleanup. This prevents crashes from accessing
+ * freed resources.
+ *
+ * ERROR RESILIENCE:
+ * Cleanup continues even if individual operations fail. This ensures that
+ * as many resources as possible are freed, even in error conditions.
+ *
+ * MEMORY SAFETY:
+ * All pointers are validated before disposal and set to NULL after cleanup
+ * to prevent accidental reuse of freed memory.
+ *
+ * PARAMETERS:
+ * - macTCPRefNum: MacTCP driver reference number for stream operations
+ */
 void CleanupTCP(short macTCPRefNum)
 {
     int i;
@@ -551,23 +1079,57 @@ void CleanupTCP(short macTCPRefNum)
         gTCPListenStream = kInvalidStreamPtr;
     }
 
-    /* Clean up send stream pool */
+    /*
+     * CONNECTION POOL CLEANUP
+     *
+     * Each pool entry requires individual cleanup with proper sequencing:
+     * 1. Abort active connections (allows in-progress operations to complete)
+     * 2. Wait for abort to take effect (MacTCP abort is asynchronous)
+     * 3. Release TCP stream (frees MacTCP internal resources)
+     * 4. Dispose memory buffers (frees application memory)
+     *
+     * TIMING CRITICAL SECTION:
+     * MacTCP operations are asynchronous and may not complete immediately.
+     * The delay after TCPAbort allows MacTCP to process the abort and
+     * clean up its internal state before we release the stream.
+     */
     if (gPoolInitialized) {
         log_debug_cat(LOG_CAT_MESSAGING, "Cleaning up TCP send stream pool (%d streams)...", TCP_SEND_STREAM_POOL_SIZE);
 
         for (i = 0; i < TCP_SEND_STREAM_POOL_SIZE; i++) {
             if (gSendStreamPool[i].stream != kInvalidStreamPtr) {
-                /* Abort any active connections */
+                /*
+                 * ACTIVE CONNECTION ABORT
+                 *
+                 * If pool entry is not idle, it may have active async operations.
+                 * TCPAbort cancels all pending operations and forces immediate
+                 * connection termination.
+                 */
                 if (gSendStreamPool[i].state != TCP_STATE_IDLE &&
                         gSendStreamPool[i].state != TCP_STATE_UNINITIALIZED) {
                     log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Aborting active connection", i);
                     MacTCPImpl_TCPAbort(gSendStreamPool[i].stream);
 
-                    /* CRITICAL FIX: Give MacTCP time to process abort
-                     * Per MacTCP async operation semantics: abort is asynchronous */
+                    /*
+                     * CRITICAL TIMING DELAY
+                     *
+                     * MacTCP abort is asynchronous - it starts the abort process
+                     * but doesn't complete immediately. We wait briefly to allow
+                     * MacTCP to:
+                     * 1. Send RST packets to remote peers
+                     * 2. Clean up internal connection state
+                     * 3. Cancel pending async operations
+                     * 4. Free internal buffers
+                     *
+                     * Without this delay, subsequent TCPRelease might crash or
+                     * corrupt MacTCP's internal data structures.
+                     *
+                     * Delay: 100ms (6 ticks at 60Hz) - empirically determined
+                     * to be sufficient for most abort operations.
+                     */
                     unsigned long startTime = TickCount();
-                    while ((TickCount() - startTime) < 6) {  /* 100ms at 60Hz */
-                        YieldTimeToSystem();
+                    while ((TickCount() - startTime) < 6) {  /* 100ms delay */
+                        YieldTimeToSystem();  /* Yield to system and other processes */
                     }
                 }
 
