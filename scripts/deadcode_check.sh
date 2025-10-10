@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script to detect dead code, unused functions, and unreachable code using GCC
-# Uses various GCC flags and compilation techniques
+# Uses various GCC flags and compilation techniques with enhanced analysis
 
 # --- Configuration ---
 # Default: analyze all platforms
@@ -10,6 +10,8 @@ PLATFORM="all"
 ANALYSIS_BUILD_DIR="build/deadcode_analysis"
 # Reports directory
 REPORTS_DIR="reports"
+# Timestamp for this run
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 # --- Color codes for output ---
 RED='\033[0;31m'
@@ -139,10 +141,10 @@ run_warning_analysis() {
     echo -e "${BLUE}=== Phase 1: Compiler Warning Analysis ===${NC}"
     echo "Compiling with extensive warning flags..."
     echo ""
-    
+
     mkdir -p "$ANALYSIS_BUILD_DIR"
     mkdir -p "$REPORTS_DIR"
-    
+
     # Comprehensive warning flags for dead code detection
     WARNING_FLAGS="-Wall -Wextra -Wunused -Wunused-function -Wunused-label \
                    -Wunused-value -Wunused-variable -Wunused-parameter \
@@ -150,14 +152,16 @@ run_warning_analysis() {
                    -Wunused-local-typedefs -Wunused-macros \
                    -Wunreachable-code -Wswitch-enum -Wswitch-default \
                    -Wundef -Wshadow -Wredundant-decls"
-    
+
     # Additional flags for more analysis
     EXTRA_FLAGS="-fno-inline -fno-builtin -g"
-    
-    # Collect all warnings
+
+    # Collect all warnings with enhanced context
     WARNINGS_FILE="$REPORTS_DIR/gcc_warnings.txt"
+    DETAILED_WARNINGS="$REPORTS_DIR/gcc_warnings_detailed.txt"
     > "$WARNINGS_FILE"
-    
+    > "$DETAILED_WARNINGS"
+
     # Find all C files
     for dir in $SOURCE_DIRS; do
         if [ -d "$dir" ]; then
@@ -166,20 +170,21 @@ run_warning_analysis() {
                 if [[ "$file" == *"DNR.c" ]]; then
                     continue
                 fi
-                
+
                 echo "Analyzing: $file"
                 # Get appropriate compiler and flags
                 COMPILER=$(get_compiler_for_file "$file")
                 INCLUDE_FLAGS=$(get_include_flags_for_file "$file")
-                
-                # Compile with warnings, capturing stderr
+
+                # Compile with warnings, capturing stderr with full context
                 $COMPILER $WARNING_FLAGS $EXTRA_FLAGS $INCLUDE_FLAGS \
                     -c "$file" -o "$ANALYSIS_BUILD_DIR/$(basename "$file").o" 2>&1 | \
+                    tee -a "$DETAILED_WARNINGS" | \
                     grep -E "(warning:|error:)" | tee -a "$WARNINGS_FILE"
             done
         fi
     done
-    
+
     # Summary of warnings
     echo ""
     echo -e "${YELLOW}Warning Summary:${NC}"
@@ -272,15 +277,15 @@ run_cppcheck_analysis() {
         echo -e "${BLUE}=== Phase 4: Cppcheck Analysis ===${NC}"
         echo "Running cppcheck for additional dead code detection..."
         echo ""
-        
+
         CPPCHECK_FILE="$REPORTS_DIR/cppcheck_results.txt"
-        
+
         cppcheck --enable=all --inconclusive \
                  --suppress=missingIncludeSystem \
                  --suppress=unusedFunction \
                  -I posix -I shared -I classic_mac -I classic_mac_ot \
                  $SOURCE_DIRS 2> "$CPPCHECK_FILE"
-        
+
         # Show summary
         echo "Cppcheck findings:"
         grep -E "(style|warning|error)" "$CPPCHECK_FILE" | head -20 || echo "No issues found"
@@ -288,63 +293,500 @@ run_cppcheck_analysis() {
     fi
 }
 
+# Analyze static functions specifically (HIGH confidence dead code)
+analyze_static_functions() {
+    echo -e "${BLUE}=== Phase 5: Static Function Analysis ===${NC}"
+    echo "Identifying unused static functions (HIGH confidence dead code)..."
+    echo ""
+
+    STATIC_FUNCS_FILE="$REPORTS_DIR/static_functions_analysis.txt"
+    > "$STATIC_FUNCS_FILE"
+
+    echo "=== UNUSED STATIC FUNCTIONS (HIGH CONFIDENCE) ===" >> "$STATIC_FUNCS_FILE"
+    echo "" >> "$STATIC_FUNCS_FILE"
+
+    # Extract unused static function warnings with full context
+    grep -E "defined but not used.*\[-Wunused-function\]" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | \
+        grep "static" | while read -r line; do
+        # Parse file:line:col: pattern
+        if [[ "$line" =~ ^([^:]+):([0-9]+):[0-9]+:.*\'([^\']+)\' ]]; then
+            file="${BASH_REMATCH[1]}"
+            lineno="${BASH_REMATCH[2]}"
+            funcname="${BASH_REMATCH[3]}"
+
+            # Get git history for this file
+            last_modified=$(git log -1 --format="%ai" -- "$file" 2>/dev/null || echo "Unknown")
+
+            echo "Function: $funcname" >> "$STATIC_FUNCS_FILE"
+            echo "  Location: $file:$lineno" >> "$STATIC_FUNCS_FILE"
+            echo "  Last modified: $last_modified" >> "$STATIC_FUNCS_FILE"
+            echo "  Confidence: HIGH (static function never called)" >> "$STATIC_FUNCS_FILE"
+            echo "" >> "$STATIC_FUNCS_FILE"
+        fi
+    done
+
+    COUNT=$(grep -c "^Function:" "$STATIC_FUNCS_FILE" 2>/dev/null || echo 0)
+    echo "Found $COUNT unused static functions"
+    echo ""
+}
+
+# Categorize findings by confidence level
+categorize_by_confidence() {
+    echo -e "${BLUE}=== Phase 6: Confidence Scoring ===${NC}"
+    echo "Categorizing dead code by confidence level..."
+    echo ""
+
+    CONFIDENCE_REPORT="$REPORTS_DIR/confidence_report.txt"
+    > "$CONFIDENCE_REPORT"
+
+    {
+        echo "=== DEAD CODE CONFIDENCE REPORT ==="
+        echo "Generated: $(date)"
+        echo ""
+
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "HIGH CONFIDENCE - Safe to remove"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+
+        # Static unused functions
+        echo "1. UNUSED STATIC FUNCTIONS"
+        echo "   (defined but never called in same translation unit)"
+        echo ""
+        HIGH_COUNT=$(grep -c "defined but not used.*static" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)
+        if [ $HIGH_COUNT -gt 0 ]; then
+            grep "defined but not used.*static" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | \
+                sed 's/^/   /' || true
+        else
+            echo "   ✓ None found"
+        fi
+        echo ""
+
+        # Unreachable code
+        echo "2. UNREACHABLE CODE"
+        echo "   (code that can never execute)"
+        echo ""
+        UNREACH_COUNT=$(grep -c "unreachable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)
+        if [ $UNREACH_COUNT -gt 0 ]; then
+            grep "unreachable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | \
+                sed 's/^/   /' || true
+        else
+            echo "   ✓ None found"
+        fi
+        echo ""
+
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "MEDIUM CONFIDENCE - Review before removing"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+
+        # Unused variables
+        echo "3. UNUSED VARIABLES"
+        echo "   (local variables that are assigned but never read)"
+        echo ""
+        UNUSED_VAR=$(grep -c "unused variable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)
+        if [ $UNUSED_VAR -gt 0 ]; then
+            grep "unused variable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | head -10 | \
+                sed 's/^/   /' || true
+            [ $UNUSED_VAR -gt 10 ] && echo "   ... and $((UNUSED_VAR - 10)) more"
+        else
+            echo "   ✓ None found"
+        fi
+        echo ""
+
+        # Redundant declarations
+        echo "4. REDUNDANT DECLARATIONS"
+        echo "   (declarations that duplicate existing ones)"
+        echo ""
+        REDUNDANT=$(grep -c "redundant" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)
+        if [ $REDUNDANT -gt 0 ]; then
+            grep "redundant" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | \
+                sed 's/^/   /' || true
+        else
+            echo "   ✓ None found"
+        fi
+        echo ""
+
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "LOW CONFIDENCE - Consider interface requirements"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+
+        # Unused parameters
+        echo "5. UNUSED PARAMETERS"
+        echo "   (may be required by callback/API signatures - use (void)param)"
+        echo ""
+        UNUSED_PARAM=$(grep -c "unused parameter" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)
+        if [ $UNUSED_PARAM -gt 0 ]; then
+            grep "unused parameter" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | head -10 | \
+                sed 's/^/   /' || true
+            [ $UNUSED_PARAM -gt 10 ] && echo "   ... and $((UNUSED_PARAM - 10)) more"
+        else
+            echo "   ✓ None found"
+        fi
+        echo ""
+
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "SUMMARY"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "HIGH confidence items:    $((HIGH_COUNT + UNREACH_COUNT))"
+        echo "MEDIUM confidence items:  $((UNUSED_VAR + REDUNDANT))"
+        echo "LOW confidence items:     $UNUSED_PARAM"
+        echo ""
+
+    } > "$CONFIDENCE_REPORT"
+
+    echo "Confidence report generated"
+    echo ""
+}
+
+# Add git history context to findings
+add_git_context() {
+    echo -e "${BLUE}=== Phase 7: Git History Analysis ===${NC}"
+    echo "Adding git history context to findings..."
+    echo ""
+
+    GIT_CONTEXT_FILE="$REPORTS_DIR/git_context.txt"
+    > "$GIT_CONTEXT_FILE"
+
+    {
+        echo "=== GIT HISTORY CONTEXT FOR DEAD CODE ==="
+        echo "Generated: $(date)"
+        echo ""
+
+        # Extract unique files with warnings
+        FILES_WITH_ISSUES=$(grep -E "^[^:]+\.c:" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | \
+            cut -d':' -f1 | sort -u)
+
+        for file in $FILES_WITH_ISSUES; do
+            if [ -f "$file" ]; then
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo "File: $file"
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+                # Last modification
+                echo "Last modified: $(git log -1 --format='%ai' -- "$file" 2>/dev/null || echo 'Unknown')"
+                echo "Last author:   $(git log -1 --format='%an' -- "$file" 2>/dev/null || echo 'Unknown')"
+                echo "Last commit:   $(git log -1 --format='%h - %s' -- "$file" 2>/dev/null || echo 'Unknown')"
+                echo ""
+
+                # Issues in this file
+                echo "Issues in this file:"
+                grep "^$file:" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | sed 's/^/  /' || true
+                echo ""
+            fi
+        done
+
+    } > "$GIT_CONTEXT_FILE"
+
+    echo "Git context analysis complete"
+    echo ""
+}
+
+# Generate HTML report
+generate_html_report() {
+    echo -e "${BLUE}=== Phase 8: HTML Report Generation ===${NC}"
+    echo "Generating interactive HTML report..."
+    echo ""
+
+    HTML_REPORT="$REPORTS_DIR/deadcode_report_${TIMESTAMP}.html"
+
+    {
+        cat << 'HTML_HEADER'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dead Code Analysis Report</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        .container { max-width: 1400px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; margin-bottom: 10px; border-bottom: 3px solid #3498db; padding-bottom: 10px; }
+        h2 { color: #34495e; margin-top: 30px; margin-bottom: 15px; padding: 10px; background: #ecf0f1; border-left: 4px solid #3498db; }
+        h3 { color: #7f8c8d; margin-top: 20px; margin-bottom: 10px; }
+        .timestamp { color: #7f8c8d; font-size: 0.9em; margin-bottom: 20px; }
+        .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
+        .summary-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; }
+        .summary-card.high { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+        .summary-card.medium { background: linear-gradient(135deg, #fbc2eb 0%, #a6c1ee 100%); }
+        .summary-card.low { background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); }
+        .summary-card h3 { color: white; margin: 0; font-size: 0.9em; }
+        .summary-card .count { font-size: 2.5em; font-weight: bold; margin-top: 10px; }
+        .filter-bar { margin: 20px 0; padding: 15px; background: #ecf0f1; border-radius: 8px; }
+        .filter-bar input { padding: 10px; width: 300px; border: 1px solid #bdc3c7; border-radius: 4px; font-size: 14px; }
+        .filter-bar select { padding: 10px; margin-left: 10px; border: 1px solid #bdc3c7; border-radius: 4px; font-size: 14px; }
+        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+        th { background: #34495e; color: white; padding: 12px; text-align: left; cursor: pointer; user-select: none; }
+        th:hover { background: #2c3e50; }
+        td { padding: 12px; border-bottom: 1px solid #ecf0f1; }
+        tr:hover { background: #f8f9fa; }
+        .confidence { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 0.85em; font-weight: 600; }
+        .confidence.high { background: #fee; color: #c33; }
+        .confidence.medium { background: #ffe; color: #c93; }
+        .confidence.low { background: #efe; color: #3c3; }
+        .file-link { color: #3498db; text-decoration: none; font-family: monospace; }
+        .file-link:hover { text-decoration: underline; }
+        .issue-type { color: #e74c3c; font-weight: 600; }
+        .git-info { font-size: 0.85em; color: #7f8c8d; font-style: italic; }
+        pre { background: #2c3e50; color: #ecf0f1; padding: 15px; border-radius: 4px; overflow-x: auto; }
+        .action-btn { background: #3498db; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 5px; }
+        .action-btn:hover { background: #2980b9; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Dead Code Analysis Report</h1>
+        <div class="timestamp">Generated: $(date)</div>
+HTML_HEADER
+
+        # Summary cards
+        HIGH_COUNT=$(grep -c "defined but not used.*static" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)
+        HIGH_COUNT=$((HIGH_COUNT + $(grep -c "unreachable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)))
+        MEDIUM_COUNT=$(grep -c "unused variable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)
+        MEDIUM_COUNT=$((MEDIUM_COUNT + $(grep -c "redundant" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)))
+        LOW_COUNT=$(grep -c "unused parameter" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null || echo 0)
+        TOTAL=$((HIGH_COUNT + MEDIUM_COUNT + LOW_COUNT))
+
+        cat << HTML_SUMMARY
+        <div class="summary">
+            <div class="summary-card">
+                <h3>Total Issues</h3>
+                <div class="count">$TOTAL</div>
+            </div>
+            <div class="summary-card high">
+                <h3>High Confidence</h3>
+                <div class="count">$HIGH_COUNT</div>
+            </div>
+            <div class="summary-card medium">
+                <h3>Medium Confidence</h3>
+                <div class="count">$MEDIUM_COUNT</div>
+            </div>
+            <div class="summary-card low">
+                <h3>Low Confidence</h3>
+                <div class="count">$LOW_COUNT</div>
+            </div>
+        </div>
+
+        <div class="filter-bar">
+            <input type="text" id="searchInput" placeholder="🔎 Search by file, function, or issue type..." onkeyup="filterTable()">
+            <select id="confidenceFilter" onchange="filterTable()">
+                <option value="">All Confidence Levels</option>
+                <option value="high">High Confidence Only</option>
+                <option value="medium">Medium Confidence Only</option>
+                <option value="low">Low Confidence Only</option>
+            </select>
+        </div>
+
+        <h2>📋 Detailed Findings</h2>
+        <table id="issuesTable">
+            <thead>
+                <tr>
+                    <th onclick="sortTable(0)">Confidence ▼</th>
+                    <th onclick="sortTable(1)">File:Line ▼</th>
+                    <th onclick="sortTable(2)">Issue Type ▼</th>
+                    <th onclick="sortTable(3)">Description ▼</th>
+                    <th onclick="sortTable(4)">Last Modified ▼</th>
+                </tr>
+            </thead>
+            <tbody>
+HTML_SUMMARY
+
+        # Parse warnings and add to table
+        grep -E "warning:" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | while IFS= read -r line; do
+            # Parse: file:line:col: warning: message
+            if [[ "$line" =~ ^([^:]+):([0-9]+):[0-9]+:.*warning:\ (.+)$ ]]; then
+                file="${BASH_REMATCH[1]}"
+                lineno="${BASH_REMATCH[2]}"
+                message="${BASH_REMATCH[3]}"
+
+                # Determine confidence
+                confidence="low"
+                if [[ "$message" =~ "defined but not used" ]] && [[ "$message" =~ "static" ]]; then
+                    confidence="high"
+                    issue_type="Unused Static Function"
+                elif [[ "$message" =~ "unreachable" ]]; then
+                    confidence="high"
+                    issue_type="Unreachable Code"
+                elif [[ "$message" =~ "unused variable" ]]; then
+                    confidence="medium"
+                    issue_type="Unused Variable"
+                elif [[ "$message" =~ "redundant" ]]; then
+                    confidence="medium"
+                    issue_type="Redundant Declaration"
+                elif [[ "$message" =~ "unused parameter" ]]; then
+                    confidence="low"
+                    issue_type="Unused Parameter"
+                else
+                    issue_type="Other"
+                fi
+
+                # Get git info
+                git_date=$(git log -1 --format='%ai' -- "$file" 2>/dev/null | cut -d' ' -f1 || echo 'Unknown')
+
+                # Clean up message
+                clean_message=$(echo "$message" | sed "s/\[-W[^]]*\]//g" | sed 's/  */ /g')
+
+                echo "                <tr data-confidence=\"$confidence\">"
+                echo "                    <td><span class=\"confidence $confidence\">$confidence</span></td>"
+                echo "                    <td><a href=\"#\" class=\"file-link\">$file:$lineno</a></td>"
+                echo "                    <td><span class=\"issue-type\">$issue_type</span></td>"
+                echo "                    <td>$clean_message</td>"
+                echo "                    <td class=\"git-info\">$git_date</td>"
+                echo "                </tr>"
+            fi
+        done
+
+        cat << 'HTML_FOOTER'
+            </tbody>
+        </table>
+
+        <h2>📊 Raw Reports</h2>
+        <p>Detailed reports are available in the <code>reports/</code> directory:</p>
+        <ul>
+            <li><code>gcc_warnings.txt</code> - All compiler warnings</li>
+            <li><code>confidence_report.txt</code> - Categorized by confidence level</li>
+            <li><code>git_context.txt</code> - Git history context</li>
+            <li><code>static_functions_analysis.txt</code> - Unused static functions</li>
+        </ul>
+    </div>
+
+    <script>
+        function filterTable() {
+            const searchInput = document.getElementById('searchInput').value.toLowerCase();
+            const confidenceFilter = document.getElementById('confidenceFilter').value;
+            const table = document.getElementById('issuesTable');
+            const rows = table.getElementsByTagName('tr');
+
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                const text = row.textContent.toLowerCase();
+                const confidence = row.getAttribute('data-confidence');
+
+                let showRow = true;
+
+                if (searchInput && !text.includes(searchInput)) {
+                    showRow = false;
+                }
+
+                if (confidenceFilter && confidence !== confidenceFilter) {
+                    showRow = false;
+                }
+
+                row.style.display = showRow ? '' : 'none';
+            }
+        }
+
+        function sortTable(columnIndex) {
+            const table = document.getElementById('issuesTable');
+            const rows = Array.from(table.rows).slice(1);
+            const isAscending = table.rows[0].cells[columnIndex].textContent.includes('▼');
+
+            rows.sort((a, b) => {
+                const aVal = a.cells[columnIndex].textContent.trim();
+                const bVal = b.cells[columnIndex].textContent.trim();
+
+                if (isAscending) {
+                    return aVal.localeCompare(bVal);
+                } else {
+                    return bVal.localeCompare(aVal);
+                }
+            });
+
+            // Update arrow indicator
+            const headers = table.rows[0].cells;
+            for (let i = 0; i < headers.length; i++) {
+                const text = headers[i].textContent.replace(/[▼▲]/g, '').trim();
+                headers[i].textContent = text + (i === columnIndex ? (isAscending ? ' ▲' : ' ▼') : ' ▼');
+            }
+
+            // Reattach sorted rows
+            rows.forEach(row => table.tBodies[0].appendChild(row));
+        }
+    </script>
+</body>
+</html>
+HTML_FOOTER
+
+    } > "$HTML_REPORT"
+
+    echo "HTML report generated: $HTML_REPORT"
+    echo ""
+}
+
 # Generate final report
 generate_report() {
     echo -e "${BLUE}=== Final Report ===${NC}"
     echo ""
-    
+
     FINAL_REPORT="$REPORTS_DIR/deadcode_summary.txt"
-    
+
     {
         echo "Dead Code Analysis Summary"
         echo "========================="
         echo "Generated: $(date)"
         echo ""
-        
+
         echo "1. Unused Variables and Parameters"
         echo "---------------------------------"
         grep -E "unused (variable|parameter)" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | \
             head -10 || echo "None found"
         echo ""
-        
+
         echo "2. Unused Functions"
         echo "------------------"
         grep -E "defined but not used" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | \
             head -10 || echo "None found"
         echo ""
-        
+
         echo "3. Unreachable Code"
         echo "------------------"
         grep -E "unreachable" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | \
             head -10 || echo "None found"
         echo ""
-        
+
         echo "4. Redundant Declarations"
         echo "------------------------"
         grep -E "redundant" "$REPORTS_DIR/gcc_warnings.txt" 2>/dev/null | \
             head -10 || echo "None found"
         echo ""
-        
+
         if [ -f "$REPORTS_DIR/removed_sections.txt" ]; then
             echo "5. Functions Removed by Linker"
             echo "-----------------------------"
             grep "removing unused section" "$REPORTS_DIR/removed_sections.txt" 2>/dev/null | \
                 sed 's/.*\.text\.//; s/'"'"'.*//g' | sort | uniq | head -20 || echo "None found"
         fi
-        
+
     } > "$FINAL_REPORT"
-    
+
     echo -e "${GREEN}Analysis complete!${NC}"
     echo ""
     echo "Reports generated in $REPORTS_DIR/:"
-    echo "  - gcc_warnings.txt       : All compiler warnings"
-    echo "  - unused_symbols.txt     : Symbol analysis"
-    echo "  - removed_sections.txt   : Linker garbage collection"
-    [ $HAVE_CPPCHECK -eq 1 ] && echo "  - cppcheck_results.txt   : Cppcheck analysis"
-    echo "  - deadcode_summary.txt   : Summary report"
+    echo "  - gcc_warnings.txt                : All compiler warnings"
+    echo "  - gcc_warnings_detailed.txt       : Detailed warnings with full context"
+    echo "  - unused_symbols.txt              : Symbol analysis"
+    echo "  - removed_sections.txt            : Linker garbage collection"
+    [ $HAVE_CPPCHECK -eq 1 ] && echo "  - cppcheck_results.txt            : Cppcheck analysis"
+    echo "  - static_functions_analysis.txt   : Unused static functions (HIGH confidence)"
+    echo "  - confidence_report.txt           : Categorized by confidence level"
+    echo "  - git_context.txt                 : Git history context"
+    echo "  - deadcode_report_${TIMESTAMP}.html : Interactive HTML report"
+    echo "  - deadcode_summary.txt            : Summary report"
     echo ""
     echo "Key findings:"
     cat "$FINAL_REPORT" | grep -A 2 "^[0-9]\." | grep -v "^--$" || true
+    echo ""
+    echo -e "${GREEN}📊 Open the HTML report for interactive analysis:${NC}"
+    echo "   file://$PWD/$REPORTS_DIR/deadcode_report_${TIMESTAMP}.html"
 }
 
 # --- Main script ---
@@ -382,6 +824,10 @@ main() {
             run_symbol_analysis
             run_section_analysis
             run_cppcheck_analysis
+            analyze_static_functions
+            categorize_by_confidence
+            add_git_context
+            generate_html_report
             generate_report
             ;;
         "clean")
@@ -400,14 +846,20 @@ main() {
             echo "  warnings - Run only compiler warning analysis"
             echo "  symbols  - Run only symbol analysis"
             echo "  sections - Run only section-based analysis"
-            echo "  full     - Run all analyses (default)"
+            echo "  full     - Run all analyses including advanced features (default)"
             echo "  clean    - Remove analysis files"
             echo "  help     - Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0                    # Analyze all platforms"
+            echo "  $0                    # Analyze all platforms with full analysis"
             echo "  $0 -p posix          # Analyze only POSIX code"
             echo "  $0 -p classic warnings  # Only warnings for Classic Mac"
+            echo ""
+            echo "Enhanced Features (full mode only):"
+            echo "  ✓ Confidence scoring (HIGH/MEDIUM/LOW)"
+            echo "  ✓ Static function analysis"
+            echo "  ✓ Git history integration"
+            echo "  ✓ Interactive HTML report with filtering/sorting"
             echo ""
             echo "The script uses GCC to detect:"
             echo "  - Unused variables, parameters, and functions"

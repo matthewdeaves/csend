@@ -1,1 +1,1 @@
-clear && make clean && make & make -f Makefile.retro68
+clear && make clean && make && make -f Makefile.retro68.ot && make -f Makefile.retro68.mactcp
