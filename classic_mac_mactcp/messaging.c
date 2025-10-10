@@ -800,7 +800,24 @@ static void HandlePoolEntryASREvents(int poolIndex, GiveTimePtr giveTime)
         log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: TCPTerminate. Reason: %u.", poolIndex, currentEvent.termReason);
 
         /* Handle termination based on current state and reason */
-        if (entry->state == TCP_STATE_SENDING || entry->state == TCP_STATE_CONNECTED_OUT) {
+        if (entry->state == TCP_STATE_CONNECTING_OUT) {
+            /* Connection terminated during async connect (before established)
+             * Reason 2 = remote initiated disconnect/refusal (RST packet)
+             * This typically means:
+             * - Port not listening (connection refused)
+             * - Remote host not reachable
+             * - Remote host actively rejected connection */
+            if (currentEvent.termReason == 2) {
+                log_app_event("Pool[%d]: Connection to %s refused (peer not listening)",
+                              poolIndex, entry->peerIPStr);
+            } else {
+                log_app_event("Pool[%d]: Connection to %s terminated during connect (reason %u)",
+                              poolIndex, entry->peerIPStr, currentEvent.termReason);
+            }
+            entry->state = TCP_STATE_IDLE;
+            entry->connectHandle = NULL;
+            entry->sendHandle = NULL;
+        } else if (entry->state == TCP_STATE_SENDING || entry->state == TCP_STATE_CONNECTED_OUT) {
             /* Remote peer closed connection during or after send
              * Reason 2 = remote initiated disconnect (normal for one-message-per-connection protocol)
              * Per NetworkingOpenTransport.txt: Receiver closes immediately after reading message.
