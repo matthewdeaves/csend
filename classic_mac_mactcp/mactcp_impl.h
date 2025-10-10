@@ -21,6 +21,7 @@ typedef struct {
     ip_addr remoteHost;
     tcp_port localPort;
     tcp_port remotePort;
+    unsigned short connectionState;  /* 0=Closed, 2=Listen, 8=Established, 10-20=Closing */
     Boolean isConnected;
     Boolean isListening;
 } NetworkTCPInfo;

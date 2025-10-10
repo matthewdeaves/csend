@@ -394,8 +394,14 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
     /* Allocate receive buffer for listen stream using non-relocatable memory
      * Per MacTCP Programmer's Guide p.2832: "The receive buffer area passes to TCP
      * on TCPCreate and cannot be modified or relocated until TCPRelease is called."
-     * We use NewPtrSysClear to allocate from system heap (non-relocatable). */
-    gTCPListenRcvBuffer = NewPtrSysClear(gTCPStreamRcvBufferSize);
+     * Per MacTCP Programmer's Guide p.2743-2744: "The buffer memory can be allocated
+     * off the application heap instead of the system heap, which is very limited."
+     * Mac SE build uses application heap, standard build uses system heap. */
+#if USE_APPLICATION_HEAP
+    gTCPListenRcvBuffer = NewPtrClear(gTCPStreamRcvBufferSize);  /* Application heap for Mac SE */
+#else
+    gTCPListenRcvBuffer = NewPtrSysClear(gTCPStreamRcvBufferSize);  /* System heap for standard build */
+#endif
     if (gTCPListenRcvBuffer == NULL) {
         log_app_event("Fatal Error: Could not allocate TCP listen stream receive buffer (%lu bytes).",
                       gTCPStreamRcvBufferSize);
@@ -423,8 +429,13 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
 
     for (i = 0; i < TCP_SEND_STREAM_POOL_SIZE; i++) {
         /* Allocate receive buffer for this pool entry using non-relocatable memory
-         * Per MacTCP Programmer's Guide p.2832: Buffer cannot be relocated during stream lifetime. */
-        gSendStreamPool[i].rcvBuffer = NewPtrSysClear(gTCPStreamRcvBufferSize);
+         * Per MacTCP Programmer's Guide p.2832: Buffer cannot be relocated during stream lifetime.
+         * Mac SE build uses application heap, standard build uses system heap. */
+#if USE_APPLICATION_HEAP
+        gSendStreamPool[i].rcvBuffer = NewPtrClear(gTCPStreamRcvBufferSize);  /* Application heap for Mac SE */
+#else
+        gSendStreamPool[i].rcvBuffer = NewPtrSysClear(gTCPStreamRcvBufferSize);  /* System heap for standard build */
+#endif
         if (gSendStreamPool[i].rcvBuffer == NULL) {
             log_app_event("Fatal Error: Could not allocate pool[%d] receive buffer (%lu bytes).", i, gTCPStreamRcvBufferSize);
 
@@ -872,17 +883,45 @@ static void ProcessPoolEntryStateMachine(int poolIndex, GiveTimePtr giveTime)
                         entry->connectHandle = NULL;
                         entry->sendHandle = NULL;
                     } else {
-                        log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Attempting graceful close...", poolIndex);
-                        entry->state = TCP_STATE_CLOSING_GRACEFUL;
-                        err = MacTCPImpl_TCPClose(entry->stream, TCP_CLOSE_ULP_TIMEOUT_S, giveTime);
-                        if (err != noErr) {
-                            log_warning_cat(LOG_CAT_MESSAGING, "Pool[%d]: Graceful close failed (%d), using abort", poolIndex, err);
+                        /* Check connection state before attempting graceful close
+                         * Per MacTCP Programmer's Guide p.5070: connectionState values:
+                         * 0=Closed, 8=Established, 10-20=various closing states
+                         * Error -23008 (connectionDoesntExist) occurs when state=0 (already closed)
+                         * Only attempt TCPClose if connection still active (state >= 8) */
+                        NetworkTCPInfo tcpInfo;
+                        OSErr statusErr = MacTCPImpl_TCPStatus(entry->stream, &tcpInfo);
+
+                        if (statusErr != noErr || tcpInfo.connectionState == 0) {
+                            /* Connection already closed or status failed - just abort to clean up */
+                            log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Connection already closed (state %u) or status failed (%d), using abort",
+                                          poolIndex, tcpInfo.connectionState, statusErr);
+                            MacTCPImpl_TCPAbort(entry->stream);
+                            entry->state = TCP_STATE_IDLE;
+                            entry->connectHandle = NULL;
+                            entry->sendHandle = NULL;
+                        } else if (tcpInfo.connectionState >= 8) {
+                            /* Connection still active - attempt graceful close */
+                            log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Connection active (state %u), attempting graceful close...",
+                                          poolIndex, tcpInfo.connectionState);
+                            entry->state = TCP_STATE_CLOSING_GRACEFUL;
+                            err = MacTCPImpl_TCPClose(entry->stream, TCP_CLOSE_ULP_TIMEOUT_S, giveTime);
+                            if (err != noErr) {
+                                log_warning_cat(LOG_CAT_MESSAGING, "Pool[%d]: Graceful close failed (%d), using abort", poolIndex, err);
+                                MacTCPImpl_TCPAbort(entry->stream);
+                                entry->state = TCP_STATE_IDLE;
+                                entry->connectHandle = NULL;
+                                entry->sendHandle = NULL;
+                            }
+                            /* Don't set IDLE here - wait for close to complete or ASR event */
+                        } else {
+                            /* Connection in transitional state (2=Listen, 4-6=connecting) - just abort */
+                            log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Connection in transitional state (%u), using abort",
+                                          poolIndex, tcpInfo.connectionState);
                             MacTCPImpl_TCPAbort(entry->stream);
                             entry->state = TCP_STATE_IDLE;
                             entry->connectHandle = NULL;
                             entry->sendHandle = NULL;
                         }
-                        /* Don't set IDLE here - wait for close to complete or ASR event */
                     }
                 } else {
                     log_app_event("Pool[%d]: Send to %s failed: %d",

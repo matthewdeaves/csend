@@ -818,6 +818,7 @@ OSErr MacTCPImpl_TCPStatus(StreamPtr streamRef, NetworkTCPInfo *info)
         info->localPort = pb.csParam.status.localPort;
         info->remoteHost = pb.csParam.status.remoteHost;
         info->remotePort = pb.csParam.status.remotePort;
+        info->connectionState = pb.csParam.status.connectionState;
         info->isConnected = (pb.csParam.status.connectionState >= 8); /* established */
         info->isListening = (pb.csParam.status.connectionState == 2); /* listening */
     }

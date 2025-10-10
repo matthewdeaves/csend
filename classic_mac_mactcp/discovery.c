@@ -120,8 +120,15 @@ OSErr InitUDPDiscoveryEndpoint(short macTCPRefNum)
     /* Allocate receive buffer using non-relocatable memory
      * Per MacTCP Programmer's Guide p.2789: "The receive buffer area belongs to UDP
      * while the stream is open and cannot be modified or relocated until UDPRelease
-     * is called." We use NewPtrSysClear to allocate from system heap (non-relocatable). */
-    gUDPRecvBuffer = NewPtrSysClear(kMinUDPBufSize);
+     * is called."
+     * Per MacTCP Programmer's Guide p.1045-1046: "The buffer memory can be allocated
+     * off the application heap instead of the system heap, which is very limited."
+     * Mac SE build uses application heap, standard build uses system heap. */
+#if USE_APPLICATION_HEAP
+    gUDPRecvBuffer = NewPtrClear(kMinUDPBufSize);  /* Application heap for Mac SE */
+#else
+    gUDPRecvBuffer = NewPtrSysClear(kMinUDPBufSize);  /* System heap for standard build */
+#endif
     if (gUDPRecvBuffer == NULL) {
         log_app_event("Fatal Error: Could not allocate UDP receive buffer (%ld bytes).", (long)kMinUDPBufSize);
         return memFullErr;

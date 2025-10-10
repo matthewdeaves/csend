@@ -8,6 +8,7 @@
 #include <MacTCP.h>
 #include "common_defs.h"
 #include "mactcp_impl.h"  /* For MacTCPAsyncHandle and NetworkTCPInfo types */
+#include "network_init.h" /* For TCP_SEND_STREAM_POOL_SIZE and USE_APPLICATION_HEAP */
 
 typedef void (*GiveTimePtr)(void);
 
@@ -33,10 +34,9 @@ typedef enum {
 #define MAX_QUEUED_MESSAGES 64  /* Increased from 10 to handle burst sends: 4 rounds × 12 msg/round = 48 messages */
 
 /* MacTCP Connection Pool Configuration
+ * TCP_SEND_STREAM_POOL_SIZE is defined in network_init.h (4 for standard, 2 for Mac SE)
  * Based on MacTCP Programmer's Guide Chapter 4: "Using Asynchronous Routines"
- * Using pool of 4 concurrent send streams to eliminate single-stream bottleneck
  */
-#define TCP_SEND_STREAM_POOL_SIZE 4
 
 /* Connection timeout for stale connections (30 seconds at 60Hz ticks) */
 #define TCP_STREAM_CONNECTION_TIMEOUT_TICKS (30 * 60)
