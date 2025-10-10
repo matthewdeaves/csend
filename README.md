@@ -7,6 +7,14 @@
 
 **CSend** is a cross-platform peer-to-peer chat application written in C, supporting both modern POSIX systems and Classic Macintosh (System 7.x). It demonstrates network programming across different eras of computing, from modern multi-threaded applications to single-threaded GUI applications.
 
+## 🆕 Recent Updates
+
+- **Dual Network Stack Support**: Full implementations for both MacTCP and OpenTransport on Classic Mac
+- **Automated Testing**: Built-in test feature for reliable cross-platform validation
+- **Shared UI Components**: Modular dialog components shared between MacTCP and OpenTransport builds
+- **Enhanced Logging**: Platform-specific log files with categorized output filtering
+- **Memory Optimization Experiments**: Mac SE build target (work in progress)
+
 ## 🎥 Demo Videos
 
 - [Latest Demo](https://m.youtube.com/watch?v=YHCS2WfRO2Y) - Current functionality showcase
@@ -24,10 +32,11 @@
 
 ### 🖱️ **Classic Mac Version** (System 7.x)
 - **Native GUI**: True Classic Mac interface using Dialog Manager
-- **MacTCP Networking**: Dual TCP streams for robust messaging
+- **Dual Network Stacks**: Full MacTCP and OpenTransport implementations
+- **Multiple Build Targets**: 68K (MacTCP & OpenTransport), Mac SE optimized
 - **Retro68 Compatible**: Builds with modern cross-compiler
-- **Network Abstraction**: Ready for future OpenTransport support
 - **Event-driven Architecture**: Single-threaded with asynchronous operations
+- **Automated Testing**: Built-in "Perform Test" feature accessible from File menu
 
 ### 🔧 **Shared Core**
 - **Unified Protocol**: Custom message format for cross-platform compatibility
@@ -41,22 +50,33 @@ The project uses a **shared core design** with platform-specific implementations
 
 ```
 csend/
-├── shared/          # Platform-independent core logic
-│   ├── protocol.c   # Message format and parsing
-│   ├── peer.c       # Peer list management
-│   ├── discovery.c  # UDP peer discovery logic
-│   ├── messaging.c  # TCP message handling
-│   └── logging.c    # Centralized logging system
-├── posix/           # POSIX implementation
-│   ├── main.c       # Multi-threaded event loop
-│   ├── ui_terminal.c # Terminal interface
-│   ├── commands.c   # Command processing
-│   └── network.c    # POSIX networking
-└── classic_mac/     # Classic Mac implementation
-    ├── main.c       # Event-driven GUI loop
-    ├── dialog.c     # Dialog Manager interface
-    ├── mactcp_impl.c # MacTCP networking
-    └── network_abstraction.c # Network layer abstraction
+├── shared/              # Platform-independent core logic
+│   ├── protocol.c       # Message format and parsing
+│   ├── peer.c           # Peer list management
+│   ├── discovery.c      # UDP peer discovery logic
+│   ├── messaging.c      # TCP message handling
+│   ├── logging.c        # Centralized logging system
+│   ├── test.c           # Cross-platform automated test core
+│   └── classic_mac/     # Shared Classic Mac UI components
+│       └── ui/          # Dialog input, messages, and peer list
+├── posix/               # POSIX implementation
+│   ├── main.c           # Multi-threaded event loop
+│   ├── ui_terminal.c    # Terminal interface
+│   ├── ui_terminal_machine.c # JSON machine mode interface
+│   ├── commands.c       # Command processing
+│   ├── network.c        # POSIX networking
+│   └── test.c           # POSIX test adapter
+├── classic_mac_mactcp/  # Classic Mac MacTCP (68K)
+│   ├── main.c           # Event-driven GUI loop
+│   ├── dialog.c         # Dialog Manager interface
+│   ├── mactcp_impl.c    # MacTCP networking implementation
+│   ├── tcp_state_handlers.c # TCP connection state machine
+│   └── test.c           # MacTCP test adapter
+└── classic_mac_ot/      # Classic Mac OpenTransport (68K)
+    ├── main.c           # Event-driven GUI loop
+    ├── dialog.c         # Dialog Manager interface
+    ├── opentransport_impl.c # OpenTransport networking
+    └── test.c           # OpenTransport test adapter
 ```
 
 ### Protocol Design
@@ -107,19 +127,25 @@ scripts/run_machine_mode.sh --chatbot
 - Retro68 cross-compiler ([setup guide](https://github.com/autc04/Retro68))
 - Classic Mac OS environment ([QemuMac](https://github.com/matthewdeaves/QemuMac) recommended)
 
-#### Build
+#### Build Options
 ```bash
 # Quick setup for Retro68
 scripts/setup_retro68.sh
 
-# Build Classic Mac version
-make -f Makefile.retro68
+# Build Classic Mac MacTCP version (68K, System 7)
+make -f Makefile.retro68.mactcp
+
+# Build Classic Mac OpenTransport version (68K, System 7.5+)
+make -f Makefile.retro68.ot
+
+# Build Mac SE optimized version (68K, WIP - currently requires >4MB RAM)
+make -f Makefile.retro68.mactcp.se  # Note: Not yet working on 4MB Mac SE
 ```
 
-**Output files:**
-- `build/classic_mac/csend-mac.APPL` - Application bundle
-- `build/classic_mac/csend-mac.bin` - MacBinary format (most portable)
-- `build/classic_mac/csend-mac.dsk` - Floppy disk image
+**Output files** (example for MacTCP):
+- `build/classic_mac_mactcp/csend-mac.APPL` - Application bundle
+- `build/classic_mac_mactcp/csend-mac.bin` - MacBinary format (most portable)
+- `build/classic_mac_mactcp/csend-mac.dsk` - Floppy disk image
 
 #### Run on Classic Mac
 1. Transfer `csend-mac.bin` to your Classic Mac environment
@@ -144,6 +170,7 @@ make -f Makefile.retro68
 - **Peer List**: Click to select message recipient
 - **Broadcast Checkbox**: Send to all peers when checked
 - **Debug Checkbox**: Show debug messages
+- **File Menu → Perform Test**: Run automated test sequence (broadcasts + direct messages)
 - **Close Box**: Quit application (sends quit notifications)
 
 ### Machine Mode API
@@ -212,18 +239,25 @@ scripts/filter_logs.sh csend_posix.log NETWORK DISCOVERY
 # POSIX build
 make clean && make
 
-# Classic Mac build (requires Retro68)
-make -f Makefile.retro68
+# Classic Mac MacTCP build (requires Retro68)
+make -f Makefile.retro68.mactcp
+
+# Classic Mac OpenTransport build (requires Retro68)
+make -f Makefile.retro68.ot
 
 # Docker multi-peer test
 scripts/docker.sh start
 ```
 
 ### Testing
+- **Automated Testing**: Built-in `/test` command (POSIX) or "Perform Test" menu item (Classic Mac)
 - **Unit Testing**: No formal framework (contributions welcome)
 - **Integration Testing**: Use Docker setup for multi-peer scenarios
-- **Machine Mode Testing**: `tools/test_machine_mode.py` for automated testing
-- **Logging**: Enable debug mode and check log files
+- **Machine Mode Testing**: `tools/test_machine_mode.py` for automated JSON API testing
+- **Logging**: Enable debug mode and check platform-specific log files:
+  - POSIX: `csend_posix.log`
+  - MacTCP: `csend_mac.log`
+  - OpenTransport: `csend_classic_mac_ot_ppc.log`
 
 ### Code Style
 - **K&R style** with 4-space indentation
@@ -245,25 +279,30 @@ scripts/docker.sh start
 
 ```
 csend/
-├── posix/              # POSIX-specific source code
-├── classic_mac/        # Classic Mac source code
-├── shared/             # Platform-independent core logic
-├── MPW_resources/      # Classic Mac GUI resources
-├── tools/              # Python tools and client libraries
-├── scripts/            # Shell scripts for building and testing
-├── docs/               # Documentation and images
-├── resources/          # External resources (Books, MPW interfaces)
-├── logs/               # Log files (generated)
-├── reports/            # Analysis reports (generated)
-├── build/              # Compiled binaries (generated)
-├── doxygen_docs/       # Generated documentation (if built)
-├── .finf/              # SheepShaver metadata (preserves Mac resource forks)
-├── Makefile           # POSIX build configuration
-├── Makefile.retro68   # Classic Mac build configuration
-├── Dockerfile         # Docker container setup
-├── docker-compose.yml # Multi-container orchestration
-├── README.md          # This file
-└── CLAUDE.md          # AI assistant development guidelines
+├── posix/                  # POSIX-specific source code
+├── classic_mac_mactcp/     # Classic Mac MacTCP implementation (68K)
+├── classic_mac_ot/         # Classic Mac OpenTransport implementation (68K)
+├── shared/                 # Platform-independent core logic
+│   └── classic_mac/        # Shared Classic Mac UI components
+├── MPW_resources/          # Classic Mac GUI resources
+├── tools/                  # Python tools and client libraries
+├── scripts/                # Shell scripts for building and testing
+├── docs/                   # Documentation and images
+├── resources/              # External resources (Books, MPW interfaces)
+├── logs/                   # Log files (generated)
+├── reports/                # Analysis reports (generated)
+├── build/                  # Compiled binaries (generated)
+├── doxygen_docs/           # Generated documentation (if built)
+├── .finf/                  # SheepShaver metadata (preserves Mac resource forks)
+├── Makefile                # POSIX build configuration
+├── Makefile.retro68.mactcp # Classic Mac MacTCP build (68K)
+├── Makefile.retro68.ot     # Classic Mac OpenTransport build (68K)
+├── Makefile.retro68.mactcp.se # Mac SE build (WIP)
+├── Dockerfile              # Docker container setup
+├── docker-compose.yml      # Multi-container orchestration
+├── chatbot_config.json     # Claude chatbot configuration
+├── README.md               # This file
+└── CLAUDE.md               # AI assistant development guidelines
 ```
 
 ## 🌟 Advanced Features
