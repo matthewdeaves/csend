@@ -6,9 +6,6 @@
 #include "messaging.h"
 #include <Timer.h>
 
-/* External function from messaging.c - already exists! */
-extern OSErr SendMessageToPeer(const char *targetIP, const char *message, const char *msg_type);
-
 /* Delay function for Classic Mac */
 static void mac_delay_ms(int milliseconds, void *context)
 {

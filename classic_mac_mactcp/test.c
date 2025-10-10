@@ -6,10 +6,6 @@
 #include "messaging.h"
 #include <Timer.h>
 
-/* External function from dialog.c via messaging path - already exists! */
-/* MacTCP uses MacTCP_QueueMessage for ALL message sending */
-extern OSErr MacTCP_QueueMessage(const char *peerIPStr, const char *message_content, const char *msg_type);
-
 /* Delay function for Classic Mac */
 static void mac_delay_ms(int milliseconds, void *context)
 {

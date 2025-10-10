@@ -20,6 +20,16 @@
 #include <stddef.h>
 #include <OSUtils.h>
 
+/* UDP send queue - Per MacTCP Programmer's Guide p.2798: "No way to abort UDPWrite"
+ * Messages must be queued when send is busy rather than dropped */
+#define MAX_UDP_SEND_QUEUE 8
+typedef struct {
+    char message[BUFFER_SIZE];
+    ip_addr destIP;
+    udp_port destPort;
+    Boolean inUse;
+} UDPQueuedMessage;
+
 /* Forward declarations for internal functions */
 static OSErr StartAsyncUDPRead(void);
 static OSErr ReturnUDPBufferAsync(Ptr dataPtr, unsigned short bufferSize);
@@ -38,16 +48,6 @@ static unsigned long gLastBroadcastTimeTicks = 0;
 /* Buffers for messages */
 static char gBroadcastBuffer[BUFFER_SIZE];
 static char gResponseBuffer[BUFFER_SIZE];
-
-/* UDP send queue - Per MacTCP Programmer's Guide p.2798: "No way to abort UDPWrite"
- * Messages must be queued when send is busy rather than dropped */
-#define MAX_UDP_SEND_QUEUE 8
-typedef struct {
-    char message[BUFFER_SIZE];
-    ip_addr destIP;
-    udp_port destPort;
-    Boolean inUse;
-} UDPQueuedMessage;
 
 static UDPQueuedMessage gUDPSendQueue[MAX_UDP_SEND_QUEUE];
 static int gUDPSendQueueHead = 0;
