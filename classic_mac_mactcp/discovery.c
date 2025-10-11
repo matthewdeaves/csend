@@ -1032,9 +1032,34 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
     ProcessUDPSendQueue();
 }
 
-/* Enqueue a UDP send when send is busy */
+/*
+ * ENQUEUE UDP SEND OPERATION
+ *
+ * Adds a message to the send queue when the UDP send operation is busy.
+ * Uses optimized memory operations for maximum performance on 68K hardware.
+ *
+ * OPTIMIZATION NOTES:
+ * - BlockMoveData is faster than strncpy on 68K/PowerPC (uses optimized routines)
+ * - Direct slot pointer eliminates redundant array indexing
+ * - Simple assignments for fixed-size fields (ip_addr, udp_port)
+ *
+ * QUEUE OVERFLOW HANDLING:
+ * If queue is full, message is dropped with error logging. This is
+ * acceptable for discovery protocol (best-effort delivery).
+ *
+ * PARAMETERS:
+ * - message: Formatted message string to queue
+ * - destIP: Destination IP address (network byte order)
+ * - destPort: Destination UDP port
+ *
+ * RETURNS:
+ * - true: Message successfully queued
+ * - false: Queue full, message dropped
+ */
 static Boolean EnqueueUDPSend(const char *message, ip_addr destIP, udp_port destPort)
 {
+    UDPQueuedMessage *slot;
+    size_t msgLen;
     int nextTail = (gUDPSendQueueTail + 1) % MAX_UDP_SEND_QUEUE;
 
     if (nextTail == gUDPSendQueueHead) {
@@ -1042,11 +1067,23 @@ static Boolean EnqueueUDPSend(const char *message, ip_addr destIP, udp_port dest
         return false;
     }
 
-    strncpy(gUDPSendQueue[gUDPSendQueueTail].message, message, BUFFER_SIZE - 1);
-    gUDPSendQueue[gUDPSendQueueTail].message[BUFFER_SIZE - 1] = '\0';
-    gUDPSendQueue[gUDPSendQueueTail].destIP = destIP;
-    gUDPSendQueue[gUDPSendQueueTail].destPort = destPort;
-    gUDPSendQueue[gUDPSendQueueTail].inUse = true;
+    /* Get pointer to queue slot - eliminates redundant indexing */
+    slot = &gUDPSendQueue[gUDPSendQueueTail];
+
+    /* Use BlockMoveData for message copy - faster than strncpy on 68K/PowerPC
+     * BlockMoveData uses optimized assembly routines in ROM */
+    msgLen = strlen(message);
+    if (msgLen >= BUFFER_SIZE) {
+        msgLen = BUFFER_SIZE - 1;  /* Ensure null termination space */
+    }
+    BlockMoveData(message, slot->message, msgLen);
+    slot->message[msgLen] = '\0';  /* Null terminate */
+
+    /* Simple assignments for fixed-size fields */
+    slot->destIP = destIP;
+    slot->destPort = destPort;
+    slot->inUse = true;
+
     gUDPSendQueueTail = nextTail;
 
     log_debug_cat(LOG_CAT_DISCOVERY, "EnqueueUDPSend: Queued message to 0x%lX:%u", (unsigned long)destIP, destPort);
