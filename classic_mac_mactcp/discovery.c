@@ -907,32 +907,20 @@ void PollUDPListener(short macTCPRefNum, ip_addr myLocalIP)
                     log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Ignored UDP packet from self (%s).", selfIPStr);
                 }
 
-                /* CRITICAL FIX: Return the buffer asynchronously with retry handling
+                /* Return the buffer asynchronously
                  * Per MacTCP Programmer's Guide p.1247: Must return buffer after successful UDPRead */
                 OSErr returnErr = ReturnUDPBufferAsync(dataPtr, kMinUDPBufSize);
                 if (returnErr == 1) {
-                    /* Already pending - wait for it to complete then retry */
-                    log_warning_cat(LOG_CAT_DISCOVERY, "Buffer return already pending - waiting for completion");
-                    int retries = 0;
-                    while (gUDPReturnHandle != NULL && retries < 120) {  /* Wait up to 2 seconds */
-                        OSErr status = MacTCPImpl_UDPCheckReturnStatus(gUDPReturnHandle);
-                        if (status != 1) {
-                            gUDPReturnHandle = NULL;
-                            break;
-                        }
-                        YieldTimeToSystem();
-                        retries++;
-                    }
-                    /* Retry buffer return */
-                    returnErr = ReturnUDPBufferAsync(dataPtr, kMinUDPBufSize);
-                }
-
-                if (returnErr != noErr && returnErr != 1) {
+                    /* Buffer return already pending - defer to next state machine cycle
+                     * The buffer return operation will complete and then StartAsyncUDPRead()
+                     * will be called automatically in the next iteration (see line 966-968).
+                     * This maintains async operation benefits without blocking. */
+                    log_debug_cat(LOG_CAT_DISCOVERY, "Buffer return pending, will retry next cycle");
+                    return;  /* Exit early - retry in next PollUDPListener() call */
+                } else if (returnErr != noErr) {
                     log_error_cat(LOG_CAT_DISCOVERY, "CRITICAL Error: Failed to initiate async buffer return. Error: %d", returnErr);
-                } else if (returnErr == noErr) {
-                    log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Initiated return for buffer 0x%lX.", (unsigned long)dataPtr);
                 } else {
-                    log_error_cat(LOG_CAT_DISCOVERY, "CRITICAL: Buffer return still pending after retry - buffer may leak!");
+                    log_debug_cat(LOG_CAT_DISCOVERY, "PollUDPListener: Initiated return for buffer 0x%lX.", (unsigned long)dataPtr);
                 }
             } else {
                 log_debug_cat(LOG_CAT_DISCOVERY, "DEBUG: Async UDP read returned noErr but 0 bytes. Returning buffer.");
