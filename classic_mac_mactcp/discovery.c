@@ -139,6 +139,7 @@ typedef struct {
 } UDPQueuedMessage;
 
 /* Forward declarations for internal functions */
+static OSErr ValidateUDPOperationState(Boolean requireIdleSend);
 static OSErr StartAsyncUDPRead(void);
 static OSErr ReturnUDPBufferAsync(Ptr dataPtr, unsigned short bufferSize);
 static Boolean EnqueueUDPSend(const char *message, ip_addr destIP, udp_port destPort);
@@ -736,6 +737,56 @@ OSErr BroadcastQuitMessage(short macTCPRefNum, const char *myUsername, const cha
 }
 
 /*
+ * VALIDATE UDP OPERATION STATE
+ *
+ * Centralized validation of UDP endpoint state before starting async operations.
+ * This eliminates duplicate validation code across multiple functions and provides
+ * a single source of truth for operation readiness.
+ *
+ * VALIDATION CHECKS:
+ * 1. Endpoint must be valid (not NULL)
+ * 2. No read operation currently active (gUDPReadHandle == NULL)
+ * 3. No buffer return operation active (gUDPReturnHandle == NULL)
+ * 4. Optionally: No send operation active (if requireIdleSend == true)
+ *
+ * PARAMETERS:
+ * - requireIdleSend: If true, also checks that no send operation is active
+ *
+ * RETURNS:
+ * - noErr: All validations passed, safe to start operation
+ * - invalidStreamPtr: Endpoint not initialized
+ * - 1: Operation already in progress (standard MacTCP busy code)
+ *
+ * USAGE:
+ * Call this before starting any async UDP operation to ensure endpoint
+ * is in a valid state and no conflicting operations are active.
+ */
+static OSErr ValidateUDPOperationState(Boolean requireIdleSend)
+{
+    /* Endpoint must be valid */
+    if (gUDPEndpoint == NULL) {
+        return invalidStreamPtr;
+    }
+
+    /* Check for active read operation */
+    if (gUDPReadHandle != NULL) {
+        return 1;  /* Operation already pending */
+    }
+
+    /* Check for active buffer return operation */
+    if (gUDPReturnHandle != NULL) {
+        return 1;  /* Buffer return pending */
+    }
+
+    /* Optionally check for active send operation */
+    if (requireIdleSend && gUDPSendHandle != NULL) {
+        return 1;  /* Send operation pending */
+    }
+
+    return noErr;  /* All validations passed */
+}
+
+/*
  * START ASYNCHRONOUS UDP READ OPERATION
  *
  * Initiates an async UDP receive operation to listen for discovery messages
@@ -756,11 +807,7 @@ OSErr BroadcastQuitMessage(short macTCPRefNum, const char *myUsername, const cha
  * Attempting to start a read while one is pending will fail.
  *
  * STATE VALIDATION:
- * Multiple conditions must be checked before starting a read:
- * - Endpoint must be valid and open
- * - No read operation currently pending
- * - No buffer return operation pending (blocks new reads)
- * - Receive buffer must be valid
+ * Uses ValidateUDPOperationState() for centralized state checking.
  *
  * RETURNS:
  * - noErr: Async read operation started successfully
@@ -773,25 +820,15 @@ static OSErr StartAsyncUDPRead(void)
 {
     OSErr err;
 
-    /* Validate endpoint state */
-    if (gUDPEndpoint == NULL) return invalidStreamPtr;
-
-    /* Check for conflicting read operation */
-    if (gUDPReadHandle != NULL) {
-        log_debug_cat(LOG_CAT_DISCOVERY, "StartAsyncUDPRead: UDP read already pending. Ignoring request.");
-        return 1;  /* Operation already active */
-    }
-
-    /*
-     * BUFFER RETURN CONFLICT CHECK
-     *
-     * MacTCP requires that buffer return operations complete before new
-     * read operations can be started. This prevents conflicts over buffer
-     * ownership between the application and MacTCP.
-     */
-    if (gUDPReturnHandle != NULL) {
-        log_debug_cat(LOG_CAT_DISCOVERY, "StartAsyncUDPRead: Cannot start new read, buffer return is pending. Try later.");
-        return 1;  /* Wait for buffer return to complete */
+    /* Validate endpoint and operation state */
+    err = ValidateUDPOperationState(false);  /* Don't require idle send */
+    if (err != noErr) {
+        if (err == invalidStreamPtr) {
+            log_error_cat(LOG_CAT_DISCOVERY, "StartAsyncUDPRead: Invalid endpoint");
+        } else {
+            log_debug_cat(LOG_CAT_DISCOVERY, "StartAsyncUDPRead: Operation already pending");
+        }
+        return err;
     }
 
     /* Validate receive buffer */
@@ -816,16 +853,22 @@ static OSErr ReturnUDPBufferAsync(Ptr dataPtr, unsigned short bufferSize)
 {
     OSErr err;
 
-    if (gUDPEndpoint == NULL) return invalidStreamPtr;
-
-    if (gUDPReturnHandle != NULL) {
-        log_debug_cat(LOG_CAT_DISCOVERY, "ReturnUDPBufferAsync: Buffer return already pending. Ignoring request.");
-        return 1;
-    }
-
+    /* Validate buffer pointer first */
     if (dataPtr == NULL) {
         log_error_cat(LOG_CAT_DISCOVERY, "Error (ReturnUDPBufferAsync): dataPtr is NULL. Cannot return.");
         return invalidBufPtr;
+    }
+
+    /* Validate endpoint - only check endpoint, not other operations
+     * Buffer return can proceed even if send is active */
+    if (gUDPEndpoint == NULL) {
+        return invalidStreamPtr;
+    }
+
+    /* Check if buffer return already pending */
+    if (gUDPReturnHandle != NULL) {
+        log_debug_cat(LOG_CAT_DISCOVERY, "ReturnUDPBufferAsync: Buffer return already pending. Ignoring request.");
+        return 1;
     }
 
     /* Return buffer using MacTCPImpl */
