@@ -4,17 +4,6 @@
 #include "../shared/peer_wrapper.h"
 #include "../shared/protocol.h"
 #include "messaging.h"
-#include <Timer.h>
-
-/* Delay function for Classic Mac */
-static void mac_delay_ms(int milliseconds, void *context)
-{
-    unsigned long finalTicks;
-    (void)context;
-
-    /* Convert milliseconds to ticks (1 tick = ~16.67ms) */
-    Delay((milliseconds * 60) / 1000, &finalTicks);
-}
 
 /* Broadcast callback - REUSES EXISTING APPLICATION CODE */
 static int test_send_broadcast(const char *message, void *context)
@@ -50,9 +39,9 @@ static int test_get_peer_by_index(int index, peer_t *out_peer, void *context)
 void PerformAutomatedTest(void)
 {
     test_config_t config;
-    test_callbacks_t callbacks;
+    static test_callbacks_t callbacks; /* Use static to ensure lifetime */
 
-    log_app_event("PerformAutomatedTest: Starting automated test");
+    log_app_event("PerformAutomatedTest: Kicking off asynchronous test...");
 
     /* Get default config */
     config = get_default_test_config();
@@ -62,11 +51,8 @@ void PerformAutomatedTest(void)
     callbacks.send_direct = test_send_direct;
     callbacks.get_peer_count = test_get_peer_count;
     callbacks.get_peer_by_index = test_get_peer_by_index;
-    callbacks.delay_func = mac_delay_ms;
     callbacks.context = NULL;
 
-    /* Run test */
-    run_automated_test(&config, &callbacks);
-
-    log_app_event("PerformAutomatedTest: Test completed");
+    /* Run test asynchronously */
+    start_automated_test(&config, &callbacks);
 }

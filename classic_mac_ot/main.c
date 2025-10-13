@@ -267,7 +267,11 @@ void HandleMenuChoice(long menuResult)
     case kFileMenuID:
         if (menuItem == kPerformTestItem) {
             log_app_event("HandleMenuChoice: File->Perform Test selected");
-            PerformAutomatedTest();
+            if (!is_automated_test_running()) {
+                PerformAutomatedTest();
+            } else {
+                log_app_event("Test is already in progress.");
+            }
         } else if (menuItem == kQuitItem) {
             log_app_event("HandleMenuChoice: File->Quit selected by user. Setting gDone=true.");
             gDone = true;
@@ -407,6 +411,9 @@ void MainEventLoop(void)
 void HandleIdleTasks(void)
 {
     unsigned long currentTimeTicks = TickCount();
+
+    /* Process one step of the automated test if it's running */
+    process_automated_test();
 
     /* Poll OpenTransport events - this is the key integration point */
     PollOTEvents();

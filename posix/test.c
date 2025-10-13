@@ -6,14 +6,6 @@
 #include <unistd.h>
 #include <string.h>
 
-/* Delay function for POSIX */
-static void posix_delay_ms(int milliseconds, void *context)
-{
-    (void)context;
-    /* usleep takes microseconds */
-    usleep(milliseconds * 1000);
-}
-
 /* Broadcast callback - REUSES EXISTING APPLICATION CODE */
 static int test_send_broadcast(const char *message, void *context)
 {
@@ -86,11 +78,18 @@ void run_posix_automated_test(app_state_t *state)
     callbacks.send_direct = test_send_direct;
     callbacks.get_peer_count = test_get_peer_count;
     callbacks.get_peer_by_index = test_get_peer_by_index;
-    callbacks.delay_func = posix_delay_ms;
     callbacks.context = state;
 
-    /* Run test */
-    run_automated_test(&config, &callbacks);
+    /* Start the asynchronous test */
+    if (start_automated_test(&config, &callbacks) != 0) {
+        return; /* Test already running */
+    }
+
+    /* Block and process the test until it's done */
+    while (is_automated_test_running()) {
+        process_automated_test();
+        usleep(10000); /* Sleep for 10ms to prevent busy-waiting */
+    }
 
     log_app_event("========================================");
     log_app_event("Automated test completed!");
