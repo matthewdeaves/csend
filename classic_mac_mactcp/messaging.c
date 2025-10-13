@@ -988,6 +988,7 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
         gSendStreamPool[i].sendStartTime = 0;                /* No send timing */
         gSendStreamPool[i].connectHandle = NULL;             /* No async operation */
         gSendStreamPool[i].sendHandle = NULL;                /* No send operation */
+        gSendStreamPool[i].closeHandle = NULL;               /* No close operation */
         gSendStreamPool[i].poolIndex = i;                    /* Self-reference for debugging */
         memset((void *)&gSendStreamPool[i].asrEvent, 0, sizeof(ASR_Event_Info)); /* Clear ASR events */
 
@@ -1379,6 +1380,7 @@ static void HandlePoolEntryASREvents(int poolIndex, GiveTimePtr giveTime)
             entry->state = TCP_STATE_IDLE;
             entry->connectHandle = NULL;
             entry->sendHandle = NULL;
+            entry->closeHandle = NULL;
         } else if (entry->state == TCP_STATE_SENDING || entry->state == TCP_STATE_CONNECTED_OUT) {
             /* Remote peer closed connection during or after send
              * Reason 2 = remote initiated disconnect (normal for one-message-per-connection protocol)
@@ -1392,17 +1394,21 @@ static void HandlePoolEntryASREvents(int poolIndex, GiveTimePtr giveTime)
             entry->state = TCP_STATE_IDLE;
             entry->connectHandle = NULL;
             entry->sendHandle = NULL;
+            entry->closeHandle = NULL;
         } else if (entry->state == TCP_STATE_CLOSING_GRACEFUL || entry->state == TCP_STATE_IDLE) {
-            /* Expected termination after graceful close or when already idle */
+            /* Expected termination after graceful close or when already idle
+             * Clear closeHandle as async close completed via ASR event */
             entry->state = TCP_STATE_IDLE;
             entry->connectHandle = NULL;
             entry->sendHandle = NULL;
+            entry->closeHandle = NULL;
         } else {
             /* Unexpected termination in other states */
             log_warning_cat(LOG_CAT_MESSAGING, "Pool[%d]: TCPTerminate in unexpected state %d", poolIndex, entry->state);
             entry->state = TCP_STATE_IDLE;
             entry->connectHandle = NULL;
             entry->sendHandle = NULL;
+            entry->closeHandle = NULL;
         }
         break;
 
@@ -1454,12 +1460,14 @@ static void ProcessPoolEntryStateMachine(int poolIndex, GiveTimePtr giveTime)
                         entry->state = TCP_STATE_IDLE;
                         entry->connectHandle = NULL;
                         entry->sendHandle = NULL;
+                        entry->closeHandle = NULL;
                     }
                 } else {
                     log_app_event("Pool[%d]: Connection to %s failed: %d",
                                   poolIndex, entry->peerIPStr, operationResult);
                     entry->state = TCP_STATE_IDLE;
                     entry->connectHandle = NULL;
+                    entry->closeHandle = NULL;
                 }
             }
         }
@@ -1482,6 +1490,7 @@ static void ProcessPoolEntryStateMachine(int poolIndex, GiveTimePtr giveTime)
                         entry->state = TCP_STATE_IDLE;
                         entry->connectHandle = NULL;
                         entry->sendHandle = NULL;
+                        entry->closeHandle = NULL;
                     } else {
                         /* Check connection state before attempting graceful close
                          * Per MacTCP Programmer's Guide p.5070: connectionState values:
@@ -1499,20 +1508,24 @@ static void ProcessPoolEntryStateMachine(int poolIndex, GiveTimePtr giveTime)
                             entry->state = TCP_STATE_IDLE;
                             entry->connectHandle = NULL;
                             entry->sendHandle = NULL;
+                            entry->closeHandle = NULL;
                         } else if (tcpInfo.connectionState >= 8) {
-                            /* Connection still active - attempt graceful close */
-                            log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Connection active (state %u), attempting graceful close...",
+                            /* Connection still active - attempt async graceful close
+                             * Code Review Section 2.3.1: Use async close to prevent pool blocking
+                             * Allows pool entry to return to IDLE without waiting up to 30 seconds */
+                            log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Connection active (state %u), starting async graceful close...",
                                           poolIndex, tcpInfo.connectionState);
                             entry->state = TCP_STATE_CLOSING_GRACEFUL;
-                            err = MacTCPImpl_TCPClose(entry->stream, TCP_CLOSE_ULP_TIMEOUT_S, giveTime);
+                            err = MacTCPImpl_TCPCloseAsync(entry->stream, &entry->closeHandle);
                             if (err != noErr) {
-                                log_warning_cat(LOG_CAT_MESSAGING, "Pool[%d]: Graceful close failed (%d), using abort", poolIndex, err);
+                                log_warning_cat(LOG_CAT_MESSAGING, "Pool[%d]: Async close failed (%d), using abort", poolIndex, err);
                                 MacTCPImpl_TCPAbort(entry->stream);
                                 entry->state = TCP_STATE_IDLE;
                                 entry->connectHandle = NULL;
                                 entry->sendHandle = NULL;
+                                entry->closeHandle = NULL;
                             }
-                            /* Don't set IDLE here - wait for close to complete or ASR event */
+                            /* Don't set IDLE here - TCP_STATE_CLOSING_GRACEFUL handler will poll for completion */
                         } else {
                             /* Connection in transitional state (2=Listen, 4-6=connecting) - just abort */
                             log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Connection in transitional state (%u), using abort",
@@ -1521,6 +1534,7 @@ static void ProcessPoolEntryStateMachine(int poolIndex, GiveTimePtr giveTime)
                             entry->state = TCP_STATE_IDLE;
                             entry->connectHandle = NULL;
                             entry->sendHandle = NULL;
+                            entry->closeHandle = NULL;
                         }
                     }
                 } else {
@@ -1530,17 +1544,44 @@ static void ProcessPoolEntryStateMachine(int poolIndex, GiveTimePtr giveTime)
                     entry->state = TCP_STATE_IDLE;
                     entry->connectHandle = NULL;
                     entry->sendHandle = NULL;
+                    entry->closeHandle = NULL;
                 }
             }
         }
         break;
 
     case TCP_STATE_CLOSING_GRACEFUL:
-        /* Graceful close in progress - transition to IDLE
-         * ASR handler will handle TCPTerminate event */
-        entry->state = TCP_STATE_IDLE;
-        entry->connectHandle = NULL;
-        entry->sendHandle = NULL;
+        /* Async graceful close in progress - poll for completion
+         * Code Review Section 2.3.1: Non-blocking close allows immediate pool reuse
+         * This prevents pool entries from blocking for up to 30 seconds during close */
+        if (entry->closeHandle != NULL) {
+            err = MacTCPImpl_TCPCheckAsyncStatus(entry->closeHandle, &operationResult, &resultData);
+
+            if (err != 1) { /* Not pending anymore - close completed or failed */
+                entry->closeHandle = NULL;
+
+                if (err == noErr && operationResult == noErr) {
+                    log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Async close completed successfully", poolIndex);
+                } else {
+                    log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Async close completed with status %d (result %d)",
+                                  poolIndex, err, operationResult);
+                }
+
+                /* Close complete - return to IDLE for reuse */
+                entry->state = TCP_STATE_IDLE;
+                entry->connectHandle = NULL;
+                entry->sendHandle = NULL;
+                /* closeHandle already set to NULL above */
+            }
+            /* else: Still pending, keep polling on next cycle */
+        } else {
+            /* No close handle - shouldn't happen but handle gracefully
+             * ASR TCPTerminate event may have already cleared state */
+            log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: CLOSING_GRACEFUL with no handle, returning to IDLE", poolIndex);
+            entry->state = TCP_STATE_IDLE;
+            entry->connectHandle = NULL;
+            entry->sendHandle = NULL;
+        }
         break;
 
     case TCP_STATE_IDLE:
@@ -1581,6 +1622,7 @@ static void CheckPoolEntryTimeout(int poolIndex)
             entry->state = TCP_STATE_IDLE;
             entry->connectHandle = NULL;
             entry->sendHandle = NULL;
+            entry->closeHandle = NULL;
         }
     } else if (entry->state == TCP_STATE_SENDING && entry->sendStartTime > 0) {
         elapsedTicks = currentTime - entry->sendStartTime;
@@ -1591,6 +1633,7 @@ static void CheckPoolEntryTimeout(int poolIndex)
             entry->state = TCP_STATE_IDLE;
             entry->connectHandle = NULL;
             entry->sendHandle = NULL;
+            entry->closeHandle = NULL;
         }
     }
 }

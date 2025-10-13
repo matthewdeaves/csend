@@ -69,6 +69,7 @@ OSErr MacTCPImpl_TCPSendAsync(StreamPtr streamRef, Ptr data, unsigned short leng
                               Boolean push, MacTCPAsyncHandle *asyncHandle);
 OSErr MacTCPImpl_TCPReceiveAsync(StreamPtr streamRef, Ptr rdsPtr,
                                  short maxEntries, MacTCPAsyncHandle *asyncHandle);
+OSErr MacTCPImpl_TCPCloseAsync(StreamPtr streamRef, MacTCPAsyncHandle *asyncHandle);
 OSErr MacTCPImpl_TCPCheckAsyncStatus(MacTCPAsyncHandle asyncHandle,
                                      OSErr *operationResult, void **resultData);
 void MacTCPImpl_TCPCancelAsync(MacTCPAsyncHandle asyncHandle);

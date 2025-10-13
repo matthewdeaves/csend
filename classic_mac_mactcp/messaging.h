@@ -66,6 +66,7 @@ typedef struct {
     unsigned long sendStartTime;       /* TickCount() when send started */
     MacTCPAsyncHandle connectHandle;   /* Async handle for TCPActiveOpen */
     MacTCPAsyncHandle sendHandle;      /* Async handle for TCPSend */
+    MacTCPAsyncHandle closeHandle;     /* Async handle for TCPClose */
     ASR_Event_Info asrEvent;           /* ASR event for this stream */
     int poolIndex;                     /* Index in pool array (for debugging) */
 } TCPSendStreamPoolEntry;

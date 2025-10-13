@@ -881,6 +881,81 @@ OSErr MacTCPImpl_TCPClose(StreamPtr streamRef, Byte timeout,
     return PBControlSync((ParmBlkPtr)&pb);
 }
 
+/* Async TCP Close implementation
+ *
+ * Performs non-blocking graceful TCP connection close following RFC 793 FIN sequence.
+ * This prevents pool entries from blocking for up to 30 seconds during close operations.
+ *
+ * Per MacTCP Programmer's Guide p.2-56:
+ * - TCPClose initiates FIN handshake but doesn't wait for completion
+ * - ulpTimeoutValue specifies max wait for remote FIN acknowledgment
+ * - ulpTimeoutAction=1 means abort connection if timeout occurs
+ * - Connection moves through FIN-WAIT-1, FIN-WAIT-2, TIME-WAIT states
+ *
+ * Design rationale (Code Review Section 2.3.1):
+ * - Synchronous close blocks pool entry for entire timeout period (up to 30s)
+ * - Under load, this reduces effective pool size from 4 to 1-2 connections
+ * - Async close allows immediate pool entry reuse while FIN completes in background
+ * - Expected throughput improvement: 50-70% under concurrent load
+ *
+ * Parameters:
+ *   streamRef - TCP stream handle from TCPCreate
+ *   asyncHandle - Output parameter receiving async operation handle for polling
+ *
+ * Returns:
+ *   noErr - Close operation started successfully, poll asyncHandle for completion
+ *   paramErr - Invalid parameters (NULL streamRef or asyncHandle)
+ *   memFullErr - No free async operation slots (increase MAX_TCP_ASYNC_OPS)
+ *   Other - MacTCP error from PBControlAsync (connection already closed, etc.)
+ *
+ * Usage pattern:
+ *   1. Call MacTCPImpl_TCPCloseAsync() to initiate close
+ *   2. Poll with MacTCPImpl_TCPCheckAsyncStatus() each event loop
+ *   3. When status returns noErr (ioResult=0), close complete
+ *   4. Handle will be automatically freed on completion
+ */
+OSErr MacTCPImpl_TCPCloseAsync(StreamPtr streamRef, MacTCPAsyncHandle *asyncHandle)
+{
+    TCPAsyncOp *op;
+    OSErr err;
+
+    if (streamRef == NULL || asyncHandle == NULL) {
+        return paramErr;
+    }
+
+    /* Setup async operation */
+    op = setup_tcp_async_operation(asyncHandle, streamRef, TCP_ASYNC_CLOSE);
+    if (!op) {
+        return memFullErr;
+    }
+
+    /* Set up parameter block for async close
+     * Per MacTCP Programmer's Guide Section 2-56:
+     * - TCPClose uses csParam.close union member
+     * - validityFlags must specify which parameters are valid
+     * - ulpTimeoutValue and ulpTimeoutAction control graceful shutdown behavior */
+    memset(&op->pb, 0, sizeof(TCPiopb));
+    op->pb.tcpStream = (StreamPtr)streamRef;
+    op->pb.csCode = TCPClose;
+    op->pb.csParam.close.ulpTimeoutValue = 30;  /* 30 second timeout for graceful close */
+    op->pb.csParam.close.ulpTimeoutAction = 1;  /* 1 = abort on timeout */
+    op->pb.csParam.close.validityFlags = timeoutValue | timeoutAction;
+    op->pb.ioCompletion = nil;
+    op->pb.ioCRefNum = gMacTCPRefNum;
+    op->pb.ioResult = 1;  /* Mark as pending */
+
+    /* Start async operation */
+    err = PBControlAsync((ParmBlkPtr)&op->pb);
+    err = finalize_tcp_async_operation(op, err, asyncHandle, "MacTCPImpl_TCPCloseAsync");
+
+    if (err == noErr) {
+        log_debug_cat(LOG_CAT_NETWORKING, "MacTCPImpl_TCPCloseAsync: Started async close for stream 0x%lX",
+                      (unsigned long)streamRef);
+    }
+
+    return err;
+}
+
 OSErr MacTCPImpl_TCPAbort(StreamPtr streamRef)
 {
     TCPiopb pb;
