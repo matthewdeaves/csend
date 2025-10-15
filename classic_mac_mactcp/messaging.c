@@ -174,22 +174,6 @@ MacTCPAsyncHandle gListenAsyncHandle = NULL;        /* Handle for async listen o
 Boolean gListenAsyncOperationInProgress = false;    /* Track async operation state */
 
 /*
- * CONNECTION LIFECYCLE MANAGEMENT
- *
- * MacTCP streams sometimes need "cooling off" period after connection
- * termination before they can be reused. This prevents rapid connection
- * cycling from overwhelming the network stack.
- *
- * Reset Pattern:
- * 1. Connection terminates (normal or error)
- * 2. Set reset flag and timestamp
- * 3. Wait minimum delay before attempting new listen
- * 4. Clear flag and resume normal operation
- */
-Boolean gListenStreamNeedsReset = false;           /* Stream needs reset delay */
-unsigned long gListenStreamResetTime = 0;          /* When reset delay started */
-
-/*
  * MESSAGE QUEUE FOR FLOW CONTROL
  *
  * When all connection pool entries are busy, incoming message requests
@@ -216,10 +200,11 @@ static int gQueueTail = 0;  /* Index where next message will be stored */
 /* Timeout constants
  * Per MacTCP Programmer's Guide p.2849: Minimum timeout is 2 seconds.
  * Values less than 2 will be rounded up to 2 seconds by MacTCP.
- * For graceful close, 30+ seconds allows proper completion on slow networks.
- * Using 0 would default to 2 minutes (MacTCP spec).
+ *
+ * Note: TCP_CLOSE_ULP_TIMEOUT_S was removed because we now use async close
+ * (MacTCPImpl_TCPCloseAsync) which doesn't require a timeout parameter.
+ * See ProcessPoolEntryStateMachine() TCP_STATE_CLOSING_GRACEFUL handling.
  */
-#define TCP_CLOSE_ULP_TIMEOUT_S 30   /* Graceful close timeout - allows proper completion */
 #define TCP_RECEIVE_CMD_TIMEOUT_S 2  /* Minimum is 2 seconds per MacTCP spec */
 
 /* Forward declarations */
@@ -1007,8 +992,6 @@ OSErr InitTCP(short macTCPRefNum, unsigned long streamReceiveBufferSize, TCPNoti
     gTCPListenState = TCP_STATE_IDLE;
     gListenAsyncOperationInProgress = false;
     gListenNoCopyRdsPendingReturn = false;
-    gListenStreamNeedsReset = false;
-    gListenStreamResetTime = 0;
     memset((Ptr)&gListenAsrEvent, 0, sizeof(ASR_Event_Info));
 
     /* Start listening */
@@ -1253,8 +1236,6 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
                 log_error_cat(LOG_CAT_MESSAGING, "Listen ASR: TCPDataArrival, but GetStatus failed.");
                 MacTCPImpl_TCPAbort(gTCPListenStream);
                 gTCPListenState = TCP_STATE_IDLE;
-                gListenStreamNeedsReset = true;
-                gListenStreamResetTime = TickCount();
                 break;
             }
 
@@ -1290,8 +1271,6 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
                 log_app_event("Listen connection closing by peer.");
                 MacTCPImpl_TCPAbort(gTCPListenStream);
                 gTCPListenState = TCP_STATE_IDLE;
-                gListenStreamNeedsReset = true;
-                gListenStreamResetTime = TickCount();
             } else if (rcvErr != commandTimeout) {
                 /* CRITICAL FIX: Check if buffers were allocated before error */
                 if (gListenNoCopyRDS[0].length > 0 || gListenNoCopyRDS[0].ptr != NULL) {
@@ -1302,8 +1281,6 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
                 log_app_event("Error during Listen TCPNoCopyRcv: %d", rcvErr);
                 MacTCPImpl_TCPAbort(gTCPListenStream);
                 gTCPListenState = TCP_STATE_IDLE;
-                gListenStreamNeedsReset = true;
-                gListenStreamResetTime = TickCount();
             }
         }
         break;
@@ -1316,17 +1293,24 @@ static void HandleListenASREvents(GiveTimePtr giveTime)
         }
         gListenAsyncOperationInProgress = false;
         gTCPListenState = TCP_STATE_IDLE;
-        /* Always set reset flag when connection terminates */
-        gListenStreamNeedsReset = true;
-        gListenStreamResetTime = TickCount();
+
+        /* CRITICAL FIX: Restart listening immediately after terminate
+         * Reason 6 (ULP close) is delivered when remote peer closes gracefully.
+         * This can arrive AFTER we've already called TCPAbort and StartPassiveListen,
+         * terminating the new listen operation. We must restart listening.
+         *
+         * Per MacTCP Programmer's Guide p.4306: "ULP close = connection closed gracefully"
+         * This is expected behavior for our stateless protocol (one message per connection).
+         *
+         * Without this restart, the listen stream accepts only the first connection and
+         * then stops accepting new connections, causing 96% message loss (1/24 vs 24/24). */
+        StartPassiveListen();
         break;
 
     case TCPClosing:
         log_app_event("Listen ASR: Remote peer closed connection.");
         MacTCPImpl_TCPAbort(gTCPListenStream);
         gTCPListenState = TCP_STATE_IDLE;
-        gListenStreamNeedsReset = true;
-        gListenStreamResetTime = TickCount();
         break;
 
     default:
@@ -1448,6 +1432,8 @@ static void ProcessPoolEntryStateMachine(int poolIndex, GiveTimePtr giveTime)
     OSErr operationResult;
     void *resultData;
     int msgLen;
+
+    (void)giveTime; /* Unused parameter - state machine doesn't require CPU yielding */
 
     if (!gPoolInitialized) return;
     if (poolIndex < 0 || poolIndex >= TCP_SEND_STREAM_POOL_SIZE) return;

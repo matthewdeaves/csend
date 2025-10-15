@@ -80,28 +80,74 @@ int send_message(const char *ip, const char *message, const char *msg_type, cons
     char buffer[BUFFER_SIZE];
     char local_ip[INET_ADDRSTRLEN];
     int formatted_len;
-    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        perror("Outgoing TCP socket creation failed");
-        return -1;
-    }
-    set_socket_timeout(sock, 5);
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(PORT_TCP);
-    if (inet_pton(AF_INET, ip, &server_addr.sin_addr) <= 0) {
-        perror("Invalid target IP address format");
-        close(sock);
-        return -1;
-    }
-    if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        /* Connection refused is common when peer is offline - log as warning instead of error */
-        if (errno == ECONNREFUSED || errno == EHOSTUNREACH || errno == ENETUNREACH) {
-            log_warning_cat(LOG_CAT_NETWORKING, "Cannot reach peer %s:%d - %s (peer may be offline)", ip, PORT_TCP, strerror(errno));
-        } else {
-            log_error_cat(LOG_CAT_NETWORKING, "Failed to connect to %s:%d - %s", ip, PORT_TCP, strerror(errno));
+    int connect_attempts = 0;
+    const int max_retries = 5;
+    int retry_delay_ms = 50; /* Start with 50ms, exponential backoff */
+
+    /* Retry loop for connection attempts
+     * MacTCP limitation: Single listen stream can only accept one connection at a time.
+     * When messages arrive simultaneously, subsequent connections get ECONNREFUSED.
+     * Solution: Retry with exponential backoff (50ms, 100ms, 200ms, 400ms, 800ms) to
+     * allow MacTCP to restart listening between connection attempts.
+     *
+     * Per testing: 10ms/20ms/40ms delays too short. MacTCP needs ~50-200ms to:
+     * 1. Accept connection (ASR fires)
+     * 2. Process message (parse, update peers, display UI)
+     * 3. Close connection (TCPAbort)
+     * 4. Restart listening (TCPPassiveOpen)
+     * 5. Be ready for next connection */
+    for (connect_attempts = 0; connect_attempts <= max_retries; connect_attempts++) {
+        if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+            perror("Outgoing TCP socket creation failed");
+            return -1;
         }
+        set_socket_timeout(sock, 5);
+        memset(&server_addr, 0, sizeof(server_addr));
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_port = htons(PORT_TCP);
+        if (inet_pton(AF_INET, ip, &server_addr.sin_addr) <= 0) {
+            perror("Invalid target IP address format");
+            close(sock);
+            return -1;
+        }
+
+        if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) == 0) {
+            /* Connection successful - break out of retry loop */
+            break;
+        }
+
+        /* Connection failed - check if we should retry */
+        int saved_errno = errno;
         close(sock);
+
+        if (saved_errno == ECONNREFUSED && connect_attempts < max_retries) {
+            /* Connection refused - peer's listen stream may be busy processing another message.
+             * Wait briefly and retry. Log only on first retry to avoid log spam. */
+            if (connect_attempts == 0) {
+                log_debug_cat(LOG_CAT_NETWORKING, "Connection to %s refused (listen busy), retrying with backoff...", ip);
+            }
+            usleep(retry_delay_ms * 1000); /* Convert ms to microseconds */
+            retry_delay_ms *= 2; /* Exponential backoff: 10ms -> 20ms -> 40ms */
+            continue; /* Retry */
+        }
+
+        /* Non-retryable error or max retries exceeded */
+        if (saved_errno == ECONNREFUSED || saved_errno == EHOSTUNREACH || saved_errno == ENETUNREACH) {
+            log_warning_cat(LOG_CAT_NETWORKING, "Cannot reach peer %s:%d - %s (peer may be offline)", ip, PORT_TCP, strerror(saved_errno));
+        } else {
+            log_error_cat(LOG_CAT_NETWORKING, "Failed to connect to %s:%d - %s", ip, PORT_TCP, strerror(saved_errno));
+        }
         return -1;
+    }
+
+    /* If we get here, either connect succeeded or we exhausted retries */
+    if (connect_attempts > max_retries) {
+        log_warning_cat(LOG_CAT_NETWORKING, "Connection to %s:%d failed after %d attempts", ip, PORT_TCP, max_retries + 1);
+        return -1;
+    }
+
+    if (connect_attempts > 0) {
+        log_debug_cat(LOG_CAT_NETWORKING, "Connection to %s succeeded after %d retries", ip, connect_attempts);
     }
     if (get_local_ip(local_ip, INET_ADDRSTRLEN) < 0) {
         log_warning_cat(LOG_CAT_NETWORKING, "Warning: send_message failed to get local IP. Using 'unknown'.");

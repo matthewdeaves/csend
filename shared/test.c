@@ -261,6 +261,11 @@ void process_automated_test(void)
         case TEST_PHASE_IDLE:
             /* Should not happen */
             break;
+
+        default:
+            log_warning_cat(LOG_CAT_GENERAL, "Test: Unknown phase %d", (int)g_test_state.phase);
+            stop_automated_test();
+            break;
     }
 }
 

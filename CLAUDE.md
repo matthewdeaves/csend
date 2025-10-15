@@ -22,7 +22,7 @@ The project uses a **shared core** design with platform-specific implementations
 ### Key Architectural Patterns
 
 1. **Protocol**: Custom format `MSG_MAGIC_NUMBER|TYPE|SENDER@IP|CONTENT` with message types: DISCOVERY, DISCOVERY_RESPONSE, TEXT, QUIT
-2. **Networking**: UDP for peer discovery (broadcast on port 2556), TCP for direct messaging (port 2555)
+2. **Networking**: UDP for peer discovery (broadcast on port 8181), TCP for direct messaging (port 8080)
 3. **Shared Logic with Platform Callbacks**: Core logic in `shared/` uses callback interfaces for platform-specific operations
 4. **POSIX**: Multi-threaded design with separate threads for input, listening, and discovery
 5. **Classic Mac**: Single-threaded event loop with asynchronous network operations, dual TCP streams (listen + send)
