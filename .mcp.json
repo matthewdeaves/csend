@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "csend-log-analyzer": {
+      "command": "venv/bin/python3",
+      "args": ["tools/csend_log_mcp.py"]
+    }
+  }
+}

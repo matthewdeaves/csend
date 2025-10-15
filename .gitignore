@@ -66,14 +66,22 @@ doxygen_docs
 
 # Claude files
 CLAUDE.local.md
+.claude/
 
 # Application logs
 logs
 
 # Python virtual environment
+venv/
+env/
 csend_venv/
 __pycache__/
 *.pyc
+*.py[cod]
+*$py.class
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
 
 # Static Code Analysis Outputs
 reports

@@ -111,11 +111,34 @@ scripts/deadcode_check.sh -p all       # All platforms (default)
 # Optional: Install cppcheck for additional analysis
 ```
 
-### Log Filtering
+### Log Analysis and Filtering
 ```bash
-scripts/filter_logs.sh <log_file> [categories]  # Filter logs by category
-# Categories: NETWORK, DISCOVERY, MESSAGING, UI, APP_EVENT, ERROR, DEBUG
+# Quick summary of log file
+scripts/filter_logs.sh -s csend_posix.log
+
+# Filter by level
+scripts/filter_logs.sh -e csend_posix.log              # Errors only
+scripts/filter_logs.sh -w csend_posix.log              # Warnings + Errors
+scripts/filter_logs.sh -x csend_posix.log              # Exclude DEBUG
+
+# Filter by category
+scripts/filter_logs.sh -c NETWORKING csend_posix.log   # Categories: NETWORKING, DISCOVERY, PEER_MGMT, MESSAGING, etc.
+
+# Filter by peer
+scripts/filter_logs.sh -p MacTCP csend_posix.log       # Filter by peer name/IP
+
+# Test analysis
+scripts/filter_logs.sh -t csend_posix.log              # Show only test messages
+
+# Advanced filtering
+scripts/filter_logs.sh -C 3 -e csend_posix.log         # Errors with 3 lines of context
+scripts/filter_logs.sh -T "16:44:2" csend_posix.log    # Filter by timestamp
+scripts/filter_logs.sh -n -50 csend_posix.log          # Last 50 lines
+
+# See scripts/FILTER_LOGS_EXAMPLES.md for comprehensive examples
 ```
+
+**MCP Integration**: The log filtering tool is available as a Model Context Protocol (MCP) server for Claude. This provides structured log analysis during debugging sessions. See `tools/MCP_SETUP.md` for setup instructions. The MCP is project-specific and validates it's running in the CSend directory.
 
 ## Testing Approaches
 
