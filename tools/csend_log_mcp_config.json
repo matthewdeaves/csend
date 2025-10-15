@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "csend-log-analyzer": {
+      "command": "python3",
+      "args": ["tools/csend_log_mcp.py"],
+      "cwd": "/home/matt/macos9/shared/csend",
+      "description": "CSend project-specific log analysis tools for debugging",
+      "env": {}
+    }
+  }
+}

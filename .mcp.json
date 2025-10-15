@@ -3,6 +3,10 @@
     "csend-log-analyzer": {
       "command": "venv/bin/python3",
       "args": ["tools/csend_log_mcp.py"]
+    },
+    "csend-docs": {
+      "command": "venv/bin/python3",
+      "args": ["tools/csend_docs_mcp.py"]
     }
   }
 }

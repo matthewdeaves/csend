@@ -54,8 +54,6 @@ csend_posix
 
 # Developer tool stuff
 combined_code.txt
-tools/
-misc/MPW_Interfaces
 *.bak
 
 # SheepShaver
@@ -88,5 +86,4 @@ reports
 
 # Reference includes
 Retro68Reference
-resources/misc/MPW_Interfaces
 tmp
