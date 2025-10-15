@@ -138,15 +138,28 @@ typedef struct {
 /*
  * Async Operation Pool Configuration
  *
- * Pool sizes chosen based on expected concurrent operations:
+ * Pool sizes chosen based on expected concurrent operations and automated test requirements:
  * - UDP: Discovery broadcasts + occasional direct messages = 4 operations
- * - TCP: 1 listen + 4 pool connections + 3 buffer operations = 8 operations
+ * - TCP: 4 pool connections × 3 handles each (connect + send + close) + listen operations = 16 operations
+ *
+ * CRITICAL SIZING RATIONALE (Code Review Section 2.3.2):
+ * Prior value of 8 was insufficient for burst messaging scenarios (automated test):
+ * - Each TCP connection requires up to 3 concurrent async handles (connect, send, close)
+ * - With 4-entry connection pool, worst case is 12 handles (4 × 3)
+ * - Add listen stream operations (connect, receive) = 2 more handles
+ * - Safety margin for race conditions where handles not freed immediately = 2 handles
+ * - Total: 16 handles ensures no exhaustion under automated test load
+ *
+ * Without this increase, automated tests fail with -108 (memFullErr) when attempting
+ * new async operations while existing connections have pending closeHandles.
  *
  * Static allocation avoids fragmentation in Classic Mac's non-virtual memory.
  * Alternative: Dynamic allocation with NewPtr, but adds complexity.
+ *
+ * Memory cost: 8 additional TCPAsyncOp structs ≈ 800 bytes (acceptable overhead)
  */
 #define MAX_ASYNC_OPS 4          /* UDP operations pool size */
-#define MAX_TCP_ASYNC_OPS 8      /* TCP operations pool size */
+#define MAX_TCP_ASYNC_OPS 16     /* TCP operations pool size (increased from 8 for burst messaging) */
 
 /* Global operation pools - static allocation for predictable memory usage */
 static MacTCPAsyncOp gAsyncOps[MAX_ASYNC_OPS];

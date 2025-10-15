@@ -1369,7 +1369,14 @@ static void HandlePoolEntryASREvents(int poolIndex, GiveTimePtr giveTime)
              * This typically means:
              * - Port not listening (connection refused)
              * - Remote host not reachable
-             * - Remote host actively rejected connection */
+             * - Remote host actively rejected connection
+             *
+             * CRITICAL FIX: Do NOT clear async handles here!
+             * Per MacTCP Programmer's Guide p.2-70: "If the ULP action is abort, the connection
+             * is broken, all pending commands are returned, and a terminate notification is given."
+             * When TCPTerminate fires, MacTCP has already set ioResult to error/completion code.
+             * The state machine polling code must call MacTCPImpl_TCPCheckAsyncStatus() to properly
+             * free async handles via FreeTCPAsyncHandle(). If we clear handles here, they leak! */
             if (currentEvent.termReason == 2) {
                 log_app_event("Pool[%d]: Connection to %s refused (peer not listening)",
                               poolIndex, entry->peerIPStr);
@@ -1378,37 +1385,51 @@ static void HandlePoolEntryASREvents(int poolIndex, GiveTimePtr giveTime)
                               poolIndex, entry->peerIPStr, currentEvent.termReason);
             }
             entry->state = TCP_STATE_IDLE;
-            entry->connectHandle = NULL;
-            entry->sendHandle = NULL;
-            entry->closeHandle = NULL;
+            /* Handles intentionally NOT cleared - let polling code free them */
         } else if (entry->state == TCP_STATE_SENDING || entry->state == TCP_STATE_CONNECTED_OUT) {
             /* Remote peer closed connection during or after send
              * Reason 2 = remote initiated disconnect (normal for one-message-per-connection protocol)
              * Per NetworkingOpenTransport.txt: Receiver closes immediately after reading message.
-             * This is expected behavior - treat as successful send. */
+             * This is expected behavior - treat as successful send.
+             *
+             * CRITICAL FIX: Do NOT clear async handles here!
+             * Per MacTCP Programmer's Guide p.2-70: "If the ULP action is abort, the connection
+             * is broken, all pending commands are returned, and a terminate notification is given."
+             * When TCPTerminate fires, MacTCP has already set ioResult fields to completion codes.
+             * The state machine polling code must call MacTCPImpl_TCPCheckAsyncStatus() to properly
+             * free async handles via FreeTCPAsyncHandle(). If we clear handles here, they leak! */
             if (currentEvent.termReason == 2) {
                 log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Remote disconnect during send (expected behavior)", poolIndex);
             } else {
                 log_warning_cat(LOG_CAT_MESSAGING, "Pool[%d]: Unexpected termination reason %u during send", poolIndex, currentEvent.termReason);
             }
             entry->state = TCP_STATE_IDLE;
-            entry->connectHandle = NULL;
-            entry->sendHandle = NULL;
-            entry->closeHandle = NULL;
+            /* Handles intentionally NOT cleared - let polling code free them */
         } else if (entry->state == TCP_STATE_CLOSING_GRACEFUL || entry->state == TCP_STATE_IDLE) {
             /* Expected termination after graceful close or when already idle
-             * Clear closeHandle as async close completed via ASR event */
+             * CRITICAL FIX: Do NOT clear closeHandle here!
+             * The state machine polling code (TCP_STATE_CLOSING_GRACEFUL handler) must poll
+             * the closeHandle via MacTCPImpl_TCPCheckAsyncStatus() to properly free the async
+             * handle. If we clear it here, FreeTCPAsyncHandle() never gets called, causing
+             * async handle leaks that exhaust the handle pool.
+             *
+             * ASR just marks state as IDLE - polling code will detect completion and free handle */
             entry->state = TCP_STATE_IDLE;
             entry->connectHandle = NULL;
             entry->sendHandle = NULL;
-            entry->closeHandle = NULL;
+            /* closeHandle intentionally NOT cleared - let polling code free it */
         } else {
-            /* Unexpected termination in other states */
+            /* Unexpected termination in other states (ERROR, ABORTING, RELEASING, etc.)
+             *
+             * CRITICAL FIX: Do NOT clear async handles here!
+             * Per MacTCP Programmer's Guide p.2-70: "If the ULP action is abort, the connection
+             * is broken, all pending commands are returned, and a terminate notification is given."
+             * When TCPTerminate fires, MacTCP has already set ioResult fields to completion codes.
+             * The state machine polling code must call MacTCPImpl_TCPCheckAsyncStatus() to properly
+             * free async handles via FreeTCPAsyncHandle(). If we clear handles here, they leak! */
             log_warning_cat(LOG_CAT_MESSAGING, "Pool[%d]: TCPTerminate in unexpected state %d", poolIndex, entry->state);
             entry->state = TCP_STATE_IDLE;
-            entry->connectHandle = NULL;
-            entry->sendHandle = NULL;
-            entry->closeHandle = NULL;
+            /* Handles intentionally NOT cleared - let polling code free them */
         }
         break;
 
@@ -1553,12 +1574,19 @@ static void ProcessPoolEntryStateMachine(int poolIndex, GiveTimePtr giveTime)
     case TCP_STATE_CLOSING_GRACEFUL:
         /* Async graceful close in progress - poll for completion
          * Code Review Section 2.3.1: Non-blocking close allows immediate pool reuse
-         * This prevents pool entries from blocking for up to 30 seconds during close */
+         * This prevents pool entries from blocking for up to 30 seconds during close
+         *
+         * CRITICAL: Must call MacTCPImpl_TCPCheckAsyncStatus() to poll ioResult
+         * Per MacTCP Programmer's Guide p.2-15: "Poll ioResult field... when value
+         * changes from inProgress (1) to some other value, call has completed"
+         * MacTCPImpl_TCPCheckAsyncStatus() automatically frees async handle (mactcp_impl.c:1520) */
         if (entry->closeHandle != NULL) {
             err = MacTCPImpl_TCPCheckAsyncStatus(entry->closeHandle, &operationResult, &resultData);
 
-            if (err != 1) { /* Not pending anymore - close completed or failed */
-                entry->closeHandle = NULL;
+            if (err != 1) { /* Not pending anymore (ioResult != inProgress) - close completed or failed
+                             * IMPORTANT: MacTCPImpl_TCPCheckAsyncStatus() has already freed the async handle
+                             * at this point (via FreeTCPAsyncHandle() at mactcp_impl.c:1520) */
+                entry->closeHandle = NULL;  /* Clear our pointer since handle is now freed */
 
                 if (err == noErr && operationResult == noErr) {
                     log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: Async close completed successfully", poolIndex);
@@ -1573,7 +1601,7 @@ static void ProcessPoolEntryStateMachine(int poolIndex, GiveTimePtr giveTime)
                 entry->sendHandle = NULL;
                 /* closeHandle already set to NULL above */
             }
-            /* else: Still pending, keep polling on next cycle */
+            /* else: Still pending (ioResult == 1), keep polling on next cycle */
         } else {
             /* No close handle - shouldn't happen but handle gracefully
              * ASR TCPTerminate event may have already cleared state */
@@ -1585,7 +1613,43 @@ static void ProcessPoolEntryStateMachine(int poolIndex, GiveTimePtr giveTime)
         break;
 
     case TCP_STATE_IDLE:
-        /* Normal idle state - no action needed, available for new send request */
+        /* Normal idle state - available for new send request
+         * CRITICAL: Check for ANY pending async handles that need cleanup
+         * This handles the race condition where TCPTerminate ASR fires before we poll the handles
+         * Per async handle leak fix: ASR never clears handles, polling code must free them */
+
+        /* Check for pending connectHandle */
+        if (entry->connectHandle != NULL) {
+            err = MacTCPImpl_TCPCheckAsyncStatus(entry->connectHandle, &operationResult, &resultData);
+            if (err != 1) {
+                /* Connect operation completed - MacTCPImpl_TCPCheckAsyncStatus already freed handle */
+                log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: IDLE state cleaned up pending connectHandle (status %d)",
+                              poolIndex, err);
+                entry->connectHandle = NULL;
+            }
+        }
+
+        /* Check for pending sendHandle */
+        if (entry->sendHandle != NULL) {
+            err = MacTCPImpl_TCPCheckAsyncStatus(entry->sendHandle, &operationResult, &resultData);
+            if (err != 1) {
+                /* Send operation completed - MacTCPImpl_TCPCheckAsyncStatus already freed handle */
+                log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: IDLE state cleaned up pending sendHandle (status %d)",
+                              poolIndex, err);
+                entry->sendHandle = NULL;
+            }
+        }
+
+        /* Check for pending closeHandle */
+        if (entry->closeHandle != NULL) {
+            err = MacTCPImpl_TCPCheckAsyncStatus(entry->closeHandle, &operationResult, &resultData);
+            if (err != 1) {
+                /* Close operation completed - MacTCPImpl_TCPCheckAsyncStatus already freed handle */
+                log_debug_cat(LOG_CAT_MESSAGING, "Pool[%d]: IDLE state cleaned up pending closeHandle (status %d)",
+                              poolIndex, err);
+                entry->closeHandle = NULL;
+            }
+        }
         break;
 
     default:

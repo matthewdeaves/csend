@@ -7,6 +7,8 @@
 /* Platform-specific timing */
 #ifdef __CLASSIC_MAC__
 #include <OSUtils.h> /* For TickCount() */
+#else
+#include <sys/time.h> /* For gettimeofday() - wall-clock time */
 #endif
 
 /* Defines the current phase of the asynchronous test */
@@ -30,8 +32,8 @@ typedef struct {
     unsigned long next_step_ticks;
     unsigned long start_time_ticks;
 #else
-    clock_t next_step_ticks;
-    clock_t start_time_ticks;
+    unsigned long next_step_ms;    /* Wall-clock time in milliseconds */
+    unsigned long start_time_ms;   /* Wall-clock time in milliseconds */
 #endif
 
     /* Current progress */
@@ -50,6 +52,16 @@ static test_state_t g_test_state;
 
 /* Forward declaration */
 static void schedule_next_step(int delay_ms);
+
+#ifndef __CLASSIC_MAC__
+/* Get current wall-clock time in milliseconds for POSIX platforms */
+static unsigned long get_time_ms(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (unsigned long)(tv.tv_sec * 1000 + tv.tv_usec / 1000);
+}
+#endif
 
 test_config_t get_default_test_config(void)
 {
@@ -90,7 +102,7 @@ int start_automated_test(const test_config_t *config, const test_callbacks_t *ca
 #ifdef __CLASSIC_MAC__
     g_test_state.start_time_ticks = TickCount();
 #else
-    g_test_state.start_time_ticks = clock();
+    g_test_state.start_time_ms = get_time_ms();
 #endif
 
     schedule_next_step(0); /* Start immediately */
@@ -106,8 +118,8 @@ void stop_automated_test(void)
         unsigned long duration_ticks = end_time_ticks - g_test_state.start_time_ticks;
         duration_ms = (duration_ticks * 1000) / 60;
 #else
-        clock_t end_time_ticks = clock();
-        duration_ms = (unsigned long)(((double)(end_time_ticks - g_test_state.start_time_ticks) * 1000) / CLOCKS_PER_SEC);
+        unsigned long end_time_ms = get_time_ms();
+        duration_ms = end_time_ms - g_test_state.start_time_ms;
 #endif
 
         log_app_event("========================================");
@@ -139,7 +151,7 @@ void process_automated_test(void)
         return; /* Not time for the next step yet */
     }
 #else
-    if (clock() < g_test_state.next_step_ticks) {
+    if (get_time_ms() < g_test_state.next_step_ms) {
         return; /* Not time for the next step yet */
     }
 #endif
@@ -166,7 +178,7 @@ void process_automated_test(void)
             g_test_state.current_broadcast_msg++;
             if (g_test_state.current_broadcast_msg > g_test_state.config.broadcast_count) {
                 g_test_state.phase = TEST_PHASE_START_DIRECT;
-                schedule_next_step(g_test_state.config.delay_ms);
+                schedule_next_step(0);
             } else {
                 snprintf(message, sizeof(message), "TEST_R%d_BROADCAST_%d", g_test_state.current_round, g_test_state.current_broadcast_msg);
                 log_app_event("Test Round %d: Broadcasting message %d/%d: '%s'",
@@ -177,7 +189,8 @@ void process_automated_test(void)
                     g_test_state.failed_messages++;
                 }
                 g_test_state.total_messages++;
-                schedule_next_step(g_test_state.config.delay_ms);
+                /* Send next broadcast immediately - let production queue handle pacing */
+                schedule_next_step(0);
             }
             break;
 
@@ -202,13 +215,13 @@ void process_automated_test(void)
                 /* Move to next peer */
                 g_test_state.current_peer_index++;
                 g_test_state.current_direct_msg = 0;
-                schedule_next_step(g_test_state.config.delay_ms);
+                schedule_next_step(0);
             } else {
                 if (g_test_state.callbacks.get_peer_by_index(g_test_state.current_peer_index, &peer, g_test_state.callbacks.context) != 0) {
                     log_app_event("Test Round %d: Failed to get peer %d", g_test_state.current_round, g_test_state.current_peer_index);
                     g_test_state.current_peer_index++; /* Skip to next peer */
                     g_test_state.current_direct_msg = 0;
-                    schedule_next_step(g_test_state.config.delay_ms);
+                    schedule_next_step(0);
                     break;
                 }
 
@@ -228,7 +241,8 @@ void process_automated_test(void)
                     g_test_state.failed_messages++;
                 }
                 g_test_state.total_messages++;
-                schedule_next_step(g_test_state.config.delay_ms);
+                /* Send next message immediately - let production queue handle pacing */
+                schedule_next_step(0);
             }
             break;
 
@@ -254,6 +268,6 @@ static void schedule_next_step(int delay_ms) {
 #ifdef __CLASSIC_MAC__
     g_test_state.next_step_ticks = TickCount() + ((unsigned long)delay_ms * 60) / 1000;
 #else
-    g_test_state.next_step_ticks = clock() + ((unsigned long)delay_ms * CLOCKS_PER_SEC) / 1000;
+    g_test_state.next_step_ms = get_time_ms() + delay_ms;
 #endif
 }
