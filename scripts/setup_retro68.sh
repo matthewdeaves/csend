@@ -40,6 +40,7 @@ MPW_ZIP_PATH="${SCRIPT_DIR}/../resources/misc/${MPW_ZIP_FILE}"
 
 # --- Flags / Options ---
 MODE="install" # Default mode
+CLEANUP=false  # Whether to remove intermediate build artifacts after build
 
 # --- Helper Functions ---
 # Function to check if a command exists
@@ -65,20 +66,25 @@ run_sudo() {
 
 # Function to display usage information
 usage() {
-    echo "Usage: $0 [-h]"
+    echo "Usage: $0 [-h] [-c]"
     echo "  Installs or updates the Retro68 toolchain in ${INSTALL_PARENT_DIR}."
     echo "  Automatically extracts ${MPW_ZIP_FILE} from the script's misc directory"
     echo "  into ${INCLUDE_DIR_TARGET} if found, providing Universal Interfaces."
     echo ""
     echo "Options:"
+    echo "  -c          Cleanup intermediate build artifacts after successful build."
+    echo "              Saves ~5-6GB disk space but makes future rebuilds slower."
     echo "  -h          Display this help message."
     exit 0
 }
 
 
 # --- Argument Parsing ---
-while getopts "h" opt; do
+while getopts "ch" opt; do
     case ${opt} in
+        c )
+            CLEANUP=true
+            ;;
         h )
             usage
             ;;
@@ -106,6 +112,7 @@ echo "Build Directory: ${BUILD_DIR}"
 echo "Toolchain Binaries: ${BIN_DIR}"
 echo "Looking for Universal Interfaces zip: ${MPW_ZIP_PATH}"
 echo "Target for Interfaces: ${INCLUDE_DIR_TARGET}"
+echo "Cleanup after build: ${CLEANUP}"
 echo ""
 
 # Determine if it's an install or update based on directory existence
@@ -285,6 +292,34 @@ else
     echo "  ${PATH_EXPORT_LINE}"
 fi
 echo ""
+
+# 7. Optional Cleanup of intermediate build artifacts
+if [ "$CLEANUP" = true ]; then
+    echo "Step 7: Cleaning up intermediate build artifacts..."
+    # These directories contain intermediate build files that are not needed
+    # after the toolchain is installed. Removing them saves ~5-6GB.
+    CLEANUP_DIRS=(
+        "${BUILD_DIR}/gcc-build"
+        "${BUILD_DIR}/gcc-build-ppc"
+        "${BUILD_DIR}/binutils-build"
+        "${BUILD_DIR}/binutils-build-ppc"
+        "${BUILD_DIR}/build-host"
+        "${BUILD_DIR}/build-target"
+        "${BUILD_DIR}/build-target-ppc"
+        "${BUILD_DIR}/build-target-carbon"
+    )
+
+    for dir in "${CLEANUP_DIRS[@]}"; do
+        if [ -d "$dir" ]; then
+            echo "  Removing: $dir"
+            rm -rf "$dir"
+        fi
+    done
+
+    echo "Cleanup complete. Saved disk space by removing intermediate build artifacts."
+    echo "Note: Future rebuilds will take longer as these artifacts must be regenerated."
+    echo ""
+fi
 
 echo "Retro68 setup/update complete!"
 echo "Toolchain is located in: ${TOOLCHAIN_DIR}"
