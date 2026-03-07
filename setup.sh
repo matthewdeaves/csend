@@ -208,12 +208,12 @@ fi
 echo ""
 echo "Checking MPW Interfaces..."
 MPW_CINCLUDES="$RETRO68_SRC/InterfacesAndLibraries/MPW_Interfaces/Interfaces&Libraries/Interfaces/CIncludes"
-MPW_ZIP="$PEERTALK_DIR/resources/retro68/MPW_Interfaces.zip"
+MPW_ZIP="$RETRO68_SRC/resources/MPW_Interfaces.zip"
 
 if [ -f "$MPW_CINCLUDES/MacTCP.h" ] && [ -f "$MPW_CINCLUDES/OpenTransport.h" ]; then
     echo "  [ok] MacTCP.h and OpenTransport.h found"
-elif [ -f "$MPW_ZIP" ] && [ -d "$RETRO68_SRC" ]; then
-    echo "  [--] Extracting MPW Interfaces from peertalk's zip..."
+elif [ -f "$MPW_ZIP" ]; then
+    echo "  [--] Extracting MPW Interfaces from Retro68..."
     mkdir -p "$RETRO68_SRC/InterfacesAndLibraries"
     unzip -o "$MPW_ZIP" -d "$RETRO68_SRC/InterfacesAndLibraries/"
     echo "  [ok] MPW Interfaces extracted"
