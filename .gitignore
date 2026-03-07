@@ -20,3 +20,9 @@ compile_commands.json
 
 # Working notes / scratch
 peertalk-sdk-prompt.md
+
+# Autorun logs
+logs/
+
+# Downloads from hardware testing
+downloads/
