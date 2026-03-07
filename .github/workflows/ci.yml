@@ -1,4 +1,5 @@
 name: CI
+
 on:
   push:
     branches: [main]
@@ -6,17 +7,132 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  build-posix:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake
+
+      - name: Clone and build clog
+        run: |
+          git clone --depth 1 https://github.com/matthewdeaves/clog.git "$HOME/clog"
+          mkdir "$HOME/clog/build" && cd "$HOME/clog/build"
+          cmake .. && make
+
+      - name: Clone peertalk
+        run: git clone --depth 1 https://github.com/matthewdeaves/peertalk.git "$HOME/peertalk"
+
+      - name: Build csend
+        run: |
+          mkdir build && cd build
+          cmake .. -DCLOG_DIR="$HOME/clog" -DPEERTALK_DIR="$HOME/peertalk"
+          make
+
+  static-analysis:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Clone and build clog
+
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck
         run: |
-          git clone https://github.com/matthewdeaves/clog.git "$HOME/clog"
-          mkdir "$HOME/clog/build" && cd "$HOME/clog/build" && cmake .. && make
+          cppcheck --error-exitcode=1 \
+            --enable=warning,performance \
+            --suppress=missingIncludeSystem \
+            --inline-suppr \
+            -I posix \
+            -I shared \
+            posix/ shared/
+
+  # Cross-compilation using Retro68 container (includes MPW Interfaces)
+  build-68k-mactcp:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/matthewdeaves/retro68:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone and build clog for 68k
+        run: |
+          git clone --depth 1 https://github.com/matthewdeaves/clog.git /tmp/clog
+          mkdir /tmp/clog/build && cd /tmp/clog/build
+          cmake .. -DCMAKE_TOOLCHAIN_FILE=/Retro68-build/toolchain/m68k-apple-macos/cmake/retro68.toolchain.cmake
+          make
+
       - name: Clone peertalk
-        run: git clone https://github.com/matthewdeaves/peertalk.git "$HOME/peertalk"
-      - name: Build csend (POSIX)
+        run: git clone --depth 1 https://github.com/matthewdeaves/peertalk.git /tmp/peertalk
+
+      - name: Build csend for 68k (MacTCP)
         run: |
-          mkdir build && cd build
-          cmake .. -DCLOG_DIR="$HOME/clog" -DPEERTALK_DIR="$HOME/peertalk" && make
+          mkdir build-68k && cd build-68k
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE=/Retro68-build/toolchain/m68k-apple-macos/cmake/retro68.toolchain.cmake \
+            -DCLOG_DIR=/tmp/clog \
+            -DCLOG_LIB_DIR=/tmp/clog/build \
+            -DPEERTALK_DIR=/tmp/peertalk \
+            -DPT_PLATFORM=MACTCP
+          make
+
+  build-ppc-mactcp:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/matthewdeaves/retro68:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone and build clog for PPC
+        run: |
+          git clone --depth 1 https://github.com/matthewdeaves/clog.git /tmp/clog
+          mkdir /tmp/clog/build && cd /tmp/clog/build
+          cmake .. -DCMAKE_TOOLCHAIN_FILE=/Retro68-build/toolchain/powerpc-apple-macos/cmake/retroppc.toolchain.cmake
+          make
+
+      - name: Clone peertalk
+        run: git clone --depth 1 https://github.com/matthewdeaves/peertalk.git /tmp/peertalk
+
+      - name: Build csend for PPC (MacTCP)
+        run: |
+          mkdir build-ppc && cd build-ppc
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE=/Retro68-build/toolchain/powerpc-apple-macos/cmake/retroppc.toolchain.cmake \
+            -DCLOG_DIR=/tmp/clog \
+            -DCLOG_LIB_DIR=/tmp/clog/build \
+            -DPEERTALK_DIR=/tmp/peertalk \
+            -DPT_PLATFORM=MACTCP
+          make
+
+  build-ppc-ot:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/matthewdeaves/retro68:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone and build clog for PPC
+        run: |
+          git clone --depth 1 https://github.com/matthewdeaves/clog.git /tmp/clog
+          mkdir /tmp/clog/build && cd /tmp/clog/build
+          cmake .. -DCMAKE_TOOLCHAIN_FILE=/Retro68-build/toolchain/powerpc-apple-macos/cmake/retroppc.toolchain.cmake
+          make
+
+      - name: Clone peertalk
+        run: git clone --depth 1 https://github.com/matthewdeaves/peertalk.git /tmp/peertalk
+
+      - name: Build csend for PPC (Open Transport)
+        run: |
+          mkdir build-ppc-ot && cd build-ppc-ot
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE=/Retro68-build/toolchain/powerpc-apple-macos/cmake/retroppc.toolchain.cmake \
+            -DCLOG_DIR=/tmp/clog \
+            -DCLOG_LIB_DIR=/tmp/clog/build \
+            -DPEERTALK_DIR=/tmp/peertalk \
+            -DPT_PLATFORM=OT
+          make
