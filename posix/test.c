@@ -1,63 +1,55 @@
 #include "test.h"
 #include "../shared/test.h"
-#include "../shared/logging.h"
-#include "../shared/peer_wrapper.h"
-#include "commands.h"
+#include "peertalk_bridge.h"
+#include "clog.h"
 #include <unistd.h>
 #include <string.h>
 
-/* Broadcast callback - REUSES EXISTING APPLICATION CODE */
+/* Broadcast callback - queues broadcast via bridge */
 static int test_send_broadcast(const char *message, void *context)
 {
-    app_state_t *state = (app_state_t *)context;
-
-    /* Calls the SAME function the UI uses for broadcasts */
-    int sent_count = broadcast_to_all_peers(state, message);
-
-    if (sent_count == 0) {
-        return -1;
-    }
-
+    (void)context;
+    bridge_queue_broadcast(message);
     return 0;
 }
 
-/* Direct message callback - REUSES EXISTING APPLICATION CODE */
-static int test_send_direct(const char *peer_ip, const char *message, void *context)
+/* Direct message callback - queues send via bridge using peer index */
+static int test_send_direct(int peer_index, const char *message, void *context)
 {
-    app_state_t *state = (app_state_t *)context;
-    int peer_count = pw_get_active_peer_count();
-    int peer_num = -1;
-
-    /* Find the peer number (1-based) for proper logging */
-    for (int i = 0; i < peer_count; i++) {
-        peer_t peer;
-        pw_get_peer_by_index(i, &peer);
-        if (strcmp(peer.ip, peer_ip) == 0) {
-            peer_num = i + 1;  /* Convert 0-based index to 1-based peer number */
-            break;
-        }
-    }
-
-    /* Calls the SAME function used for direct messages - send_to_peer */
-    /* send_to_peer returns 1 on success, 0 on failure */
-    /* Test expects 0 on success, non-zero on failure, so invert the result */
-    int result = send_to_peer(state, peer_ip, message, peer_num);
-    return result == 1 ? 0 : -1;
+    (void)context;
+    bridge_queue_send(peer_index, message);
+    return 0;
 }
 
-/* Get peer count callback */
+/* Get connected peer count */
 static int test_get_peer_count(void *context)
 {
-    (void)context;
-    return pw_get_active_peer_count();
+    app_state_t *state = (app_state_t *)context;
+    return bridge_get_peer_count(state);
 }
 
-/* Get peer by index callback */
-static int test_get_peer_by_index(int index, peer_t *out_peer, void *context)
+/* Get peer info by connected index */
+static int test_get_peer_info(int index, char *name_buf, size_t name_size,
+                              char *addr_buf, size_t addr_size, void *context)
 {
-    (void)context;
-    pw_get_peer_by_index(index, out_peer);
-    return 0;
+    app_state_t *state = (app_state_t *)context;
+    int i, total, connected = 0;
+
+    total = PT_GetPeerCount(state->pt_ctx);
+    for (i = 0; i < total; i++) {
+        PT_Peer *p = PT_GetPeer(state->pt_ctx, i);
+        if (p && PT_GetPeerState(p) == PT_PEER_CONNECTED) {
+            if (connected == index) {
+                strncpy(name_buf, PT_PeerName(p), name_size - 1);
+                name_buf[name_size - 1] = '\0';
+                strncpy(addr_buf, PT_PeerAddress(p), addr_size - 1);
+                addr_buf[addr_size - 1] = '\0';
+                return 0;
+            }
+            connected++;
+        }
+    }
+    return -1;
 }
 
 void run_posix_automated_test(app_state_t *state)
@@ -65,34 +57,28 @@ void run_posix_automated_test(app_state_t *state)
     test_config_t config;
     test_callbacks_t callbacks;
 
-    log_app_event("========================================");
-    log_app_event("Starting automated test...");
-    log_app_event("This will send test messages to all peers");
-    log_app_event("========================================");
+    CLOG_INFO("========================================");
+    CLOG_INFO("Starting automated test...");
+    CLOG_INFO("========================================");
 
-    /* Get default config */
     config = get_default_test_config();
 
-    /* Set up callbacks */
     callbacks.send_broadcast = test_send_broadcast;
     callbacks.send_direct = test_send_direct;
     callbacks.get_peer_count = test_get_peer_count;
-    callbacks.get_peer_by_index = test_get_peer_by_index;
+    callbacks.get_peer_info = test_get_peer_info;
     callbacks.context = state;
 
-    /* Start the asynchronous test */
     if (start_automated_test(&config, &callbacks) != 0) {
-        return; /* Test already running */
+        return;
     }
 
-    /* Block and process the test until it's done */
     while (is_automated_test_running()) {
         process_automated_test();
-        usleep(10000); /* Sleep for 10ms to prevent busy-waiting */
+        usleep(10000);
     }
 
-    log_app_event("========================================");
-    log_app_event("Automated test completed!");
-    log_app_event("Check the log file for detailed results");
-    log_app_event("========================================");
+    CLOG_INFO("========================================");
+    CLOG_INFO("Automated test completed!");
+    CLOG_INFO("========================================");
 }

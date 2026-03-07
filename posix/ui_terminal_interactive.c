@@ -1,33 +1,35 @@
 #include "ui_interface.h"
 #include "ui_factory.h"
-#include "logging.h"
-#include "../shared/logging.h"
-#include "../shared/time_utils.h"
-#include "../shared/peer_wrapper.h"
+#include "peertalk_bridge.h"
+#include "clog.h"
 #include <stdio.h>
 #include <time.h>
-#include <pthread.h>
 #include <string.h>
 
-/* Interactive terminal implementation */
+static void print_timestamp(void)
+{
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    char buf[16];
+    strftime(buf, sizeof(buf), "%H:%M:%S", tm_info);
+    printf("[%s] ", buf);
+}
 
 static void interactive_init(void *context)
 {
     (void)context;
-    /* No special initialization needed for interactive mode */
 }
 
 static void interactive_cleanup(void *context)
 {
     (void)context;
-    /* No special cleanup needed */
 }
 
 static void interactive_display_message(void *context, const char *from_username,
                                         const char *from_ip, const char *content)
 {
     (void)context;
-    print_timestamp("%H:%M:%S");
+    print_timestamp();
     printf("%s@%s: %s\n", from_username, from_ip, content);
     fflush(stdout);
 }
@@ -35,7 +37,7 @@ static void interactive_display_message(void *context, const char *from_username
 static void interactive_display_app_message(void *context, const char *format, va_list args)
 {
     (void)context;
-    print_timestamp("%H:%M:%S");
+    print_timestamp();
     vprintf(format, args);
     printf("\n");
     fflush(stdout);
@@ -52,25 +54,25 @@ static void interactive_display_error(void *context, const char *format, va_list
 
 static void interactive_display_peer_list(void *context, app_state_t *state)
 {
+    int i, total, connected_num;
     (void)context;
-    (void)state;
-    time_t now = time(NULL);
-    int active_count = pw_get_active_peer_count();
+
+    total = PT_GetPeerCount(state->pt_ctx);
+    connected_num = 0;
 
     printf("\n--- Active Peers ---\n");
 
-    if (active_count == 0) {
-        printf("No active peers found.\n");
-    } else {
-        for (int i = 0; i < active_count; i++) {
-            peer_t peer;
-            pw_get_peer_by_index(i, &peer);
-            printf("%d. %s@%s (last seen %ld seconds ago)\n",
-                   i + 1,
-                   peer.username,
-                   peer.ip,
-                   (long)(now - peer.last_seen));
+    for (i = 0; i < total; i++) {
+        PT_Peer *peer = PT_GetPeer(state->pt_ctx, i);
+        if (peer && PT_GetPeerState(peer) == PT_PEER_CONNECTED) {
+            connected_num++;
+            printf("%d. %s@%s\n", connected_num,
+                   PT_PeerName(peer), PT_PeerAddress(peer));
         }
+    }
+
+    if (connected_num == 0) {
+        printf("No active peers found.\n");
     }
     printf("--------------------\n\n");
     fflush(stdout);
@@ -81,67 +83,59 @@ static void interactive_display_help(void *context)
     (void)context;
     printf("\nCommands:\n");
     printf("  /list                     - List all active peers\n");
-    printf("  /send <peer_number> <msg> - Send <msg> to a specific peer from the list\n");
+    printf("  /send <peer_number> <msg> - Send <msg> to a specific peer\n");
     printf("  /broadcast <message>      - Send <message> to all active peers\n");
-    printf("  /debug                    - Toggle detailed debug message visibility\n");
+    printf("  /debug                    - Toggle debug output\n");
     printf("  /test                     - Run automated test sequence\n");
-    printf("  /quit                     - Send quit notification and exit the application\n");
+    printf("  /quit                     - Exit the application\n");
     printf("  /help                     - Show this help message\n\n");
     fflush(stdout);
 }
 
 static void interactive_notify_send_result(void *context, int success, int peer_num, const char *peer_ip)
 {
-    ui_context_t *ui = (ui_context_t *)context;
-
+    (void)context;
     if (success) {
-        char msg[256];
-        snprintf(msg, sizeof(msg), "Message sent to peer %d (%s)", peer_num, peer_ip);
-        va_list dummy;
-        interactive_display_app_message(ui, msg, dummy);
+        print_timestamp();
+        printf("Message sent to peer %d (%s)\n", peer_num, peer_ip ? peer_ip : "");
     } else {
-        char msg[256];
+        print_timestamp();
         if (peer_num < 0) {
-            snprintf(msg, sizeof(msg), "Invalid peer number. Use /list to see active peers.");
+            printf("Invalid peer number. Use /list to see active peers.\n");
         } else {
-            snprintf(msg, sizeof(msg), "Failed to send message to peer %d", peer_num);
+            printf("Failed to send message to peer %d\n", peer_num);
         }
-        va_list dummy;
-        interactive_display_app_message(ui, msg, dummy);
     }
+    fflush(stdout);
 }
 
 static void interactive_notify_broadcast_result(void *context, int sent_count)
 {
-    ui_context_t *ui = (ui_context_t *)context;
-    char msg[256];
-    snprintf(msg, sizeof(msg), "Broadcast message sent to %d active peer(s).", sent_count);
-    va_list dummy;
-    interactive_display_app_message(ui, msg, dummy);
+    (void)context;
+    print_timestamp();
+    printf("Broadcast message sent to %d active peer(s).\n", sent_count);
+    fflush(stdout);
 }
 
 static void interactive_notify_command_unknown(void *context, const char *command)
 {
-    ui_context_t *ui = (ui_context_t *)context;
-    char msg[256];
-    snprintf(msg, sizeof(msg), "Unknown command: '%s'. Type /help for available commands.", command);
-    va_list dummy;
-    interactive_display_app_message(ui, msg, dummy);
+    (void)context;
+    print_timestamp();
+    printf("Unknown command: '%s'. Type /help for available commands.\n", command);
+    fflush(stdout);
 }
 
 static void interactive_notify_peer_update(void *context)
 {
     (void)context;
-    /* No notification in interactive mode - users can /list when needed */
 }
 
 static void interactive_notify_debug_toggle(void *context, int enabled)
 {
-    ui_context_t *ui = (ui_context_t *)context;
-    char msg[256];
-    snprintf(msg, sizeof(msg), "Debug output %s.", enabled ? "ENABLED" : "DISABLED");
-    va_list dummy;
-    interactive_display_app_message(ui, msg, dummy);
+    (void)context;
+    print_timestamp();
+    printf("Debug output %s.\n", enabled ? "ENABLED" : "DISABLED");
+    fflush(stdout);
 }
 
 static void interactive_show_prompt(void *context)
@@ -155,30 +149,27 @@ static void interactive_handle_command_start(void *context, const char *command)
 {
     (void)context;
     (void)command;
-    /* No special handling needed in interactive mode */
 }
 
 static void interactive_handle_command_complete(void *context)
 {
     (void)context;
-    /* Prompt will be shown by show_prompt */
 }
 
 static void interactive_notify_startup(void *context, const char *username)
 {
-    ui_context_t *ui = (ui_context_t *)context;
-    char msg[256];
-    snprintf(msg, sizeof(msg), "Starting P2P messaging application as '%s'", username);
-    va_list dummy;
-    interactive_display_app_message(ui, msg, dummy);
+    (void)context;
+    print_timestamp();
+    printf("Starting P2P messaging application as '%s'\n", username);
+    fflush(stdout);
 }
 
 static void interactive_notify_shutdown(void *context)
 {
-    ui_context_t *ui = (ui_context_t *)context;
-    char msg[] = "Application terminated gracefully.";
-    va_list dummy;
-    interactive_display_app_message(ui, msg, dummy);
+    (void)context;
+    print_timestamp();
+    printf("Application terminated gracefully.\n");
+    fflush(stdout);
 }
 
 static void interactive_notify_ready(void *context)
@@ -187,30 +178,29 @@ static void interactive_notify_ready(void *context)
     interactive_display_help(ui);
 }
 
-/* Static operations table */
 static ui_operations_t interactive_ops = {
-    .init = interactive_init,
-    .cleanup = interactive_cleanup,
-    .display_message = interactive_display_message,
-    .display_app_message = interactive_display_app_message,
-    .display_error = interactive_display_error,
-    .display_peer_list = interactive_display_peer_list,
-    .display_help = interactive_display_help,
-    .notify_send_result = interactive_notify_send_result,
-    .notify_broadcast_result = interactive_notify_broadcast_result,
-    .notify_command_unknown = interactive_notify_command_unknown,
-    .notify_peer_update = interactive_notify_peer_update,
-    .notify_debug_toggle = interactive_notify_debug_toggle,
-    .notify_status = NULL,  /* Not used in interactive mode */
-    .notify_stats = NULL,   /* Not used in interactive mode */
-    .notify_history = NULL, /* Not used in interactive mode */
-    .notify_version = NULL, /* Not used in interactive mode */
-    .show_prompt = interactive_show_prompt,
-    .handle_command_start = interactive_handle_command_start,
-    .handle_command_complete = interactive_handle_command_complete,
-    .notify_startup = interactive_notify_startup,
-    .notify_shutdown = interactive_notify_shutdown,
-    .notify_ready = interactive_notify_ready
+    interactive_init,
+    interactive_cleanup,
+    interactive_display_message,
+    interactive_display_app_message,
+    interactive_display_error,
+    interactive_display_peer_list,
+    interactive_display_help,
+    interactive_notify_send_result,
+    interactive_notify_broadcast_result,
+    interactive_notify_command_unknown,
+    interactive_notify_peer_update,
+    interactive_notify_debug_toggle,
+    NULL,  /* notify_status */
+    NULL,  /* notify_stats */
+    NULL,  /* notify_history */
+    NULL,  /* notify_version */
+    interactive_show_prompt,
+    interactive_handle_command_start,
+    interactive_handle_command_complete,
+    interactive_notify_startup,
+    interactive_notify_shutdown,
+    interactive_notify_ready
 };
 
 ui_operations_t *ui_terminal_interactive_ops(void)

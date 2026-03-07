@@ -1,89 +1,22 @@
-# Compiled object files
+build*/
 *.o
-*.ko
-*.obj
-*.elf
-
-# Compiled executables
-client
-server
-a.out
-
-# Debug files
+*.a
 *.dSYM/
-*.su
-*.idb
-*.pdb
-
-# Editor specific files
-.vscode/*
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
-*.code-workspace
-.idea/
-*.swp
-*~
-
-# Build directories
-build/
-bin/
-obj/
-
-# Dependency directories
-lib/
-libs/
-
-# OS specific files
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
 
-# Log files
+# Log files from testing
 *.log
 
-# Temporary files
-*.tmp
+# POSIX runtime log
+csend_posix.log
 
-# Compiled binaries
-csend_posix
+# Editor/IDE
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+compile_commands.json
 
-# Developer tool stuff
-combined_code.txt
-*.bak
-
-# SheepShaver
-.finf
-
-# Doxygen
-doxygen_docs
-
-# Claude files
-CLAUDE.local.md
-.claude/
-
-# Application logs
-logs
-
-# Python virtual environment
-venv/
-env/
-csend_venv/
-__pycache__/
-*.pyc
-*.py[cod]
-*$py.class
-.Python
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Static Code Analysis Outputs
-reports
-
-# Reference includes
-Retro68Reference
-tmp
+# Working notes / scratch
+peertalk-sdk-prompt.md

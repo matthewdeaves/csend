@@ -1,6 +1,6 @@
 #include "dialog_input.h"
 #include "dialog.h"
-#include "../shared/logging.h"
+#include "clog.h"
 #include <MacTypes.h>
 #include <TextEdit.h>
 #include <Dialogs.h>
@@ -29,7 +29,7 @@ Boolean InitInputTE(DialogPtr dialog)
     Handle itemHandle;
     Rect itemRect;
 
-    log_debug_cat(LOG_CAT_UI, "Initializing Input TE (as UserItem)...");
+    CLOG_DEBUG("Initializing Input TE (as UserItem)...");
 
     /* Get dialog item information for text input area */
     GetDialogItem(dialog, kInputTextEdit, &itemType, &itemHandle, &itemRect);
@@ -46,7 +46,7 @@ Boolean InitInputTE(DialogPtr dialog)
         InsetRect(&teViewRect, 1, 1);   /* Visual boundary inset */
         InsetRect(&teDestRect, 1, 1);   /* Formatting boundary inset */
         if (teViewRect.bottom <= teViewRect.top || teViewRect.right <= teViewRect.left) {
-            log_debug_cat(LOG_CAT_UI, "ERROR: Input TE itemRect too small after insetting for border. Original: (%d,%d,%d,%d)",
+            CLOG_DEBUG("ERROR: Input TE itemRect too small after insetting for border. Original: (%d,%d,%d,%d)",
                           itemRect.top, itemRect.left, itemRect.bottom, itemRect.right);
             gInputTE = NULL;
             return false;
@@ -56,10 +56,10 @@ Boolean InitInputTE(DialogPtr dialog)
          * Critical: Check for NULL return (memory allocation failure) */
         gInputTE = TENew(&teDestRect, &teViewRect);
         if (gInputTE == NULL) {
-            log_debug_cat(LOG_CAT_UI, "CRITICAL ERROR: TENew failed for Input TE! Out of memory?");
+            CLOG_DEBUG("CRITICAL ERROR: TENew failed for Input TE! Out of memory?");
             return false;
         } else {
-            log_debug_cat(LOG_CAT_UI, "TENew succeeded for Input TE. Handle: 0x%lX. ViewRect for TE: (%d,%d,%d,%d)",
+            CLOG_DEBUG("TENew succeeded for Input TE. Handle: 0x%lX. ViewRect for TE: (%d,%d,%d,%d)",
                           (unsigned long)gInputTE, teViewRect.top, teViewRect.left, teViewRect.bottom, teViewRect.right);
             TESetText((Ptr)"", 0, gInputTE);
             TECalText(gInputTE);
@@ -67,7 +67,7 @@ Boolean InitInputTE(DialogPtr dialog)
             return true;
         }
     } else {
-        log_debug_cat(LOG_CAT_UI, "ERROR: Item %d (kInputTextEdit) is Type: %d. Expected userItem. Cannot initialize Input TE.", kInputTextEdit, itemType);
+        CLOG_DEBUG("ERROR: Item %d (kInputTextEdit) is Type: %d. Expected userItem. Cannot initialize Input TE.", kInputTextEdit, itemType);
         gInputTE = NULL;
         return false;
     }
@@ -104,14 +104,14 @@ Boolean InitInputTE(DialogPtr dialog)
  */
 void CleanupInputTE(void)
 {
-    log_debug_cat(LOG_CAT_UI, "Cleaning up Input TE...");
+    CLOG_DEBUG("Cleaning up Input TE...");
 
     if (gInputTE != NULL) {
         TEDispose(gInputTE);  /* Free all TextEdit-associated memory */
         gInputTE = NULL;      /* Prevent accidental reuse of disposed handle */
     }
 
-    log_debug_cat(LOG_CAT_UI, "Input TE cleanup finished.");
+    CLOG_DEBUG("Input TE cleanup finished.");
 }
 /*
  * Handle Mouse Clicks in TextEdit Input Field
@@ -210,14 +210,14 @@ void HandleInputTEUpdate(DialogPtr dialog)
             EraseRect(&teActualViewRect);              /* Clear background */
             TEUpdate(&teActualViewRect, gInputTE);     /* Redraw text content */
         } else {
-            log_debug_cat(LOG_CAT_UI, "HandleInputTEUpdate ERROR: gInputTE deref failed after HLock!");
+            CLOG_DEBUG("HandleInputTEUpdate ERROR: gInputTE deref failed after HLock!");
         }
 
         /* Restore handle state and graphics port */
         HSetState((Handle)gInputTE, teState);
         SetPort(oldPort);
     } else {
-        log_debug_cat(LOG_CAT_UI, "HandleInputTEUpdate: gInputTE is NULL, skipping update.");
+        CLOG_DEBUG("HandleInputTEUpdate: gInputTE is NULL, skipping update.");
     }
 }
 /*
@@ -263,10 +263,10 @@ void ActivateInputTE(Boolean activating)
     if (gInputTE != NULL) {
         if (activating) {
             TEActivate(gInputTE);  /* Show cursor, enable text entry */
-            log_debug_cat(LOG_CAT_UI, "ActivateInputTE: Activating Input TE.");
+            CLOG_DEBUG("ActivateInputTE: Activating Input TE.");
         } else {
             TEDeactivate(gInputTE);  /* Hide cursor, disable text entry */
-            log_debug_cat(LOG_CAT_UI, "ActivateInputTE: Deactivating Input TE.");
+            CLOG_DEBUG("ActivateInputTE: Deactivating Input TE.");
         }
     }
 }
@@ -318,7 +318,7 @@ Boolean GetInputText(char *buffer, short bufferSize)
     /* Parameter validation */
     if (gInputTE == NULL || buffer == NULL || bufferSize <= 0) {
         if (buffer && bufferSize > 0) buffer[0] = '\0';  /* Ensure empty string */
-        log_debug_cat(LOG_CAT_UI, "Error: GetInputText called with NULL TE/buffer or zero size.");
+        CLOG_DEBUG("Error: GetInputText called with NULL TE/buffer or zero size.");
         return false;
     }
 
@@ -345,7 +345,7 @@ Boolean GetInputText(char *buffer, short bufferSize)
          */
         if (copyLen >= bufferSize) {
             copyLen = bufferSize - 1;  /* Leave room for null terminator */
-            log_debug_cat(LOG_CAT_UI, "Warning: Input text truncated during GetInputText (buffer size %d, needed %ld).",
+            CLOG_DEBUG("Warning: Input text truncated during GetInputText (buffer size %d, needed %ld).",
                          bufferSize, (long)textLen + 1);
         }
 
@@ -363,7 +363,7 @@ Boolean GetInputText(char *buffer, short bufferSize)
         buffer[copyLen] = '\0';  /* Null-terminate C string */
         success = true;
     } else {
-        log_debug_cat(LOG_CAT_UI, "Error: Cannot get text from Input TE (NULL TE record or hText).");
+        CLOG_DEBUG("Error: Cannot get text from Input TE (NULL TE record or hText).");
         buffer[0] = '\0';  /* Return empty string on error */
         success = false;
     }
@@ -428,12 +428,12 @@ void ClearInputText(void)
             TECalText(gInputTE);                /* Recalculate line breaks */
             TESetSelect(0, 0, gInputTE);        /* Position cursor at start */
         } else {
-            log_debug_cat(LOG_CAT_UI, "ClearInputText Error: gInputTE deref failed!");
+            CLOG_DEBUG("ClearInputText Error: gInputTE deref failed!");
         }
 
         /* Restore handle state */
         HSetState((Handle)gInputTE, teState);
-        log_debug_cat(LOG_CAT_UI, "Input field cleared.");
+        CLOG_DEBUG("Input field cleared.");
 
         /*
          * IMMEDIATE VISUAL UPDATE

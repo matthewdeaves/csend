@@ -1,0 +1,41 @@
+{
+  "se30": {
+    "name": "SE/30",
+    "platform": "mactcp",
+    "system": "System 6.0.8",
+    "cpu": "68030",
+    "ftp": {
+      "host": "192.168.1.10",
+      "port": 21,
+      "username": "mac",
+      "password": "mac"
+    },
+    "notes": "SE/30 with 8MB RAM - oldest MacTCP target"
+  },
+  "iici": {
+    "name": "IIci",
+    "platform": "opentransport",
+    "system": "Mac OS 8.1",
+    "cpu": "68030",
+    "ftp": {
+      "host": "192.168.1.11",
+      "port": 21,
+      "username": "mac",
+      "password": "mac"
+    },
+    "notes": "IIci with 32MB RAM - Open Transport target"
+  },
+  "powermac": {
+    "name": "Power Mac 7500",
+    "platform": "opentransport",
+    "system": "Mac OS 9.2",
+    "cpu": "601",
+    "ftp": {
+      "host": "192.168.1.12",
+      "port": 21,
+      "username": "mac",
+      "password": "mac"
+    },
+    "notes": "PowerPC target for OT testing"
+  }
+}

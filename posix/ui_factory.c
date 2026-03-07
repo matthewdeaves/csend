@@ -19,7 +19,6 @@ ui_context_t *ui_factory_create(ui_mode_t mode)
         return NULL;
     }
 
-    /* Initialize the implementation */
     if (ui->ops && ui->ops->init) {
         ui->ops->init(ui);
     }
@@ -31,12 +30,10 @@ void ui_factory_destroy(ui_context_t *ui)
 {
     if (!ui) return;
 
-    /* Cleanup implementation */
     if (ui->ops && ui->ops->cleanup) {
         ui->ops->cleanup(ui);
     }
 
-    /* Free implementation data if allocated */
     if (ui->impl_data) {
         free(ui->impl_data);
     }

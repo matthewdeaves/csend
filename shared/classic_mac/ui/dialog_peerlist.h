@@ -4,15 +4,18 @@
 #include <Lists.h>
 #include <Dialogs.h>
 #include <Events.h>
-#include "peer.h"
+#include "peertalk.h"
+
 extern ListHandle gPeerListHandle;
 extern Cell gLastSelectedCell;
+
 Boolean InitPeerListControl(DialogPtr dialog);
 void CleanupPeerListControl(void);
 Boolean HandlePeerListClick(DialogPtr dialog, EventRecord *theEvent);
 void UpdatePeerDisplayList(Boolean forceRedraw);
 void HandlePeerListUpdate(DialogPtr dialog);
-Boolean DialogPeerList_GetSelectedPeer(peer_t *outPeer);
+PT_Peer *DialogPeerList_GetSelectedPeer(void);
 void DialogPeerList_DeselectAll(void);
 void ActivatePeerList(Boolean activating);
+
 #endif

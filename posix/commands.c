@@ -1,24 +1,18 @@
 #include "commands.h"
 #include "ui_interface.h"
-#include "network.h"
-#include "logging.h"
-#include "messaging.h"
-#include "discovery.h"
+#include "peertalk_bridge.h"
 #include "test.h"
-#include "../shared/protocol.h"
-#include "../shared/logging.h"
-#include "../shared/peer_wrapper.h"
+#include "clog.h"
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
-#include <pthread.h>
 #include <stdlib.h>
 
-/* Command handlers implementation */
+/* Debug state (simple toggle, no old logging system) */
+static int g_debug_enabled = 0;
 
 int handle_list_command(app_state_t *state, const char *args)
 {
-    (void)args; /* Unused */
+    (void)args;
     if (state->ui) {
         UI_CALL(state->ui, display_peer_list, state);
     }
@@ -27,21 +21,25 @@ int handle_list_command(app_state_t *state, const char *args)
 
 int handle_help_command(app_state_t *state, const char *args)
 {
-    (void)args; /* Unused */
+    (void)args;
     if (state->ui) {
         UI_CALL(state->ui, display_help);
     }
     return 0;
 }
 
+int is_debug_enabled(void)
+{
+    return g_debug_enabled;
+}
+
 int handle_debug_command(app_state_t *state, const char *args)
 {
-    (void)args; /* Unused */
-    Boolean current_debug_state = is_debug_output_enabled();
-    set_debug_output_enabled(!current_debug_state);
-    log_app_event("Debug output %s.", is_debug_output_enabled() ? "ENABLED" : "DISABLED");
+    (void)args;
+    g_debug_enabled = !g_debug_enabled;
+    clog_set_level(g_debug_enabled ? CLOG_LVL_DBG : CLOG_LVL_INFO);
     if (state->ui) {
-        UI_CALL(state->ui, notify_debug_toggle, is_debug_output_enabled());
+        UI_CALL(state->ui, notify_debug_toggle, g_debug_enabled);
     }
     return 0;
 }
@@ -49,30 +47,25 @@ int handle_debug_command(app_state_t *state, const char *args)
 int handle_send_command(app_state_t *state, const char *args)
 {
     if (!args || strlen(args) == 0) {
-        log_app_event("Usage: /send <peer_number> <message>");
         if (state->ui) {
             UI_CALL(state->ui, notify_send_result, 0, -1, NULL);
         }
         return 0;
     }
 
-    /* Parse peer number and message */
     int peer_num;
     const char *msg_start = strchr(args, ' ');
 
     if (!msg_start) {
-        log_app_event("Usage: /send <peer_number> <message>");
         if (state->ui) {
             UI_CALL(state->ui, notify_send_result, 0, -1, NULL);
         }
         return 0;
     }
 
-    /* Extract peer number */
     char peer_str[32];
-    size_t peer_len = msg_start - args;
+    size_t peer_len = (size_t)(msg_start - args);
     if (peer_len >= sizeof(peer_str)) {
-        log_app_event("Invalid peer number format.");
         if (state->ui) {
             UI_CALL(state->ui, notify_send_result, 0, -1, NULL);
         }
@@ -81,26 +74,37 @@ int handle_send_command(app_state_t *state, const char *args)
 
     strncpy(peer_str, args, peer_len);
     peer_str[peer_len] = '\0';
+    peer_num = atoi(peer_str);
 
-    if (!parse_peer_number(peer_str, &peer_num)) {
-        log_app_event("Invalid peer number. Use /list to see active peers.");
+    if (peer_num <= 0) {
         if (state->ui) {
             UI_CALL(state->ui, notify_send_result, 0, -1, NULL);
         }
         return 0;
     }
 
-    /* Skip the space to get to the message */
     msg_start++;
 
-    /* Find the peer and send message */
-    char target_ip[INET_ADDRSTRLEN];
-    if (find_peer_by_number(state, peer_num, target_ip, sizeof(target_ip))) {
-        send_to_peer(state, target_ip, msg_start, peer_num);
-    } else {
-        log_app_event("Invalid peer number '%d'. Use /list to see active peers.", peer_num);
+    /* Convert 1-based peer_num to 0-based connected peer index */
+    int connected_idx = 0;
+    int found = 0;
+    int total = PT_GetPeerCount(state->pt_ctx);
+    int i;
+    for (i = 0; i < total; i++) {
+        PT_Peer *p = PT_GetPeer(state->pt_ctx, i);
+        if (p && PT_GetPeerState(p) == PT_PEER_CONNECTED) {
+            connected_idx++;
+            if (connected_idx == peer_num) {
+                bridge_queue_send(i, msg_start);
+                found = 1;
+                break;
+            }
+        }
+    }
+
+    if (!found) {
         if (state->ui) {
-            UI_CALL(state->ui, notify_send_result, 0, -1, NULL);
+            UI_CALL(state->ui, notify_send_result, 0, peer_num, NULL);
         }
     }
 
@@ -110,30 +114,20 @@ int handle_send_command(app_state_t *state, const char *args)
 int handle_broadcast_command(app_state_t *state, const char *args)
 {
     if (!args || strlen(args) == 0) {
-        log_app_event("Usage: /broadcast <message>");
         if (state->ui) {
             UI_CALL(state->ui, notify_broadcast_result, 0);
         }
         return 0;
     }
 
-    log_app_event("Broadcasting message: %s", args);
-    int sent_count = broadcast_to_all_peers(state, args);
-
-    log_app_event("Broadcast message sent to %d active peer(s).", sent_count);
-    if (state->ui) {
-        UI_CALL(state->ui, notify_broadcast_result, sent_count);
-    }
-
+    bridge_queue_broadcast(args);
     return 0;
 }
 
 int handle_quit_command(app_state_t *state, const char *args)
 {
-    (void)args; /* Unused */
-
-    log_info_cat(LOG_CAT_SYSTEM, "Initiating quit sequence...");
-    notify_peers_on_quit(state);
+    (void)args;
+    CLOG_INFO("Quit command received");
 
     if (g_state) {
         g_state->running = 0;
@@ -141,13 +135,12 @@ int handle_quit_command(app_state_t *state, const char *args)
         state->running = 0;
     }
 
-    log_info_cat(LOG_CAT_SYSTEM, "Exiting application via /quit command...");
-    return 1; /* Signal quit */
+    return 1;
 }
 
 int handle_status_command(app_state_t *state, const char *args)
 {
-    (void)args; /* Unused */
+    (void)args;
     if (state->ui && state->ui->ops->notify_status) {
         UI_CALL(state->ui, notify_status, state);
     }
@@ -156,7 +149,7 @@ int handle_status_command(app_state_t *state, const char *args)
 
 int handle_stats_command(app_state_t *state, const char *args)
 {
-    (void)args; /* Unused */
+    (void)args;
     if (state->ui && state->ui->ops->notify_stats) {
         UI_CALL(state->ui, notify_stats, state);
     }
@@ -165,14 +158,12 @@ int handle_stats_command(app_state_t *state, const char *args)
 
 int handle_history_command(app_state_t *state, const char *args)
 {
-    int count = 10; /* Default to 10 messages */
-
+    int count = 10;
     if (args && strlen(args) > 0) {
         count = atoi(args);
         if (count <= 0) count = 10;
-        if (count > 100) count = 100; /* Cap at 100 */
+        if (count > 100) count = 100;
     }
-
     if (state->ui && state->ui->ops->notify_history) {
         UI_CALL(state->ui, notify_history, count);
     }
@@ -181,7 +172,7 @@ int handle_history_command(app_state_t *state, const char *args)
 
 int handle_version_command(app_state_t *state, const char *args)
 {
-    (void)args; /* Unused */
+    (void)args;
     if (state->ui && state->ui->ops->notify_version) {
         UI_CALL(state->ui, notify_version);
     }
@@ -190,94 +181,13 @@ int handle_version_command(app_state_t *state, const char *args)
 
 int handle_peers_command(app_state_t *state, const char *args)
 {
-    /* Check if it's the filter variant */
-    if (args && strncmp(args, "--filter ", 9) == 0) {
-        /* TODO: Implement peer filtering */
-        log_app_event("Peer filtering not yet implemented.");
-        if (state->ui) {
-            UI_CALL(state->ui, notify_command_unknown, "/peers --filter");
-        }
-    } else {
-        /* Just list peers normally */
-        return handle_list_command(state, args);
-    }
-    return 0;
+    return handle_list_command(state, args);
 }
 
 int handle_test_command(app_state_t *state, const char *args)
 {
-    (void)args; /* Unused */
-    log_app_event("Starting automated test...");
+    (void)args;
+    CLOG_INFO("Starting automated test...");
     run_posix_automated_test(state);
     return 0;
-}
-
-/* Helper functions implementation */
-
-int parse_peer_number(const char *input, int *peer_num)
-{
-    if (!input || !peer_num) return 0;
-
-    *peer_num = atoi(input);
-    return (*peer_num > 0);
-}
-
-int find_peer_by_number(app_state_t *state, int peer_num, char *target_ip, size_t ip_size)
-{
-    if (!state || !target_ip || ip_size < INET_ADDRSTRLEN) return 0;
-
-    int active_count = pw_get_active_peer_count();
-    if (peer_num <= 0 || peer_num > active_count) {
-        return 0;
-    }
-
-    peer_t peer;
-    pw_get_peer_by_index(peer_num - 1, &peer);
-    strncpy(target_ip, peer.ip, ip_size - 1);
-    target_ip[ip_size - 1] = '\0';
-
-    return 1;
-}
-
-int send_to_peer(app_state_t *state, const char *target_ip, const char *message, int peer_num)
-{
-    if (send_message(target_ip, message, MSG_TEXT, state->username) < 0) {
-        log_error_cat(LOG_CAT_MESSAGING, "Failed to send message to %s", target_ip);
-        if (state->ui) {
-            UI_CALL(state->ui, notify_send_result, 0, peer_num, target_ip);
-        }
-        return 0;
-    }
-
-    log_app_event("Message sent to peer %d (%s)", peer_num, target_ip);
-    if (state->ui) {
-        UI_CALL(state->ui, notify_send_result, 1, peer_num, target_ip);
-    }
-    return 1;
-}
-
-int broadcast_to_all_peers(app_state_t *state, const char *message)
-{
-    int sent_count = 0;
-    int active_count = pw_get_active_peer_count();
-
-    for (int i = 0; i < active_count; i++) {
-        peer_t peer;
-        pw_get_peer_by_index(i, &peer);
-        if (send_message(peer.ip, message, MSG_TEXT, state->username) >= 0) {
-            sent_count++;
-        } else {
-            log_error_cat(LOG_CAT_MESSAGING, "Failed to send broadcast message to %s", peer.ip);
-        }
-    }
-
-    return sent_count;
-}
-
-void notify_peers_on_quit(app_state_t *state)
-{
-    /* Send quit message via UDP broadcast */
-    if (broadcast_quit_message(state) < 0) {
-        log_error_cat(LOG_CAT_MESSAGING, "Failed to broadcast quit message");
-    }
 }

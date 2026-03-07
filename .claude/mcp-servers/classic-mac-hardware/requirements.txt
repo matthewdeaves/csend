@@ -1,0 +1,7 @@
+# Classic Mac Hardware MCP Server Dependencies
+
+# MCP SDK
+mcp>=1.0.0
+
+# No additional dependencies - uses Python standard library ftplib
+# for RumpusFTP compatibility (plain FTP, passive mode)

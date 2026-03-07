@@ -1,0 +1,53 @@
+{
+  "performa6400": {
+    "name": "Performa 6400",
+    "platform": "opentransport",
+    "system": "System 7.6.1",
+    "cpu": "PPC 603e",
+    "ram": "48MB",
+    "build": "standard",
+    "ftp": {
+      "host": "10.188.1.102",
+      "port": 21,
+      "username": "mac",
+      "password": "mac"
+    },
+    "launchappl": {
+      "host": "10.188.1.102",
+      "port": 1984
+    },
+    "notes": "Performa 6400/180 - PPC 603e - 48MB RAM"
+  },
+  "performa6200": {
+    "name": "Performa 6200",
+    "platform": "mactcp",
+    "system": "System 7.5.3",
+    "cpu": "PPC 603",
+    "ram": "40MB",
+    "build": "standard",
+    "ftp": {
+      "host": "10.188.1.213",
+      "port": 21,
+      "username": "mac",
+      "password": "mac"
+    },
+    "launchappl": {
+      "host": "10.188.1.213",
+      "port": 1984
+    },
+    "notes": "Performa 6200 - PPC 603 - 40MB RAM - MacTCP (no OT) - FTP + LaunchAPPL"
+  },
+  "macse": {
+    "name": "Mac SE",
+    "platform": "mactcp",
+    "system": "System 6.0.8",
+    "cpu": "68000",
+    "ram": "4MB",
+    "build": "lowmem",
+    "launchappl": {
+      "host": "10.188.1.55",
+      "port": 1984
+    },
+    "notes": "Mac SE - 68000 - 4MB RAM - LaunchAPPL only"
+  }
+}

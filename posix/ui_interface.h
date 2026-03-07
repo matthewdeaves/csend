@@ -45,7 +45,7 @@ typedef struct ui_operations {
 /* UI context structure - implementations can extend this */
 typedef struct ui_context {
     ui_operations_t *ops;
-    void *impl_data;  /* Implementation-specific data */
+    void *impl_data;
 } ui_context_t;
 
 /* Helper macros for calling UI operations */
