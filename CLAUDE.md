@@ -28,7 +28,7 @@ The project is a thin UI layer on top of the **PeerTalk SDK** (`~/peertalk`), wh
 
 - **PeerTalk SDK**: `~/peertalk` — included via CMake `add_subdirectory()`
 - **clog**: `~/Desktop/clog` — minimal C89 logging library
-- **Retro68**: `~/Retro68-build/toolchain` — Classic Mac cross-compiler
+- **Retro68**: `~/Retro68-build/toolchain` — Classic Mac cross-compiler (fork: github.com/matthewdeaves/Retro68)
 
 ## Build Commands
 

@@ -19,7 +19,7 @@ Peer-to-peer text chat between Classic Macs and modern systems over a LAN. Built
 
 ## Building
 
-Requires [PeerTalk SDK](https://github.com/matthewdeaves/peertalk), [clog](https://github.com/matthewdeaves/clog), and [Retro68](https://github.com/autc04/Retro68) for Classic Mac targets.
+Requires [PeerTalk SDK](https://github.com/matthewdeaves/peertalk), [clog](https://github.com/matthewdeaves/clog), and [Retro68](https://github.com/matthewdeaves/Retro68) (fork with OT fixes) for Classic Mac targets.
 
 ```bash
 # POSIX
