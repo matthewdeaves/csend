@@ -127,7 +127,7 @@ void CleanupInputTE(void)
  * relative to the current graphics port. Always save and restore
  * the port when drawing in different windows."
  */
-void HandleInputTEClick(DialogPtr dialog, EventRecord *theEvent)
+void HandleInputTEClick(DialogPtr dialog, const EventRecord *theEvent)
 {
     if (gInputTE != NULL) {
         Point localPt = theEvent->where;         /* Copy global coordinates */
@@ -532,10 +532,8 @@ void IdleInputTE(void)
  * unhandled events can be passed to other components or default
  * system handling.
  */
-Boolean HandleInputTEKeyDown(EventRecord *theEvent)
+Boolean HandleInputTEKeyDown(const EventRecord *theEvent)
 {
-    char theChar;  /* Extracted character code */
-
     /*
      * INPUT VALIDATION AND FOCUS CHECKING
      *
@@ -552,7 +550,7 @@ Boolean HandleInputTEKeyDown(EventRecord *theEvent)
          */
         if (!(theEvent->modifiers & cmdKey)) {
             /* Extract character code and send to TextEdit */
-            theChar = theEvent->message & charCodeMask;
+            char theChar = theEvent->message & charCodeMask;
             TEKey(theChar, gInputTE);
             return true;  /* Event handled - don't process further */
         }

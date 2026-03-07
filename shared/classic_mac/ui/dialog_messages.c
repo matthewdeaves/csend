@@ -117,12 +117,8 @@ void AppendToMessagesTE(const char *text)
     if (*gMessagesTE != NULL) {
         long currentLength = (**gMessagesTE).teLength;
         long textLen = strlen(text);
-        short currentScrollVal = 0;
-        short maxScroll = 0;
         if (gMessagesScrollBar != NULL) {
-            currentScrollVal = GetControlValue(gMessagesScrollBar);
-            maxScroll = GetControlMaximum(gMessagesScrollBar);
-            scrolledToBottom = (currentScrollVal >= maxScroll);
+            scrolledToBottom = (GetControlValue(gMessagesScrollBar) >= GetControlMaximum(gMessagesScrollBar));
         }
         if (currentLength + textLen < 30000) {
             TESetSelect(currentLength, currentLength, gMessagesTE);

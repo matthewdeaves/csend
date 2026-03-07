@@ -39,7 +39,7 @@ static stats_t stats = {0, 0, 0, 0};
 static void get_timestamp(char *buffer, size_t size)
 {
     time_t now = time(NULL);
-    struct tm *tm_info = gmtime(&now);
+    const struct tm *tm_info = gmtime(&now);
     strftime(buffer, size, "%Y-%m-%dT%H:%M:%SZ", tm_info);
 }
 
@@ -476,7 +476,7 @@ static void machine_notify_history(void *context, int count)
             char escaped_content[512];
             char msg_json[1024];
             int written;
-            struct tm *tm_info = gmtime(&message_history[idx].timestamp);
+            const struct tm *tm_info = gmtime(&message_history[idx].timestamp);
             strftime(msg_timestamp, sizeof(msg_timestamp), "%Y-%m-%dT%H:%M:%SZ", tm_info);
 
             json_escape(escaped_content, message_history[idx].content, sizeof(escaped_content));

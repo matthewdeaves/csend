@@ -135,14 +135,14 @@ void UpdatePeerDisplayList(Boolean forceRedraw)
     int oldSelectedConnectedIndex = -1;
     char oldSelectedName[32] = {0};
     char oldSelectedAddr[32] = {0};
-    int i, total, connectedIdx;
+    int i, total;
 
     if (gPeerListHandle == NULL) return;
 
     /* Save old selection info */
     if (gLastSelectedCell.v >= 0) {
         /* Find which connected peer was at that row */
-        connectedIdx = 0;
+        int connectedIdx = 0;
         total = PT_GetPeerCount(g_ctx);
         for (i = 0; i < total; i++) {
             PT_Peer *p = PT_GetPeer(g_ctx, i);

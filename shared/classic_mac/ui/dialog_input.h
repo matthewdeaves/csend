@@ -7,11 +7,11 @@
 extern TEHandle gInputTE;
 Boolean InitInputTE(DialogPtr dialog);
 void CleanupInputTE(void);
-void HandleInputTEClick(DialogPtr dialog, EventRecord *theEvent);
+void HandleInputTEClick(DialogPtr dialog, const EventRecord *theEvent);
 void HandleInputTEUpdate(DialogPtr dialog);
 void ActivateInputTE(Boolean activating);
 Boolean GetInputText(char *buffer, short bufferSize);
 void ClearInputText(void);
 void IdleInputTE(void);
-Boolean HandleInputTEKeyDown(EventRecord *theEvent);
+Boolean HandleInputTEKeyDown(const EventRecord *theEvent);
 #endif

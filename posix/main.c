@@ -30,7 +30,7 @@ void cleanup_app_state(app_state_t *state)
     (void)state;
 }
 
-int main(int argc, char *argv[])
+int main(int argc, char const * const argv[])
 {
     app_state_t state;
     int machine_mode = 0;

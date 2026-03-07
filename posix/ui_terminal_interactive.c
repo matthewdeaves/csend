@@ -9,7 +9,7 @@
 static void print_timestamp(void)
 {
     time_t now = time(NULL);
-    struct tm *tm_info = localtime(&now);
+    const struct tm *tm_info = localtime(&now);
     char buf[16];
     strftime(buf, sizeof(buf), "%H:%M:%S", tm_info);
     printf("[%s] ", buf);
