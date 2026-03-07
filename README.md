@@ -17,24 +17,50 @@ Peer-to-peer text chat between Classic Macs and modern systems over a LAN. Built
 | csend-mac (PPC) | System 7+ | MacTCP | `build-ppc-mactcp/csend-mac.bin` |
 | csend-mac (PPC) | System 7.5+ | Open Transport | `build-ppc-ot/csend-mac.bin` |
 
+## Prerequisites
+
+The full dependency chain for building csend:
+
+- **[Retro68](https://github.com/matthewdeaves/Retro68)** — Classic Mac cross-compiler (fork with OT fixes). Only needed for Classic Mac targets.
+- **[clog](https://github.com/matthewdeaves/clog)** — Minimal C89 logging library. Must be built with matching Retro68 toolchain for Classic Mac targets.
+- **[PeerTalk SDK](https://github.com/matthewdeaves/peertalk)** — Networking SDK for discovery, connections, and messaging across POSIX/MacTCP/OpenTransport.
+
+### Dependency Chain
+
+```
+Retro68 -> clog -> peertalk -> csend
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `$CLOG_DIR` | `~/clog` | Path to the clog source directory |
+| `$PEERTALK_DIR` | `~/peertalk` | Path to the PeerTalk SDK source directory |
+| `$RETRO68_TOOLCHAIN` | `~/Retro68-build/toolchain` | Path to the Retro68 toolchain install |
+
+## Setup
+
+Run `./setup.sh` to bootstrap everything from scratch. It will clone and build all dependencies (Retro68, clog, peertalk) and configure the environment so you can build all csend targets.
+
 ## Building
 
 Requires [PeerTalk SDK](https://github.com/matthewdeaves/peertalk), [clog](https://github.com/matthewdeaves/clog), and [Retro68](https://github.com/matthewdeaves/Retro68) (fork with OT fixes) for Classic Mac targets.
 
 ```bash
 # POSIX
-cmake -B build -DCLOG_DIR=~/Desktop/clog && cmake --build build
+cmake -B build -DCLOG_DIR=$CLOG_DIR && cmake --build build
 
 # 68k MacTCP
 cmake -B build-68k \
-  -DCMAKE_TOOLCHAIN_FILE=$RETRO68/m68k-apple-macos/cmake/retro68.toolchain.cmake \
-  -DPT_PLATFORM=MACTCP -DCLOG_DIR=~/Desktop/clog -DCLOG_LIB_DIR=~/Desktop/clog/build-68k
+  -DCMAKE_TOOLCHAIN_FILE=$RETRO68_TOOLCHAIN/m68k-apple-macos/cmake/retro68.toolchain.cmake \
+  -DPT_PLATFORM=MACTCP -DCLOG_DIR=$CLOG_DIR -DCLOG_LIB_DIR=$CLOG_DIR/build-68k
 cmake --build build-68k
 
 # PPC Open Transport
 cmake -B build-ppc-ot \
-  -DCMAKE_TOOLCHAIN_FILE=$RETRO68/powerpc-apple-macos/cmake/retroppc.toolchain.cmake \
-  -DPT_PLATFORM=OT -DCLOG_DIR=~/Desktop/clog -DCLOG_LIB_DIR=~/Desktop/clog/build-ppc
+  -DCMAKE_TOOLCHAIN_FILE=$RETRO68_TOOLCHAIN/powerpc-apple-macos/cmake/retroppc.toolchain.cmake \
+  -DPT_PLATFORM=OT -DCLOG_DIR=$CLOG_DIR -DCLOG_LIB_DIR=$CLOG_DIR/build-ppc
 cmake --build build-ppc-ot
 ```
 

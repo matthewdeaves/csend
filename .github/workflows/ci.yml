@@ -1,0 +1,22 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone and build clog
+        run: |
+          git clone https://github.com/matthewdeaves/clog.git "$HOME/clog"
+          mkdir "$HOME/clog/build" && cd "$HOME/clog/build" && cmake .. && make
+      - name: Clone peertalk
+        run: git clone https://github.com/matthewdeaves/peertalk.git "$HOME/peertalk"
+      - name: Build csend (POSIX)
+        run: |
+          mkdir build && cd build
+          cmake .. -DCLOG_DIR="$HOME/clog" -DPEERTALK_DIR="$HOME/peertalk" && make

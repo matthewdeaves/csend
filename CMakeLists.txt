@@ -16,11 +16,19 @@ message(STATUS "csend platform: ${PT_PLATFORM}")
 
 # Dependencies
 if(NOT DEFINED PEERTALK_DIR)
-    set(PEERTALK_DIR "${CMAKE_SOURCE_DIR}/../peertalk")
+    if(DEFINED ENV{PEERTALK_DIR})
+        set(PEERTALK_DIR "$ENV{PEERTALK_DIR}")
+    else()
+        set(PEERTALK_DIR "$ENV{HOME}/peertalk")
+    endif()
 endif()
 
 if(NOT DEFINED CLOG_DIR)
-    set(CLOG_DIR "$ENV{HOME}/Desktop/clog")
+    if(DEFINED ENV{CLOG_DIR})
+        set(CLOG_DIR "$ENV{CLOG_DIR}")
+    else()
+        set(CLOG_DIR "$ENV{HOME}/clog")
+    endif()
 endif()
 
 set(CLOG_INCLUDE_DIR "${CLOG_DIR}/include")
