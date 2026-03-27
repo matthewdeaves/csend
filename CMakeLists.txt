@@ -37,8 +37,8 @@ if(NOT DEFINED CLOG_LIB_DIR)
     set(CLOG_LIB_DIR "${CLOG_DIR}/build")
 endif()
 
-# Include peertalk as subdirectory
-set(PEERTALK_BUILD_TESTS OFF)
+# Include peertalk as subdirectory (disable its tests)
+set(PEERTALK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory(${PEERTALK_DIR} ${CMAKE_BINARY_DIR}/peertalk)
 
 # Find clog library
