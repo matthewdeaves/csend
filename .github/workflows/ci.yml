@@ -63,7 +63,7 @@ jobs:
   build-68k-mactcp:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/matthewdeaves/retro68@sha256:39e46b947620f80659aaf87921043c824a1dc288ba5d39aa83e3a42814450352
+      image: ghcr.io/matthewdeaves/retro68@sha256:11bc3005f2cd602ad311ab98d91e3999239648d89b1f6413810eafe93a2a145c
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -94,7 +94,7 @@ jobs:
   build-ppc-mactcp:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/matthewdeaves/retro68@sha256:39e46b947620f80659aaf87921043c824a1dc288ba5d39aa83e3a42814450352
+      image: ghcr.io/matthewdeaves/retro68@sha256:11bc3005f2cd602ad311ab98d91e3999239648d89b1f6413810eafe93a2a145c
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -125,7 +125,7 @@ jobs:
   build-ppc-ot:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/matthewdeaves/retro68@sha256:39e46b947620f80659aaf87921043c824a1dc288ba5d39aa83e3a42814450352
+      image: ghcr.io/matthewdeaves/retro68@sha256:11bc3005f2cd602ad311ab98d91e3999239648d89b1f6413810eafe93a2a145c
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
