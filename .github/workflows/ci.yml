@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  CLOG_COMMIT: "9f512365ce09cf1eed592bd49b5d11307639456a"
+  PEERTALK_COMMIT: "01864aa5cf59b7f0c0c3d1ceaba776aa1e328c1a"
+
 jobs:
   build-posix:
     strategy:
@@ -13,7 +17,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install deps (Linux)
         if: runner.os == 'Linux'
@@ -21,12 +25,15 @@ jobs:
 
       - name: Clone and build clog
         run: |
-          git clone --depth 1 https://github.com/matthewdeaves/clog.git "$HOME/clog"
-          mkdir "$HOME/clog/build" && cd "$HOME/clog/build"
+          git clone https://github.com/matthewdeaves/clog.git "$HOME/clog"
+          cd "$HOME/clog" && git checkout ${{ env.CLOG_COMMIT }}
+          mkdir build && cd build
           cmake .. && make
 
       - name: Clone peertalk
-        run: git clone --depth 1 https://github.com/matthewdeaves/peertalk.git "$HOME/peertalk"
+        run: |
+          git clone https://github.com/matthewdeaves/peertalk.git "$HOME/peertalk"
+          cd "$HOME/peertalk" && git checkout ${{ env.PEERTALK_COMMIT }}
 
       - name: Build csend
         run: |
@@ -37,7 +44,7 @@ jobs:
   static-analysis:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install cppcheck
         run: sudo apt-get update && sudo apt-get install -y cppcheck
@@ -56,19 +63,22 @@ jobs:
   build-68k-mactcp:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/matthewdeaves/retro68:latest
+      image: ghcr.io/matthewdeaves/retro68@sha256:39e46b947620f80659aaf87921043c824a1dc288ba5d39aa83e3a42814450352
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Clone and build clog for 68k
         run: |
-          git clone --depth 1 https://github.com/matthewdeaves/clog.git /tmp/clog
-          mkdir /tmp/clog/build && cd /tmp/clog/build
+          git clone https://github.com/matthewdeaves/clog.git /tmp/clog
+          cd /tmp/clog && git checkout ${{ env.CLOG_COMMIT }}
+          mkdir build && cd build
           cmake .. -DCMAKE_TOOLCHAIN_FILE=/Retro68-build/toolchain/m68k-apple-macos/cmake/retro68.toolchain.cmake
           make
 
       - name: Clone peertalk
-        run: git clone --depth 1 https://github.com/matthewdeaves/peertalk.git /tmp/peertalk
+        run: |
+          git clone https://github.com/matthewdeaves/peertalk.git /tmp/peertalk
+          cd /tmp/peertalk && git checkout ${{ env.PEERTALK_COMMIT }}
 
       - name: Build csend for 68k (MacTCP)
         run: |
@@ -84,19 +94,22 @@ jobs:
   build-ppc-mactcp:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/matthewdeaves/retro68:latest
+      image: ghcr.io/matthewdeaves/retro68@sha256:39e46b947620f80659aaf87921043c824a1dc288ba5d39aa83e3a42814450352
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Clone and build clog for PPC
         run: |
-          git clone --depth 1 https://github.com/matthewdeaves/clog.git /tmp/clog
-          mkdir /tmp/clog/build && cd /tmp/clog/build
+          git clone https://github.com/matthewdeaves/clog.git /tmp/clog
+          cd /tmp/clog && git checkout ${{ env.CLOG_COMMIT }}
+          mkdir build && cd build
           cmake .. -DCMAKE_TOOLCHAIN_FILE=/Retro68-build/toolchain/powerpc-apple-macos/cmake/retroppc.toolchain.cmake
           make
 
       - name: Clone peertalk
-        run: git clone --depth 1 https://github.com/matthewdeaves/peertalk.git /tmp/peertalk
+        run: |
+          git clone https://github.com/matthewdeaves/peertalk.git /tmp/peertalk
+          cd /tmp/peertalk && git checkout ${{ env.PEERTALK_COMMIT }}
 
       - name: Build csend for PPC (MacTCP)
         run: |
@@ -112,19 +125,22 @@ jobs:
   build-ppc-ot:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/matthewdeaves/retro68:latest
+      image: ghcr.io/matthewdeaves/retro68@sha256:39e46b947620f80659aaf87921043c824a1dc288ba5d39aa83e3a42814450352
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Clone and build clog for PPC
         run: |
-          git clone --depth 1 https://github.com/matthewdeaves/clog.git /tmp/clog
-          mkdir /tmp/clog/build && cd /tmp/clog/build
+          git clone https://github.com/matthewdeaves/clog.git /tmp/clog
+          cd /tmp/clog && git checkout ${{ env.CLOG_COMMIT }}
+          mkdir build && cd build
           cmake .. -DCMAKE_TOOLCHAIN_FILE=/Retro68-build/toolchain/powerpc-apple-macos/cmake/retroppc.toolchain.cmake
           make
 
       - name: Clone peertalk
-        run: git clone --depth 1 https://github.com/matthewdeaves/peertalk.git /tmp/peertalk
+        run: |
+          git clone https://github.com/matthewdeaves/peertalk.git /tmp/peertalk
+          cd /tmp/peertalk && git checkout ${{ env.PEERTALK_COMMIT }}
 
       - name: Build csend for PPC (Open Transport)
         run: |

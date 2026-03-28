@@ -3,19 +3,26 @@ on:
   push:
     tags: ['v*']
 
+env:
+  CLOG_COMMIT: "9f512365ce09cf1eed592bd49b5d11307639456a"
+  PEERTALK_COMMIT: "01864aa5cf59b7f0c0c3d1ceaba776aa1e328c1a"
+
 jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Clone and build clog
         run: |
           git clone https://github.com/matthewdeaves/clog.git "$HOME/clog"
-          mkdir "$HOME/clog/build" && cd "$HOME/clog/build" && cmake .. && make
+          cd "$HOME/clog" && git checkout ${{ env.CLOG_COMMIT }}
+          mkdir build && cd build && cmake .. && make
       - name: Clone peertalk
-        run: git clone https://github.com/matthewdeaves/peertalk.git "$HOME/peertalk"
+        run: |
+          git clone https://github.com/matthewdeaves/peertalk.git "$HOME/peertalk"
+          cd "$HOME/peertalk" && git checkout ${{ env.PEERTALK_COMMIT }}
       - name: Build csend
         run: |
           mkdir build && cd build
@@ -23,6 +30,6 @@ jobs:
       - name: Package
         run: tar czf csend-posix-linux-x64.tar.gz -C build csend-posix
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         with:
           files: csend-posix-linux-x64.tar.gz
