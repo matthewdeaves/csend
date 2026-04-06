@@ -94,7 +94,7 @@ cmake --build build-ppc-mactcp
 ```
 
 ### Classic Mac
-Deploy `.bin` or `.APPL` to real Classic Mac hardware via FTP or disk image.
+Deploy `.bin` or `.APPL` to real Classic Mac hardware using the [classic-mac-hardware-mcp](https://github.com/matthewdeaves/classic-mac-hardware-mcp) MCP server. Never use raw FTP scripts.
 
 ## Key Files
 
