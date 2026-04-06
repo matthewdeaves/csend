@@ -81,7 +81,7 @@ cmake --build build-ppc-ot
 
 ### Classic Mac
 
-Deploy `.bin` to real hardware via FTP or disk image. The GUI provides a message area, input field, peer list, send button, broadcast checkbox, and debug toggle.
+Deploy `.bin` to real hardware using the [classic-mac-hardware-mcp](https://github.com/matthewdeaves/classic-mac-hardware-mcp) MCP server. The GUI provides a message area, input field, peer list, send button, broadcast checkbox, and debug toggle.
 
 ## Architecture
 

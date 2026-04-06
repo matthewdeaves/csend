@@ -1,15 +1,14 @@
 {
   "mcpServers": {
     "classic-mac-hardware": {
-      "command": "uv",
+      "command": "uvx",
       "args": [
-        "run",
-        "--with", "mcp",
-        "python3",
-        ".claude/mcp-servers/classic-mac-hardware/server.py"
+        "--from",
+        "git+https://github.com/matthewdeaves/classic-mac-hardware-mcp",
+        "classic-mac-hardware-mcp"
       ],
       "env": {
-        "MACHINES_CONFIG": ".claude/mcp-servers/classic-mac-hardware/machines.json"
+        "MACHINES_CONFIG": "~/.config/classic-mac-hardware/machines.json"
       }
     }
   }
