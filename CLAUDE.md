@@ -15,7 +15,7 @@ The project is a thin UI layer on top of the **PeerTalk SDK** (`$PEERTALK_DIR`, 
 
 ### Key Patterns
 
-1. **PeerTalk SDK**: 22-function C89 API. `PT_Init()`, `PT_Poll()`, `PT_Send()`, `PT_Broadcast()`, callbacks for events
+1. **PeerTalk SDK**: 29-function C89 API. `PT_Init()`, `PT_Poll()`, `PT_Send()`, `PT_Broadcast()`, callbacks for events. Also provides `PT_GetPeerRank()` for deterministic peer ordering and `PT_EnableDebugBroadcast()`/`PT_DebugSend()` for UDP debug output (monitor with `socat -u UDP-RECV:7356,reuseaddr -`)
 2. **POSIX Threading**: Main thread (PT_Poll + command queue processing) + input thread (stdin). PeerTalk is NOT thread-safe — input thread pushes commands to SPSC ring buffer, main thread executes them
 3. **Classic Mac**: Single-threaded. `PT_Poll()` called from `HandleIdleTasks()` in main event loop. Safe to call PT_Send directly
 4. **Message Type**: `#define MSG_CHAT 1` registered with `PT_RegisterMessage(ctx, MSG_CHAT, PT_RELIABLE)`
@@ -47,8 +47,7 @@ cmake -B build -DCLOG_DIR=$CLOG_DIR && cmake --build build
 export RETRO68=$RETRO68_TOOLCHAIN
 cmake -B build-68k \
   -DCMAKE_TOOLCHAIN_FILE=$RETRO68/m68k-apple-macos/cmake/retro68.toolchain.cmake \
-  -DPT_PLATFORM=MACTCP -DCLOG_DIR=$CLOG_DIR \
-  -DCLOG_LIB_DIR=$CLOG_DIR/build-68k
+  -DPT_PLATFORM=MACTCP -DCLOG_DIR=$CLOG_DIR
 cmake --build build-68k
 # Output: build-68k/csend-mac.{APPL,bin,dsk}
 ```
@@ -57,8 +56,7 @@ cmake --build build-68k
 ```bash
 cmake -B build-ppc-ot \
   -DCMAKE_TOOLCHAIN_FILE=$RETRO68/powerpc-apple-macos/cmake/retroppc.toolchain.cmake \
-  -DPT_PLATFORM=OT -DCLOG_DIR=$CLOG_DIR \
-  -DCLOG_LIB_DIR=$CLOG_DIR/build-ppc
+  -DPT_PLATFORM=OT -DCLOG_DIR=$CLOG_DIR
 cmake --build build-ppc-ot
 ```
 
@@ -66,8 +64,7 @@ cmake --build build-ppc-ot
 ```bash
 cmake -B build-68k-ot \
   -DCMAKE_TOOLCHAIN_FILE=$RETRO68/m68k-apple-macos/cmake/retro68.toolchain.cmake \
-  -DPT_PLATFORM=OT -DCLOG_DIR=$CLOG_DIR \
-  -DCLOG_LIB_DIR=$CLOG_DIR/build-68k
+  -DPT_PLATFORM=OT -DCLOG_DIR=$CLOG_DIR
 cmake --build build-68k-ot
 ```
 
@@ -75,8 +72,7 @@ cmake --build build-68k-ot
 ```bash
 cmake -B build-ppc-mactcp \
   -DCMAKE_TOOLCHAIN_FILE=$RETRO68/powerpc-apple-macos/cmake/retroppc.toolchain.cmake \
-  -DPT_PLATFORM=MACTCP -DCLOG_DIR=$CLOG_DIR \
-  -DCLOG_LIB_DIR=$CLOG_DIR/build-ppc
+  -DPT_PLATFORM=MACTCP -DCLOG_DIR=$CLOG_DIR
 cmake --build build-ppc-mactcp
 ```
 
@@ -114,7 +110,6 @@ Deploy `.bin` or `.APPL` to real Classic Mac hardware using the [classic-mac-har
 
 ## Important Notes
 
-- **Port conflict**: PeerTalk uses fixed ports 7353-7355. Two instances can't run on the same host without Docker
+- **Port conflict**: PeerTalk uses fixed ports 7353-7356. Two instances can't run on the same host without Docker
 - **Resource forks**: `.finf/` and `.rsrc/` folders maintain Mac metadata — preserve these
-- **Cross-compiled clog**: Classic Mac builds need clog built with matching Retro68 toolchain. Use `-DCLOG_LIB_DIR=` to point at the right one
 - **`__CLASSIC_MAC__` define**: Set by CMakeLists.txt for Classic Mac builds, used in shared/test.c for TickCount() vs time() abstraction

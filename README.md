@@ -22,7 +22,7 @@ Peer-to-peer text chat between Classic Macs and modern systems over a LAN. Built
 The full dependency chain for building csend:
 
 - **[Retro68](https://github.com/matthewdeaves/Retro68)** — Classic Mac cross-compiler (fork with OT fixes). Only needed for Classic Mac targets.
-- **[clog](https://github.com/matthewdeaves/clog)** — Minimal C89 logging library. Must be built with matching Retro68 toolchain for Classic Mac targets.
+- **[clog](https://github.com/matthewdeaves/clog)** — Minimal C89 logging library. Built from source automatically via FetchContent.
 - **[PeerTalk SDK](https://github.com/matthewdeaves/peertalk)** — Networking SDK for discovery, connections, and messaging across POSIX/MacTCP/OpenTransport.
 
 ### Dependency Chain
@@ -54,13 +54,13 @@ cmake -B build -DCLOG_DIR=$CLOG_DIR && cmake --build build
 # 68k MacTCP
 cmake -B build-68k \
   -DCMAKE_TOOLCHAIN_FILE=$RETRO68_TOOLCHAIN/m68k-apple-macos/cmake/retro68.toolchain.cmake \
-  -DPT_PLATFORM=MACTCP -DCLOG_DIR=$CLOG_DIR -DCLOG_LIB_DIR=$CLOG_DIR/build-68k
+  -DPT_PLATFORM=MACTCP -DCLOG_DIR=$CLOG_DIR
 cmake --build build-68k
 
 # PPC Open Transport
 cmake -B build-ppc-ot \
   -DCMAKE_TOOLCHAIN_FILE=$RETRO68_TOOLCHAIN/powerpc-apple-macos/cmake/retroppc.toolchain.cmake \
-  -DPT_PLATFORM=OT -DCLOG_DIR=$CLOG_DIR -DCLOG_LIB_DIR=$CLOG_DIR/build-ppc
+  -DPT_PLATFORM=OT -DCLOG_DIR=$CLOG_DIR
 cmake --build build-ppc-ot
 ```
 

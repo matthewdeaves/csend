@@ -37,9 +37,6 @@ else()
     FetchContent_MakeAvailable(clog)
 endif()
 
-# Pre-set CLOG_LIB so peertalk's find_library() uses the clog target directly
-set(CLOG_LIB clog CACHE FILEPATH "clog library (target)" FORCE)
-
 # --- peertalk dependency ---
 # Use local dir if provided, otherwise fetch from GitHub
 if(NOT DEFINED PEERTALK_DIR AND DEFINED ENV{PEERTALK_DIR})
