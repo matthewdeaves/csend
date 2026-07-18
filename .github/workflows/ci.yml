@@ -13,7 +13,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install deps (Linux)
         if: runner.os == 'Linux'
@@ -25,7 +25,7 @@ jobs:
   static-analysis:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install cppcheck
         run: sudo apt-get update && sudo apt-get install -y cppcheck
@@ -46,7 +46,7 @@ jobs:
     container:
       image: ghcr.io/matthewdeaves/retro68@sha256:11bc3005f2cd602ad311ab98d91e3999239648d89b1f6413810eafe93a2a145c
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Build csend for 68k (MacTCP)
         run: |
@@ -60,7 +60,7 @@ jobs:
     container:
       image: ghcr.io/matthewdeaves/retro68@sha256:11bc3005f2cd602ad311ab98d91e3999239648d89b1f6413810eafe93a2a145c
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Build csend for PPC (MacTCP)
         run: |
@@ -74,7 +74,7 @@ jobs:
     container:
       image: ghcr.io/matthewdeaves/retro68@sha256:11bc3005f2cd602ad311ab98d91e3999239648d89b1f6413810eafe93a2a145c
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Build csend for PPC (Open Transport)
         run: |
